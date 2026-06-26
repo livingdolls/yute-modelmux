@@ -439,6 +439,17 @@ func (s *RouterService) selectWeightedMember(members []availableGroupMember) ava
 		return members[0]
 	}
 	pick := rand.IntN(totalWeight)
+	return selectWeightedMemberByPick(members, pick)
+}
+
+func selectWeightedMemberByPick(members []availableGroupMember, pick int) availableGroupMember {
+	totalWeight := 0
+	for _, m := range members {
+		totalWeight += m.member.Weight
+	}
+	if totalWeight <= 0 {
+		return members[0]
+	}
 	cumulative := 0
 	for _, m := range members {
 		cumulative += m.member.Weight
