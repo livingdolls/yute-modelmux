@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -107,7 +108,11 @@ func NewRouterService(cfg *config.Config) *RouterService {
 		if status == "" {
 			status = domain.KeyStatusActive
 		}
-		rs.keys = append(rs.keys, domain.APIKey{ID: k.ID, ProviderID: k.ProviderID, ModelID: k.ModelID, Name: k.Name, Value: k.Value, ValueEnv: k.ValueEnv, Status: status, Priority: k.Priority, CreatedAt: now, UpdatedAt: now})
+		value := k.Value
+		if value == "" && k.ValueEnv != "" {
+			value = os.Getenv(k.ValueEnv)
+		}
+		rs.keys = append(rs.keys, domain.APIKey{ID: k.ID, ProviderID: k.ProviderID, ModelID: k.ModelID, Name: k.Name, Value: value, ValueEnv: k.ValueEnv, Status: status, Priority: k.Priority, CreatedAt: now, UpdatedAt: now})
 	}
 	return rs
 }

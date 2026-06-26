@@ -1,6 +1,11 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestDefaultConfigValid(t *testing.T) {
 	if err := Default().Validate(); err != nil {
@@ -39,5 +44,64 @@ func TestValidateRejectsKeyWithoutValue(t *testing.T) {
 	cfg.Keys[0].ValueEnv = ""
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected missing key value error")
+	}
+}
+
+func TestSaveDoesNotPersistResolvedEnvSecret(t *testing.T) {
+	cfg := Default()
+	cfg.Keys[0].Value = ""
+	cfg.Keys[0].ValueEnv = "MUX_TEST_SECRET"
+	t.Setenv("MUX_TEST_SECRET", "super-secret-token")
+
+	if err := cfg.ResolveSecrets(); err != nil {
+		t.Fatalf("resolve secrets failed: %v", err)
+	}
+	if cfg.Keys[0].Value != "" {
+		t.Fatal("expected Value to remain empty after ResolveSecrets")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+
+	if err := Save(path, cfg); err != nil {
+		t.Fatalf("save failed: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read saved config failed: %v", err)
+	}
+	saved := string(data)
+	if saved == "" {
+		t.Fatal("saved config is empty")
+	}
+	if strings.Contains(saved, "super-secret-token") {
+		t.Fatal("saved YAML contains env secret, secret leaked")
+	}
+	if !strings.Contains(saved, "value_env: MUX_TEST_SECRET") {
+		t.Fatal("saved YAML should preserve value_env")
+	}
+}
+
+func TestResolveSecretsFailsWhenEnvVarMissing(t *testing.T) {
+	cfg := Default()
+	cfg.Keys[0].Value = ""
+	cfg.Keys[0].ValueEnv = "MUX_MISSING_VAR"
+	if err := cfg.ResolveSecrets(); err == nil {
+		t.Fatal("expected error for missing env var")
+	}
+}
+
+func TestValidateAllowsEmptyValueWithValueEnv(t *testing.T) {
+	cfg := Default()
+	cfg.Keys[0].Value = ""
+	cfg.Keys[0].ValueEnv = "MUX_EXISTS"
+	t.Setenv("MUX_EXISTS", "token")
+
+	if err := cfg.ResolveSecrets(); err != nil {
+		t.Fatalf("resolve secrets failed: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate should allow key with value_env: %v", err)
 	}
 }

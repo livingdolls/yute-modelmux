@@ -154,9 +154,8 @@ func (c *Config) ResolveSecrets() error {
 		if c.Keys[i].Value != "" || c.Keys[i].ValueEnv == "" {
 			continue
 		}
-		value := os.Getenv(c.Keys[i].ValueEnv)
-		if value != "" {
-			c.Keys[i].Value = value
+		if os.Getenv(c.Keys[i].ValueEnv) == "" {
+			return fmt.Errorf("key %s requires environment variable %q which is not set", c.Keys[i].ID, c.Keys[i].ValueEnv)
 		}
 	}
 	return nil
@@ -239,7 +238,7 @@ func (c *Config) Validate() error {
 		}
 		if k.Value == "" {
 			if k.ValueEnv != "" {
-				return fmt.Errorf("key %s has no value; set keys[].value in config or set environment variable %s", k.ID, k.ValueEnv)
+				continue
 			}
 			return fmt.Errorf("key %s has no value; set keys[].value in config", k.ID)
 		}
