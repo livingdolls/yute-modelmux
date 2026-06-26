@@ -38,6 +38,31 @@ func (s *Server) modelsHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": items})
 }
 
+func (s *Server) completionsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	maxBytes := int64(s.cfg.Server.MaxRequestBodyMB) * 1024 * 1024
+	if maxBytes <= 0 {
+		maxBytes = 10 * 1024 * 1024
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+	resp, err := s.rs.HandleCompletion(r.Context(), r)
+	if err != nil {
+		writeProxyError(w, err)
+		return
+	}
+	defer resp.Body.Close()
+	for k, values := range resp.Header {
+		for _, v := range values {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	_ = copyWithFlush(w, resp.Body)
+}
+
 func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)

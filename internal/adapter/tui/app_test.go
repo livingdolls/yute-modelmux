@@ -17,6 +17,10 @@ func (stubRouter) HandleChatCompletion(context.Context, *http.Request) (*http.Re
 	return nil, nil
 }
 
+func (stubRouter) HandleCompletion(context.Context, *http.Request) (*http.Response, error) {
+	return nil, nil
+}
+
 func (stubRouter) SelectKey(context.Context, string) (*domain.APIKey, error) { return nil, nil }
 
 func (stubRouter) MarkKeyResult(context.Context, string, inbound.KeyResult) error { return nil }

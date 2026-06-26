@@ -129,3 +129,43 @@ func TestCopyWithFlushHandlesEmptyStream(t *testing.T) {
 		t.Fatalf("expected empty body, got %q", rec.Body.String())
 	}
 }
+
+func TestCompletionsReturns400ForInvalidJSON(t *testing.T) {
+	cfg := config.Default()
+	rs := service.NewRouterService(cfg)
+	srv := New(rs, cfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/completions", strings.NewReader(`not json`))
+	rec := httptest.NewRecorder()
+	srv.completionsHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCompletionsRoutesToCorrectEndpoint(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = server.URL + "/v1"
+	cfg.Models[0].ModelName = cfg.Models[0].ID
+	rs := service.NewRouterService(cfg)
+	srv := New(rs, cfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/completions", strings.NewReader(`{"model":"mimo-v2.5-pro","prompt":"hello"}`))
+	rec := httptest.NewRecorder()
+	srv.completionsHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if gotPath != "/v1/completions" {
+		t.Fatalf("expected upstream path /v1/completions, got %s", gotPath)
+	}
+}

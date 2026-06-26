@@ -18,8 +18,20 @@ type OpenAICompatibleClient struct{}
 
 func New() *OpenAICompatibleClient { return &OpenAICompatibleClient{} }
 
+func (c *OpenAICompatibleClient) Forward(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey, req *http.Request, apiPath string) (*http.Response, error) {
+	return c.forwardRequest(ctx, provider, model, apiKey, req, apiPath)
+}
+
 func (c *OpenAICompatibleClient) ForwardChatCompletion(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey, req *http.Request) (*http.Response, error) {
-	endpoint, err := providerEndpoint(provider.BaseURL, "/chat/completions")
+	return c.forwardRequest(ctx, provider, model, apiKey, req, "/chat/completions")
+}
+
+func (c *OpenAICompatibleClient) ForwardCompletion(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey, req *http.Request) (*http.Response, error) {
+	return c.forwardRequest(ctx, provider, model, apiKey, req, "/completions")
+}
+
+func (c *OpenAICompatibleClient) forwardRequest(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey, req *http.Request, apiPath string) (*http.Response, error) {
+	endpoint, err := providerEndpoint(provider.BaseURL, apiPath)
 	if err != nil {
 		return nil, err
 	}

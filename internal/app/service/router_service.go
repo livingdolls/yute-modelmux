@@ -210,6 +210,14 @@ func (s *RouterService) SelectKey(ctx context.Context, modelID string) (*domain.
 }
 
 func (s *RouterService) HandleChatCompletion(ctx context.Context, req *http.Request) (*http.Response, error) {
+	return s.handleOpenAIRequest(ctx, req, "/chat/completions")
+}
+
+func (s *RouterService) HandleCompletion(ctx context.Context, req *http.Request) (*http.Response, error) {
+	return s.handleOpenAIRequest(ctx, req, "/completions")
+}
+
+func (s *RouterService) handleOpenAIRequest(ctx context.Context, req *http.Request, apiPath string) (*http.Response, error) {
 	bodyBytes, err := io.ReadAll(req.Body)
 	if err != nil {
 		return nil, InvalidRequestBodyError(err.Error())
@@ -223,7 +231,7 @@ func (s *RouterService) HandleChatCompletion(ctx context.Context, req *http.Requ
 		if !model.Enabled {
 			return nil, DisabledError(fmt.Sprintf("model %s is disabled", requestedID))
 		}
-		return s.handleModelChatCompletion(ctx, req, bodyBytes, "", model)
+		return s.handleModelRequest(ctx, req, bodyBytes, "", model, apiPath)
 	}
 
 	group, ok := s.groupByID(requestedID)
@@ -231,13 +239,13 @@ func (s *RouterService) HandleChatCompletion(ctx context.Context, req *http.Requ
 		if !group.Enabled {
 			return nil, DisabledError(fmt.Sprintf("model group %s is disabled", requestedID))
 		}
-		return s.handleGroupChatCompletion(ctx, req, bodyBytes, group)
+		return s.handleGroupRequest(ctx, req, bodyBytes, group, apiPath)
 	}
 
 	return nil, NotFoundError(fmt.Sprintf("unknown model or model group %s", requestedID))
 }
 
-func (s *RouterService) handleGroupChatCompletion(ctx context.Context, req *http.Request, bodyBytes []byte, group domain.ModelGroup) (*http.Response, error) {
+func (s *RouterService) handleGroupRequest(ctx context.Context, req *http.Request, bodyBytes []byte, group domain.ModelGroup, apiPath string) (*http.Response, error) {
 	attemptedModels := map[string]struct{}{}
 
 	for len(attemptedModels) < len(group.Members) {
@@ -247,7 +255,7 @@ func (s *RouterService) handleGroupChatCompletion(ctx context.Context, req *http
 		}
 		attemptedModels[member.ModelID] = struct{}{}
 
-		resp, err := s.handleModelChatCompletion(ctx, req, bodyBytes, group.ID, model)
+		resp, err := s.handleModelRequest(ctx, req, bodyBytes, group.ID, model, apiPath)
 		if isUnavailable(err) {
 			continue
 		}
@@ -257,7 +265,7 @@ func (s *RouterService) handleGroupChatCompletion(ctx context.Context, req *http
 	return nil, GroupUnavailableError(group.ID)
 }
 
-func (s *RouterService) handleModelChatCompletion(ctx context.Context, req *http.Request, bodyBytes []byte, groupID string, model domain.Model) (*http.Response, error) {
+func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Request, bodyBytes []byte, groupID string, model domain.Model, apiPath string) (*http.Response, error) {
 	provider, ok := s.providerByID(model.ProviderID)
 	if !ok || !provider.Enabled {
 		return nil, fmt.Errorf("unknown provider %s", model.ProviderID)
@@ -307,7 +315,7 @@ func (s *RouterService) handleModelChatCompletion(ctx context.Context, req *http
 
 		clonedReq := cloneRequestWithBody(req, bodyBytes)
 		startedAt := time.Now()
-		resp, err := s.client.ForwardChatCompletion(ctx, provider, model, *key, clonedReq)
+		resp, err := s.client.Forward(ctx, provider, model, *key, clonedReq, apiPath)
 		result := classifyResult(resp, err, s.cfg)
 		result.ModelID = model.ID
 		result.GroupID = groupID

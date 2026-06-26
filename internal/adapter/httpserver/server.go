@@ -23,6 +23,7 @@ func New(rs *service.RouterService, cfg *config.Config) *Server {
 	mux.HandleFunc("/health", s.healthHandler)
 	mux.HandleFunc("/v1/models", s.modelsHandler)
 	mux.HandleFunc("/v1/chat/completions", s.chatCompletionsHandler)
+	mux.HandleFunc("/v1/completions", s.completionsHandler)
 	mux.HandleFunc("/metrics", s.metricsHandler)
 	s.srv = &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
