@@ -22,8 +22,7 @@ func (s *Server) modelsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	models := s.rs.ListModels()
 	groups := s.rs.ListModelGroups()
-	sessions := s.cfg.ChatSessions
-	items := make([]modelItem, 0, len(models)+len(groups)+len(sessions))
+	items := make([]modelItem, 0, len(models)+len(groups))
 	for _, m := range models {
 		if !m.Enabled {
 			continue
@@ -35,12 +34,6 @@ func (s *Server) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		items = append(items, modelItem{ID: g.ID, Object: "model"})
-	}
-	for _, session := range sessions {
-		if !session.Enabled {
-			continue
-		}
-		items = append(items, modelItem{ID: session.ID, Object: "model"})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": items})
 }
@@ -81,19 +74,10 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 		ActiveModels      int    `json:"active_models"`
 		UnavailableModels int    `json:"unavailable_models"`
 	}
-	type sessionMetric struct {
-		ID       string `json:"id"`
-		Target   string `json:"target"`
-		Requests int    `json:"requests"`
-		Errors   int    `json:"errors"`
-		Enabled  bool   `json:"enabled"`
-	}
-
 	keys := s.rs.ListKeys()
 	logs := s.rs.Logs()
 	models := s.rs.ListModels()
 	groups := s.rs.ListModelGroups()
-	sessions := s.cfg.ChatSessions
 	metrics := make([]modelMetric, 0, len(models))
 	for _, model := range models {
 		metric := modelMetric{ID: model.ID}
@@ -149,22 +133,7 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		groupMetrics = append(groupMetrics, metric)
 	}
-	sessionMetrics := make([]sessionMetric, 0, len(sessions))
-	for _, session := range sessions {
-		metric := sessionMetric{ID: session.ID, Target: session.Target, Enabled: session.Enabled}
-		for _, log := range logs {
-			if log.SessionID != session.ID {
-				continue
-			}
-			metric.Requests++
-			if log.StatusCode >= 400 || log.Error != "" {
-				metric.Errors++
-			}
-		}
-		sessionMetrics = append(sessionMetrics, metric)
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{"models": metrics, "groups": groupMetrics, "sessions": sessionMetrics})
+	writeJSON(w, http.StatusOK, map[string]any{"models": metrics, "groups": groupMetrics})
 }
 
 func modelHasActiveKey(keys []domain.APIKey, modelID string) bool {

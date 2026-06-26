@@ -32,19 +32,3 @@ func TestValidateRejectsKeyWithoutValue(t *testing.T) {
 		t.Fatal("expected missing key value error")
 	}
 }
-
-func TestValidateRejectsChatSessionIDConflict(t *testing.T) {
-	cfg := Default()
-	cfg.ChatSessions[0].ID = cfg.ModelGroups[0].ID
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("expected chat session id conflict error")
-	}
-}
-
-func TestValidateRejectsUnknownChatSessionTarget(t *testing.T) {
-	cfg := Default()
-	cfg.ChatSessions[0].Target = "missing-target"
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("expected unknown chat session target error")
-	}
-}

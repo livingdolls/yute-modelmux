@@ -30,9 +30,6 @@ func TestMetricsDoesNotExposeAPIKeyValue(t *testing.T) {
 	if !strings.Contains(body, "groups") || !strings.Contains(body, "active_models") {
 		t.Fatalf("metrics missing group summary: %s", body)
 	}
-	if !strings.Contains(body, "sessions") || !strings.Contains(body, "chat-session-1") {
-		t.Fatalf("metrics missing session summary: %s", body)
-	}
 }
 
 func TestModelsIncludesModelGroups(t *testing.T) {
@@ -45,7 +42,7 @@ func TestModelsIncludesModelGroups(t *testing.T) {
 	srv.modelsHandler(rec, req)
 
 	body := rec.Body.String()
-	if !strings.Contains(body, "high-price") || !strings.Contains(body, "chat-session-1") {
-		t.Fatalf("models endpoint missing group/session id: %s", body)
+	if !strings.Contains(body, "high-price") {
+		t.Fatalf("models endpoint missing group id: %s", body)
 	}
 }

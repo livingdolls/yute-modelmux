@@ -1,7 +1,12 @@
 package tui
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -16,7 +21,7 @@ const (
 	pageProviders = iota
 	pageModels
 	pageGroups
-	pageSessions
+	pageChat
 	pageKeys
 	pageLogs
 )
@@ -30,18 +35,37 @@ var navItems = []navItem{
 	{label: "Providers", description: "Upstream endpoints"},
 	{label: "Models", description: "Routable models"},
 	{label: "Groups", description: "Model aliases"},
-	{label: "Sessions", description: "Chat routing"},
+	{label: "Chat", description: "TUI sessions"},
 	{label: "Keys", description: "Live key state"},
 	{label: "Logs", description: "Recent requests"},
 }
 
+type tuiChatMessage struct {
+	Role      string
+	Content   string
+	CreatedAt time.Time
+}
+
+type tuiChatSession struct {
+	ID       int
+	Title    string
+	Target   string
+	Messages []tuiChatMessage
+	Pending  bool
+	Error    string
+}
+
 type model struct {
-	cfg      *config.Config
-	router   inbound.RouterService
-	selected int
-	page     int
-	width    int
-	styles   styles
+	cfg        *config.Config
+	router     inbound.RouterService
+	selected   int
+	page       int
+	width      int
+	styles     styles
+	chats      []tuiChatSession
+	activeChat int
+	chatInput  string
+	nextChatID int
 }
 
 type styles struct {
@@ -64,8 +88,15 @@ type styles struct {
 
 type tickMsg time.Time
 
+type chatResponseMsg struct {
+	sessionID int
+	content   string
+	err       error
+}
+
 func Run(cfg *config.Config, router inbound.RouterService) error {
-	m := model{cfg: cfg, router: router, styles: defaultStyles()}
+	m := model{cfg: cfg, router: router, styles: defaultStyles(), nextChatID: 2}
+	m.chats = []tuiChatSession{newTUIChatSession(1, defaultChatTarget(cfg))}
 	prog := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := prog.Run()
 	return err
@@ -96,9 +127,14 @@ func (m model) Init() tea.Cmd { return tickCmd() }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
+		key := msg.String()
+		if key == "q" || key == "ctrl+c" {
 			return m, tea.Quit
+		}
+		if m.page == pageChat {
+			return m.updateChat(msg)
+		}
+		switch key {
 		case "up", "k", "shift+tab":
 			m.selected = previousIndex(m.selected, len(navItems))
 		case "down", "j", "tab":
@@ -110,6 +146,51 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 	case tickMsg:
 		return m, tickCmd()
+	case chatResponseMsg:
+		m.applyChatResponse(msg)
+	}
+	return m, nil
+}
+
+func (m model) updateChat(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "tab":
+		m.selected = nextIndex(m.selected, len(navItems))
+		return m, nil
+	case "shift+tab":
+		m.selected = previousIndex(m.selected, len(navItems))
+		return m, nil
+	case "up", "k", "[":
+		m.activeChat = previousIndex(m.activeChat, len(m.chats))
+		return m, nil
+	case "down", "j", "]":
+		m.activeChat = nextIndex(m.activeChat, len(m.chats))
+		return m, nil
+	case "ctrl+n":
+		m.addChatSession()
+		return m, nil
+	case "ctrl+t":
+		m.cycleActiveChatTarget()
+		return m, nil
+	case "ctrl+u":
+		m.chatInput = ""
+		return m, nil
+	case "backspace", "ctrl+h":
+		m.chatInput = dropLastRune(m.chatInput)
+		return m, nil
+	case "enter":
+		if m.selected != m.page {
+			m.page = m.selected
+			return m, nil
+		}
+		return m.sendActiveChatMessage()
+	case " ":
+		m.chatInput += " "
+		return m, nil
+	}
+	if len(msg.Runes) > 0 {
+		m.chatInput += string(msg.Runes)
 	}
 	return m, nil
 }
@@ -125,15 +206,19 @@ func (m model) View() string {
 	sidebar := m.renderSidebar(25)
 	content := m.styles.panel.Width(contentWidth).Render(m.renderPage())
 	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, "  ", content)
-	footer := m.styles.footer.Render("Navigate: up/down or tab  Select: enter  Quit: q")
+	footerText := "Navigate: up/down or tab  Select: enter  Quit: q"
+	if m.page == pageChat {
+		footerText = "Chat: type message, enter send, ctrl+n new, ctrl+t change target, up/down switch session, tab menu, q quit"
+	}
+	footer := m.styles.footer.Render(footerText)
 
 	return m.styles.app.Render(lipgloss.JoinVertical(lipgloss.Left, header, "", body, "", footer))
 }
 
 func (m model) renderHeader(width int) string {
-	providers, models, groups, sessions, keys := m.counts()
+	providers, models, groups, chats, keys := m.counts()
 	left := m.styles.title.Render("ModelMux") + " " + m.styles.subtitle.Render("LLM key router")
-	right := fmt.Sprintf("providers=%d  models=%d  groups=%d  sessions=%d  keys=%d", providers, models, groups, sessions, keys)
+	right := fmt.Sprintf("providers=%d  models=%d  groups=%d  chats=%d  keys=%d", providers, models, groups, chats, keys)
 	line := left + strings.Repeat(" ", maxInt(1, width-lipgloss.Width(left)-lipgloss.Width(right))) + m.styles.subtitle.Render(right)
 	return m.styles.header.Width(width).Render(line)
 }
@@ -176,8 +261,8 @@ func (m model) renderPage() string {
 		} else {
 			body = m.renderConfigGroups(m.cfg.ModelGroups)
 		}
-	case pageSessions:
-		body = m.renderConfigSessions(m.cfg.ChatSessions)
+	case pageChat:
+		body = m.renderChat()
 	case pageKeys:
 		if m.router != nil {
 			body = m.renderDomainKeys(m.router.ListKeys())
@@ -237,22 +322,6 @@ func (m model) renderDomainGroups(items []domain.ModelGroup) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func (m model) renderConfigSessions(items []config.ChatSessionConfig) string {
-	rows := [][]string{}
-	for _, item := range items {
-		rows = append(rows, []string{item.ID, item.Name, item.Target, m.statusText(item.Enabled)})
-	}
-	return renderTable(m.styles, []string{"ID", "Name", "Target", "Status"}, rows, []int{24, 24, 24, 10})
-}
-
-func (m model) renderDomainSessions(items []domain.ChatSession) string {
-	rows := [][]string{}
-	for _, item := range items {
-		rows = append(rows, []string{item.ID, item.Name, item.Target, m.statusText(item.Enabled)})
-	}
-	return renderTable(m.styles, []string{"ID", "Name", "Target", "Status"}, rows, []int{24, 24, 24, 10})
-}
-
 func (m model) renderConfigKeys(items []config.KeyConfig) string {
 	rows := [][]string{}
 	for _, item := range items {
@@ -273,6 +342,285 @@ func (m model) renderDomainKeys(items []domain.APIKey) string {
 	return renderTable(m.styles, []string{"ID", "Model", "Status", "Used", "Errors", "Cooldown"}, rows, []int{24, 24, 12, 8, 8, 12})
 }
 
+func (m model) renderChat() string {
+	if len(m.chats) == 0 {
+		return m.emptyState("No chat sessions")
+	}
+	active := m.chats[m.activeChat]
+	left := m.renderChatSessionList(24)
+	right := m.renderChatConversation(active)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right)
+}
+
+func (m model) renderChatSessionList(width int) string {
+	var b strings.Builder
+	b.WriteString(m.styles.tableHead.Render("SESSIONS"))
+	b.WriteString("\n\n")
+	for i, chat := range m.chats {
+		label := fmt.Sprintf("%d. %s", chat.ID, chat.Title)
+		if chat.Pending {
+			label += " ..."
+		}
+		style := m.styles.nav.Width(width - 4)
+		prefix := "  "
+		if i == m.activeChat {
+			style = m.styles.navActive.Width(width - 4)
+			prefix = "> "
+		}
+		b.WriteString(style.Render(prefix + truncate(label, width-6)))
+		b.WriteString("\n")
+		b.WriteString(m.styles.navMuted.Render("  target: " + truncate(chat.Target, width-12)))
+		if i < len(m.chats)-1 {
+			b.WriteString("\n\n")
+		}
+	}
+	b.WriteString("\n\n")
+	b.WriteString(m.styles.muted.Render("ctrl+n new\nctrl+t target\nup/down switch"))
+	return m.styles.sidebar.Width(width).Render(b.String())
+}
+
+func (m model) renderChatConversation(chat tuiChatSession) string {
+	var b strings.Builder
+	header := fmt.Sprintf("%s  target=%s", chat.Title, chat.Target)
+	if chat.Pending {
+		header += "  sending..."
+	}
+	b.WriteString(m.styles.panelTitle.Render(header))
+	b.WriteString("\n")
+	b.WriteString(m.styles.muted.Render(strings.Repeat("-", 74)))
+	b.WriteString("\n")
+
+	if len(chat.Messages) == 0 {
+		b.WriteString(m.styles.muted.Render("Start typing below, then press enter to send."))
+		b.WriteString("\n")
+	} else {
+		start := 0
+		if len(chat.Messages) > 12 {
+			start = len(chat.Messages) - 12
+		}
+		for _, message := range chat.Messages[start:] {
+			role := message.Role
+			style := m.styles.muted
+			if role == "user" {
+				style = m.styles.good
+			}
+			if role == "assistant" {
+				style = m.styles.tableHead
+			}
+			if role == "error" {
+				style = m.styles.bad
+			}
+			b.WriteString(style.Render(strings.ToUpper(role)))
+			b.WriteString(" ")
+			b.WriteString(m.styles.muted.Render(message.CreatedAt.Format("15:04:05")))
+			b.WriteString("\n")
+			b.WriteString(wrapText(message.Content, 78))
+			b.WriteString("\n\n")
+		}
+	}
+
+	if chat.Error != "" {
+		b.WriteString(m.styles.bad.Render("Error: " + chat.Error))
+		b.WriteString("\n")
+	}
+	b.WriteString(m.styles.muted.Render(strings.Repeat("-", 74)))
+	b.WriteString("\n")
+	b.WriteString(m.styles.tableHead.Render("Input"))
+	b.WriteString("\n")
+	b.WriteString("> ")
+	b.WriteString(defaultText(m.chatInput, m.styles.muted.Render("type message...")))
+	return b.String()
+}
+
+func (m *model) addChatSession() {
+	target := defaultChatTarget(m.cfg)
+	m.chats = append(m.chats, newTUIChatSession(m.nextChatID, target))
+	m.activeChat = len(m.chats) - 1
+	m.nextChatID++
+	m.chatInput = ""
+}
+
+func (m *model) cycleActiveChatTarget() {
+	if len(m.chats) == 0 {
+		return
+	}
+	targets := chatTargets(m.cfg)
+	if len(targets) == 0 {
+		return
+	}
+	current := m.chats[m.activeChat].Target
+	idx := 0
+	for i, target := range targets {
+		if target == current {
+			idx = (i + 1) % len(targets)
+			break
+		}
+	}
+	m.chats[m.activeChat].Target = targets[idx]
+}
+
+func (m model) sendActiveChatMessage() (tea.Model, tea.Cmd) {
+	if len(m.chats) == 0 {
+		return m, nil
+	}
+	input := strings.TrimSpace(m.chatInput)
+	if input == "" || m.chats[m.activeChat].Pending {
+		return m, nil
+	}
+	if m.router == nil {
+		m.chats[m.activeChat].Messages = append(m.chats[m.activeChat].Messages, tuiChatMessage{Role: "error", Content: "router is not available", CreatedAt: time.Now()})
+		m.chatInput = ""
+		return m, nil
+	}
+	m.chats[m.activeChat].Messages = append(m.chats[m.activeChat].Messages, tuiChatMessage{Role: "user", Content: input, CreatedAt: time.Now()})
+	m.chats[m.activeChat].Pending = true
+	m.chats[m.activeChat].Error = ""
+	m.chatInput = ""
+	chat := m.chats[m.activeChat]
+	return m, sendChatCmd(m.router, chat)
+}
+
+func (m *model) applyChatResponse(msg chatResponseMsg) {
+	for i := range m.chats {
+		if m.chats[i].ID != msg.sessionID {
+			continue
+		}
+		m.chats[i].Pending = false
+		if msg.err != nil {
+			m.chats[i].Error = msg.err.Error()
+			m.chats[i].Messages = append(m.chats[i].Messages, tuiChatMessage{Role: "error", Content: msg.err.Error(), CreatedAt: time.Now()})
+			return
+		}
+		m.chats[i].Messages = append(m.chats[i].Messages, tuiChatMessage{Role: "assistant", Content: msg.content, CreatedAt: time.Now()})
+		return
+	}
+}
+
+func sendChatCmd(router inbound.RouterService, chat tuiChatSession) tea.Cmd {
+	return func() tea.Msg {
+		payload := struct {
+			Model    string           `json:"model"`
+			Messages []chatAPIMessage `json:"messages"`
+		}{Model: chat.Target}
+		for _, message := range chat.Messages {
+			if message.Role != "user" && message.Role != "assistant" {
+				continue
+			}
+			payload.Messages = append(payload.Messages, chatAPIMessage{Role: message.Role, Content: message.Content})
+		}
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return chatResponseMsg{sessionID: chat.ID, err: err}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://modelmux.local/v1/chat/completions", bytes.NewReader(body))
+		if err != nil {
+			return chatResponseMsg{sessionID: chat.ID, err: err}
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := router.HandleChatCompletion(ctx, req)
+		if err != nil {
+			return chatResponseMsg{sessionID: chat.ID, err: err}
+		}
+		defer resp.Body.Close()
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return chatResponseMsg{sessionID: chat.ID, err: err}
+		}
+		if resp.StatusCode >= 400 {
+			return chatResponseMsg{sessionID: chat.ID, err: fmt.Errorf("upstream returned %s: %s", resp.Status, truncate(string(respBody), 300))}
+		}
+		return chatResponseMsg{sessionID: chat.ID, content: extractAssistantText(respBody)}
+	}
+}
+
+type chatAPIMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+func extractAssistantText(body []byte) string {
+	var payload struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			Text string `json:"text"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(body, &payload); err == nil && len(payload.Choices) > 0 {
+		if payload.Choices[0].Message.Content != "" {
+			return payload.Choices[0].Message.Content
+		}
+		if payload.Choices[0].Text != "" {
+			return payload.Choices[0].Text
+		}
+	}
+	return string(body)
+}
+
+func newTUIChatSession(id int, target string) tuiChatSession {
+	return tuiChatSession{ID: id, Title: fmt.Sprintf("Chat %d", id), Target: target}
+}
+
+func defaultChatTarget(cfg *config.Config) string {
+	targets := chatTargets(cfg)
+	if len(targets) == 0 {
+		return ""
+	}
+	return targets[0]
+}
+
+func chatTargets(cfg *config.Config) []string {
+	var targets []string
+	for _, group := range cfg.ModelGroups {
+		if group.Enabled {
+			targets = append(targets, group.ID)
+		}
+	}
+	for _, model := range cfg.Models {
+		if model.Enabled {
+			targets = append(targets, model.ID)
+		}
+	}
+	return targets
+}
+
+func dropLastRune(value string) string {
+	runes := []rune(value)
+	if len(runes) == 0 {
+		return value
+	}
+	return string(runes[:len(runes)-1])
+}
+
+func wrapText(text string, width int) string {
+	if width <= 0 || lipgloss.Width(text) <= width {
+		return text
+	}
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return text
+	}
+	var b strings.Builder
+	line := ""
+	for _, word := range words {
+		candidate := strings.TrimSpace(line + " " + word)
+		if lipgloss.Width(candidate) > width && line != "" {
+			b.WriteString(line)
+			b.WriteString("\n")
+			line = word
+			continue
+		}
+		line = candidate
+	}
+	if line != "" {
+		b.WriteString(line)
+	}
+	return b.String()
+}
+
 func (m model) renderLogs() string {
 	if m.router == nil {
 		return m.emptyState("No logs yet")
@@ -287,19 +635,18 @@ func (m model) renderLogs() string {
 	}
 	rows := [][]string{}
 	for _, item := range items[start:] {
-		session := defaultText(item.SessionID, "-")
 		group := defaultText(item.GroupID, "-")
 		errorText := defaultText(item.Error, "-")
-		rows = append(rows, []string{item.CreatedAt.Format("15:04:05"), session, group, item.ModelID, item.KeyID, fmt.Sprint(item.StatusCode), fmt.Sprintf("%dms", item.LatencyMs), truncate(errorText, 24)})
+		rows = append(rows, []string{item.CreatedAt.Format("15:04:05"), group, item.ModelID, item.KeyID, fmt.Sprint(item.StatusCode), fmt.Sprintf("%dms", item.LatencyMs), truncate(errorText, 28)})
 	}
-	return renderTable(m.styles, []string{"Time", "Session", "Group", "Model", "Key", "Status", "Latency", "Error"}, rows, []int{10, 18, 18, 20, 20, 8, 10, 26})
+	return renderTable(m.styles, []string{"Time", "Group", "Model", "Key", "Status", "Latency", "Error"}, rows, []int{10, 18, 22, 22, 8, 10, 30})
 }
 
 func (m model) counts() (int, int, int, int, int) {
 	providers := len(m.cfg.Providers)
 	models := len(m.cfg.Models)
 	groups := len(m.cfg.ModelGroups)
-	sessions := len(m.cfg.ChatSessions)
+	chats := len(m.chats)
 	keys := len(m.cfg.Keys)
 	if m.router != nil {
 		providers = len(m.router.ListProviders())
@@ -307,7 +654,7 @@ func (m model) counts() (int, int, int, int, int) {
 		groups = len(m.router.ListModelGroups())
 		keys = len(m.router.ListKeys())
 	}
-	return providers, models, groups, sessions, keys
+	return providers, models, groups, chats, keys
 }
 
 func (m model) statusText(enabled bool) string {

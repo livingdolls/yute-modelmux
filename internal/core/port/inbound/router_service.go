@@ -14,7 +14,6 @@ type RouterService interface {
 	ListProviders() []domain.Provider
 	ListModels() []domain.Model
 	ListModelGroups() []domain.ModelGroup
-	ListChatSessions() []domain.ChatSession
 	ListKeys() []domain.APIKey
 	Logs() []domain.RequestLog
 }
@@ -23,7 +22,6 @@ type KeyResult struct {
 	Success         bool
 	ShouldRotateKey bool
 	ModelID         string
-	SessionID       string
 	GroupID         string
 	ProviderID      string
 	StatusCode      int

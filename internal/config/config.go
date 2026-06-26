@@ -11,15 +11,14 @@ import (
 )
 
 type Config struct {
-	App          AppConfig           `yaml:"app"`
-	Server       ServerConfig        `yaml:"server"`
-	Cooldown     CooldownConfig      `yaml:"cooldown"`
-	Retry        RetryConfig         `yaml:"retry"`
-	Providers    []ProviderConfig    `yaml:"providers"`
-	Models       []ModelConfig       `yaml:"models"`
-	ModelGroups  []ModelGroupConfig  `yaml:"model_groups"`
-	ChatSessions []ChatSessionConfig `yaml:"chat_sessions"`
-	Keys         []KeyConfig         `yaml:"keys"`
+	App         AppConfig          `yaml:"app"`
+	Server      ServerConfig       `yaml:"server"`
+	Cooldown    CooldownConfig     `yaml:"cooldown"`
+	Retry       RetryConfig        `yaml:"retry"`
+	Providers   []ProviderConfig   `yaml:"providers"`
+	Models      []ModelConfig      `yaml:"models"`
+	ModelGroups []ModelGroupConfig `yaml:"model_groups"`
+	Keys        []KeyConfig        `yaml:"keys"`
 }
 
 type AppConfig struct {
@@ -93,13 +92,6 @@ type ModelGroupMemberConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 }
 
-type ChatSessionConfig struct {
-	ID      string `yaml:"id"`
-	Name    string `yaml:"name"`
-	Target  string `yaml:"target"`
-	Enabled bool   `yaml:"enabled"`
-}
-
 func DefaultConfigPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
@@ -110,15 +102,14 @@ func DefaultConfigPath() string {
 
 func Default() *Config {
 	return &Config{
-		App:          AppConfig{Name: "modelmux", LogLevel: "info"},
-		Server:       ServerConfig{Host: "127.0.0.1", Port: 8787, ReadTimeoutSecond: 60, WriteTimeoutSecond: 300},
-		Cooldown:     CooldownConfig{RateLimitSeconds: 300, ServerErrorSeconds: 60, TimeoutSeconds: 60},
-		Retry:        RetryConfig{MaxRetryPerKey: 1, MaxTotalAttempts: 5, BackoffMilliseconds: []int{300, 700, 1500}},
-		Providers:    []ProviderConfig{{ID: "mimo", Name: "Xiaomi MiMo", Type: "openai-compatible", BaseURL: "https://api.example.com/v1", AuthType: "bearer", TimeoutSeconds: 120, Enabled: true}},
-		Models:       []ModelConfig{{ID: "mimo-v2.5-pro", ProviderID: "mimo", ModelName: "mimo-v2.5-pro", Strategy: "failover", Enabled: true}},
-		ModelGroups:  []ModelGroupConfig{{ID: "high-price", Name: "High Price Models", Strategy: "failover", Enabled: true, Members: []ModelGroupMemberConfig{{ModelID: "mimo-v2.5-pro", Priority: 1, Weight: 1, Enabled: true}}}},
-		ChatSessions: []ChatSessionConfig{{ID: "chat-session-1", Name: "Chat Session 1", Target: "high-price", Enabled: true}},
-		Keys:         []KeyConfig{{ID: "mimo-key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Name: "MiMo Personal 1", Value: "replace-with-api-key", Status: "active", Priority: 1}},
+		App:         AppConfig{Name: "modelmux", LogLevel: "info"},
+		Server:      ServerConfig{Host: "127.0.0.1", Port: 8787, ReadTimeoutSecond: 60, WriteTimeoutSecond: 300},
+		Cooldown:    CooldownConfig{RateLimitSeconds: 300, ServerErrorSeconds: 60, TimeoutSeconds: 60},
+		Retry:       RetryConfig{MaxRetryPerKey: 1, MaxTotalAttempts: 5, BackoffMilliseconds: []int{300, 700, 1500}},
+		Providers:   []ProviderConfig{{ID: "mimo", Name: "Xiaomi MiMo", Type: "openai-compatible", BaseURL: "https://api.example.com/v1", AuthType: "bearer", TimeoutSeconds: 120, Enabled: true}},
+		Models:      []ModelConfig{{ID: "mimo-v2.5-pro", ProviderID: "mimo", ModelName: "mimo-v2.5-pro", Strategy: "failover", Enabled: true}},
+		ModelGroups: []ModelGroupConfig{{ID: "high-price", Name: "High Price Models", Strategy: "failover", Enabled: true, Members: []ModelGroupMemberConfig{{ModelID: "mimo-v2.5-pro", Priority: 1, Weight: 1, Enabled: true}}}},
+		Keys:        []KeyConfig{{ID: "mimo-key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Name: "MiMo Personal 1", Value: "replace-with-api-key", Status: "active", Priority: 1}},
 	}
 }
 
@@ -227,30 +218,6 @@ func (c *Config) Validate() error {
 			}
 		}
 		groupIDs[g.ID] = struct{}{}
-	}
-	sessionIDs := map[string]struct{}{}
-	for _, session := range c.ChatSessions {
-		if session.ID == "" {
-			return errors.New("chat_session.id is required")
-		}
-		if _, exists := sessionIDs[session.ID]; exists {
-			return fmt.Errorf("duplicate chat session id %s", session.ID)
-		}
-		if _, exists := modelIDs[session.ID]; exists {
-			return fmt.Errorf("chat session id %s conflicts with model id", session.ID)
-		}
-		if _, exists := groupIDs[session.ID]; exists {
-			return fmt.Errorf("chat session id %s conflicts with model group id", session.ID)
-		}
-		if session.Target == "" {
-			return fmt.Errorf("chat session %s target is required", session.ID)
-		}
-		if _, ok := modelIDs[session.Target]; !ok {
-			if _, ok := groupIDs[session.Target]; !ok {
-				return fmt.Errorf("chat session %s references unknown target %s", session.ID, session.Target)
-			}
-		}
-		sessionIDs[session.ID] = struct{}{}
 	}
 	keyIDs := map[string]struct{}{}
 	for _, k := range c.Keys {

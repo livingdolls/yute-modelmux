@@ -38,27 +38,6 @@ Model groups let one request alias fan out across multiple provider models. Conf
 
 ModelMux will try group members by priority, then rotate keys inside the selected member model.
 
-## Chat Sessions
+## TUI Chat Sessions
 
-Chat sessions map a stable session ID to a model or model group.
-
-```yaml
-chat_sessions:
-  - id: "chat-session-1"
-    target: "high-price"
-    enabled: true
-  - id: "chat-session-2"
-    target: "fast-lane"
-    enabled: true
-```
-
-Call the session ID directly as the OpenAI `model`:
-
-```json
-{
-  "model": "chat-session-1",
-  "messages": []
-}
-```
-
-ModelMux resolves the session to its target, then applies normal group/model routing and key rotation.
+The TUI includes in-memory chat sessions. Open the `Chat` page, type a message, and press enter. Use `ctrl+n` for a new session and `ctrl+t` to switch the active session target between configured groups/models.
