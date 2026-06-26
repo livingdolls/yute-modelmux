@@ -36,6 +36,30 @@ func main() {
 	})
 	rootCmd.AddCommand(configCmd)
 
+	var keyTestID string
+	keyCmd := &cobra.Command{Use: "key", Short: "Key management"}
+	keyTestCmd := &cobra.Command{
+		Use:   "test",
+		Short: "Test an API key against its provider",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return err
+			}
+			router := service.NewRouterService(cfg)
+			if err := router.TestKey(cmd.Context(), keyTestID); err != nil {
+				fmt.Fprintln(cmd.ErrOrStderr(), "FAIL:", err)
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "OK:", keyTestID)
+			return nil
+		},
+	}
+	keyTestCmd.Flags().StringVar(&keyTestID, "id", "", "key id to test")
+	keyTestCmd.MarkFlagRequired("id")
+	keyCmd.AddCommand(keyTestCmd)
+	rootCmd.AddCommand(keyCmd)
+
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "start",
 		Short: "Start the local proxy server",
