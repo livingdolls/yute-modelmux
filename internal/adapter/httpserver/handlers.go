@@ -2,8 +2,11 @@ package httpserver
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+
+	"github.com/livingdolls/yute-modelmux/internal/app/service"
 )
 
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +35,7 @@ func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	resp, err := s.rs.HandleChatCompletion(r.Context(), r)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": map[string]any{"message": err.Error(), "type": "modelmux_error"}})
+		writeProxyError(w, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -46,17 +49,61 @@ func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"models": s.rs.ListModels(),
-		"keys":   s.rs.ListKeys(),
-		"logs":   s.rs.Logs(),
-	})
+	type modelMetric struct {
+		ID           string `json:"id"`
+		Requests     int    `json:"requests"`
+		Errors       int    `json:"errors"`
+		ActiveKeys   int    `json:"active_keys"`
+		CooldownKeys int    `json:"cooldown_keys"`
+		InvalidKeys  int    `json:"invalid_keys"`
+	}
+
+	keys := s.rs.ListKeys()
+	logs := s.rs.Logs()
+	metrics := make([]modelMetric, 0, len(s.rs.ListModels()))
+	for _, model := range s.rs.ListModels() {
+		metric := modelMetric{ID: model.ID}
+		for _, key := range keys {
+			if key.ModelID != model.ID {
+				continue
+			}
+			switch key.Status {
+			case "active":
+				metric.ActiveKeys++
+			case "cooldown":
+				metric.CooldownKeys++
+			case "invalid":
+				metric.InvalidKeys++
+			}
+		}
+		for _, log := range logs {
+			if log.ModelID != model.ID {
+				continue
+			}
+			metric.Requests++
+			if log.StatusCode >= 400 || log.Error != "" {
+				metric.Errors++
+			}
+		}
+		metrics = append(metrics, metric)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"models": metrics})
 }
 
 func writeJSON(w http.ResponseWriter, code int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func writeProxyError(w http.ResponseWriter, err error) {
+	var proxyErr *service.ProxyError
+	if errors.As(err, &proxyErr) {
+		writeJSON(w, proxyErr.HTTPStatus, map[string]any{"error": map[string]any{"message": proxyErr.Message, "type": proxyErr.Type, "code": proxyErr.Code}})
+		return
+	}
+	writeJSON(w, http.StatusBadGateway, map[string]any{"error": map[string]any{"message": err.Error(), "type": "modelmux_error"}})
 }
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
@@ -67,7 +114,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 		expected := s.cfg.AuthToken()
 		if expected == "" {
-			next.ServeHTTP(w, r)
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "server auth token is not configured"})
 			return
 		}
 		if r.Header.Get("Authorization") != "Bearer "+expected {

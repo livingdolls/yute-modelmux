@@ -153,6 +153,9 @@ func (c *Config) Validate() error {
 	if c.Server.Port <= 0 {
 		return errors.New("server.port must be greater than zero")
 	}
+	if c.Server.RequireAuth && c.Server.AuthTokenEnv == "" {
+		return errors.New("server.auth_token_env is required when server.require_auth is true")
+	}
 	providerIDs := map[string]struct{}{}
 	for _, p := range c.Providers {
 		if p.ID == "" {

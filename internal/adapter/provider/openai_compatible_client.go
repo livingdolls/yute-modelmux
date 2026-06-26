@@ -3,6 +3,7 @@ package provider
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,23 +19,22 @@ type OpenAICompatibleClient struct{}
 func New() *OpenAICompatibleClient { return &OpenAICompatibleClient{} }
 
 func (c *OpenAICompatibleClient) ForwardChatCompletion(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey, req *http.Request) (*http.Response, error) {
-	baseURL, err := url.Parse(strings.TrimRight(provider.BaseURL, "/"))
+	endpoint, err := providerEndpoint(provider.BaseURL, "/chat/completions")
 	if err != nil {
 		return nil, err
 	}
-	endpoint, err := url.Parse("/chat/completions")
-	if err != nil {
-		return nil, err
-	}
-	baseURL = baseURL.ResolveReference(endpoint)
 
 	bodyBytes, err := io.ReadAll(req.Body)
 	if err != nil {
 		return nil, err
 	}
+	rewrittenBody, err := rewriteModelName(bodyBytes, model.ModelName)
+	if err != nil {
+		return nil, err
+	}
 	req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
-	upstream, err := http.NewRequestWithContext(ctx, req.Method, baseURL.String(), bytes.NewReader(bodyBytes))
+	upstream, err := http.NewRequestWithContext(ctx, req.Method, endpoint, bytes.NewReader(rewrittenBody))
 	if err != nil {
 		return nil, err
 	}
@@ -50,13 +50,11 @@ func (c *OpenAICompatibleClient) ForwardChatCompletion(ctx context.Context, prov
 }
 
 func (c *OpenAICompatibleClient) TestKey(ctx context.Context, provider domain.Provider, apiKey domain.APIKey) error {
-	baseURL, err := url.Parse(strings.TrimRight(provider.BaseURL, "/"))
+	endpoint, err := providerEndpoint(provider.BaseURL, "/models")
 	if err != nil {
 		return err
 	}
-	endpoint, _ := url.Parse("/models")
-	baseURL = baseURL.ResolveReference(endpoint)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return err
 	}
@@ -75,8 +73,36 @@ func (c *OpenAICompatibleClient) TestKey(ctx context.Context, provider domain.Pr
 
 func setAuthHeader(headers http.Header, provider domain.Provider, apiKey domain.APIKey) {
 	if provider.AuthType == domain.AuthTypeHeader && provider.AuthHeaderName != "" {
+		if !strings.EqualFold(provider.AuthHeaderName, "Authorization") {
+			headers.Del("Authorization")
+		}
 		headers.Set(provider.AuthHeaderName, apiKey.Value)
 		return
 	}
 	headers.Set("Authorization", "Bearer "+apiKey.Value)
+}
+
+func providerEndpoint(baseURL, path string) (string, error) {
+	endpoint := strings.TrimRight(baseURL, "/") + path
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return "", err
+	}
+	return parsed.String(), nil
+}
+
+func rewriteModelName(body []byte, modelName string) ([]byte, error) {
+	if modelName == "" {
+		return body, nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	modelValue, err := json.Marshal(modelName)
+	if err != nil {
+		return nil, err
+	}
+	payload["model"] = modelValue
+	return json.Marshal(payload)
 }

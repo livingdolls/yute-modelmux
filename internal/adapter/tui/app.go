@@ -3,10 +3,12 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/livingdolls/yute-modelmux/internal/config"
+	"github.com/livingdolls/yute-modelmux/internal/core/domain"
 	"github.com/livingdolls/yute-modelmux/internal/core/port/inbound"
 )
 
@@ -26,6 +28,8 @@ type styles struct {
 	accent lipgloss.Style
 }
 
+type tickMsg time.Time
+
 func Run(cfg *config.Config, router inbound.RouterService) error {
 	m := model{cfg: cfg, router: router, styles: defaultStyles()}
 	prog := tea.NewProgram(m, tea.WithAltScreen())
@@ -42,7 +46,7 @@ func defaultStyles() styles {
 	}
 }
 
-func (m model) Init() tea.Cmd { return nil }
+func (m model) Init() tea.Cmd { return tickCmd() }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -62,6 +66,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+	case tickMsg:
+		return m, tickCmd()
 	}
 	return m, nil
 }
@@ -78,7 +84,10 @@ func (m model) renderPage() string {
 	case 1:
 		return m.styles.box.Render(renderModels(m.cfg.Models))
 	case 2:
-		return m.styles.box.Render(renderKeys(m.cfg.Keys))
+		if m.router != nil {
+			return m.styles.box.Render(renderDomainKeys(m.router.ListKeys()))
+		}
+		return m.styles.box.Render(renderConfigKeys(m.cfg.Keys))
 	case 3:
 		return m.styles.box.Render(renderLogs(m.router))
 	default:
@@ -104,11 +113,24 @@ func renderModels(items []config.ModelConfig) string {
 	return b.String()
 }
 
-func renderKeys(items []config.KeyConfig) string {
+func renderConfigKeys(items []config.KeyConfig) string {
 	var b strings.Builder
 	b.WriteString("Keys\n\n")
 	for _, item := range items {
 		fmt.Fprintf(&b, "%s  model=%s  status=%s  priority=%d\n", item.ID, item.ModelID, item.Status, item.Priority)
+	}
+	return b.String()
+}
+
+func renderDomainKeys(items []domain.APIKey) string {
+	var b strings.Builder
+	b.WriteString("Keys\n\n")
+	for _, item := range items {
+		cooldown := "-"
+		if item.CooldownEnd != nil && item.CooldownEnd.After(time.Now()) {
+			cooldown = time.Until(*item.CooldownEnd).Round(time.Second).String()
+		}
+		fmt.Fprintf(&b, "%s  model=%s  status=%s  used=%d  errors=%d  cooldown=%s\n", item.ID, item.ModelID, item.Status, item.UsedCount, item.ErrorCount, cooldown)
 	}
 	return b.String()
 }
@@ -136,4 +158,8 @@ func boolText(v bool) string {
 		return "active"
 	}
 	return "disabled"
+}
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
 }

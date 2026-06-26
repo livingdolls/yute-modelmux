@@ -1,10 +1,8 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"sync"
 
 	"github.com/livingdolls/yute-modelmux/internal/adapter/httpserver"
 	"github.com/livingdolls/yute-modelmux/internal/adapter/tui"
@@ -48,24 +46,7 @@ func main() {
 
 			router := service.NewRouterService(cfg)
 			srv := httpserver.New(router, cfg)
-
-			ctx, cancel := context.WithCancel(cmd.Context())
-			var wg sync.WaitGroup
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				_ = srv.Run(ctx)
-			}()
-
-			if err := tui.Run(cfg, router); err != nil {
-				cancel()
-				wg.Wait()
-				return err
-			}
-
-			cancel()
-			wg.Wait()
-			return nil
+			return srv.Run(cmd.Context())
 		},
 	})
 

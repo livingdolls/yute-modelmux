@@ -20,7 +20,10 @@ type RouterService interface {
 type KeyResult struct {
 	Success         bool
 	ShouldRotateKey bool
+	ModelID         string
+	ProviderID      string
 	StatusCode      int
 	Error           string
+	LatencyMs       int64
 	CooldownSeconds int
 }

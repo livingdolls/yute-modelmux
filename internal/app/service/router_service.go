@@ -3,12 +3,12 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +19,24 @@ import (
 )
 
 var ErrNoAvailableKey = errors.New("no available key")
+
+type ProxyError struct {
+	HTTPStatus int
+	Type       string
+	Code       string
+	Message    string
+}
+
+func (e *ProxyError) Error() string { return e.Message }
+
+func AllKeysUnavailableError(modelID string) *ProxyError {
+	return &ProxyError{
+		HTTPStatus: http.StatusTooManyRequests,
+		Type:       "modelmux_all_keys_unavailable",
+		Code:       "all_keys_limited",
+		Message:    fmt.Sprintf("all API keys for model %s are currently limited or unavailable", modelID),
+	}
+}
 
 type RouterService struct {
 	cfg       *config.Config
@@ -64,11 +82,23 @@ func NewRouterService(cfg *config.Config) *RouterService {
 }
 
 func (s *RouterService) ListProviders() []domain.Provider {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return append([]domain.Provider(nil), s.providers...)
 }
-func (s *RouterService) ListModels() []domain.Model { return append([]domain.Model(nil), s.models...) }
-func (s *RouterService) ListKeys() []domain.APIKey  { return append([]domain.APIKey(nil), s.keys...) }
+func (s *RouterService) ListModels() []domain.Model {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]domain.Model(nil), s.models...)
+}
+func (s *RouterService) ListKeys() []domain.APIKey {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]domain.APIKey(nil), s.keys...)
+}
 func (s *RouterService) Logs() []domain.RequestLog {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return append([]domain.RequestLog(nil), s.logs...)
 }
 
@@ -115,38 +145,48 @@ func (s *RouterService) HandleChatCompletion(ctx context.Context, req *http.Requ
 	if err != nil {
 		return nil, err
 	}
-	modelID := extractModelFromBody(bodyBytes)
-	if modelID == "" {
-		return nil, errors.New("request body missing model")
+	modelID, err := extractModelFromBody(bodyBytes)
+	if err != nil {
+		return nil, err
 	}
 	model, ok := s.modelByID(modelID)
-	if !ok {
+	if !ok || !model.Enabled {
 		return nil, fmt.Errorf("unknown model %s", modelID)
 	}
 	provider, ok := s.providerByID(model.ProviderID)
-	if !ok {
+	if !ok || !provider.Enabled {
 		return nil, fmt.Errorf("unknown provider %s", model.ProviderID)
 	}
 
 	attempted := map[string]struct{}{}
-	maxAttempts := len(s.keys)
+	maxAttempts := s.keyCountForModel(modelID)
 	if s.cfg.Retry.MaxTotalAttempts > 0 && s.cfg.Retry.MaxTotalAttempts < maxAttempts {
 		maxAttempts = s.cfg.Retry.MaxTotalAttempts
+	}
+	if maxAttempts == 0 {
+		return nil, AllKeysUnavailableError(modelID)
 	}
 
 	for attempts := 0; attempts < maxAttempts; attempts++ {
 		key, err := s.SelectKey(ctx, modelID)
 		if err != nil {
+			if errors.Is(err, ErrNoAvailableKey) {
+				return nil, AllKeysUnavailableError(modelID)
+			}
 			return nil, err
 		}
 		if _, seen := attempted[key.ID]; seen {
-			return nil, errors.New("all keys attempted")
+			return nil, AllKeysUnavailableError(modelID)
 		}
 		attempted[key.ID] = struct{}{}
 
 		clonedReq := cloneRequestWithBody(req, bodyBytes)
+		startedAt := time.Now()
 		resp, err := s.client.ForwardChatCompletion(ctx, provider, model, *key, clonedReq)
 		result := classifyResult(resp, err, s.cfg)
+		result.ModelID = model.ID
+		result.ProviderID = provider.ID
+		result.LatencyMs = time.Since(startedAt).Milliseconds()
 		_ = s.MarkKeyResult(ctx, key.ID, result)
 		if result.Success {
 			return resp, nil
@@ -154,8 +194,11 @@ func (s *RouterService) HandleChatCompletion(ctx context.Context, req *http.Requ
 		if !result.ShouldRotateKey {
 			return resp, err
 		}
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
 	}
-	return nil, errors.New("all keys failed")
+	return nil, AllKeysUnavailableError(modelID)
 }
 
 func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result inbound.KeyResult) error {
@@ -169,24 +212,29 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 		now := time.Now()
 		s.keys[i].UpdatedAt = now
 		s.keys[i].UsedCount++
+		s.keys[i].LastUsedAt = &now
+		log := domain.RequestLog{ID: fmt.Sprintf("log-%d", now.UnixNano()), ModelID: result.ModelID, ProviderID: result.ProviderID, KeyID: keyID, StatusCode: result.StatusCode, Error: result.Error, LatencyMs: result.LatencyMs, CreatedAt: now}
 		if result.Success {
 			s.keys[i].ErrorCount = 0
 			s.keys[i].Status = domain.KeyStatusActive
-			s.keys[i].LastUsedAt = &now
+			s.keys[i].CooldownEnd = nil
+			s.appendLog(log)
 			return nil
 		}
 		s.keys[i].ErrorCount++
-		s.keys[i].LastUsedAt = &now
 		s.keys[i].Status = domain.KeyStatusActive
-		s.appendLog(domain.RequestLog{ID: fmt.Sprintf("log-%d", now.UnixNano()), KeyID: keyID, StatusCode: result.StatusCode, Error: result.Error, CreatedAt: now})
-		if result.StatusCode == http.StatusTooManyRequests {
+		if result.StatusCode == http.StatusUnauthorized || result.StatusCode == http.StatusForbidden {
+			s.keys[i].Status = domain.KeyStatusInvalid
+			s.keys[i].CooldownEnd = nil
+			s.appendLog(log)
+			return nil
+		}
+		if result.CooldownSeconds > 0 {
 			s.keys[i].Status = domain.KeyStatusCooldown
 			until := now.Add(time.Duration(result.CooldownSeconds) * time.Second)
 			s.keys[i].CooldownEnd = &until
 		}
-		if result.StatusCode == http.StatusUnauthorized || result.StatusCode == http.StatusForbidden {
-			s.keys[i].Status = domain.KeyStatusInvalid
-		}
+		s.appendLog(log)
 		return nil
 	}
 	return fmt.Errorf("key %s not found", keyID)
@@ -217,6 +265,16 @@ func (s *RouterService) modelByID(id string) (domain.Model, bool) {
 	return domain.Model{}, false
 }
 
+func (s *RouterService) keyCountForModel(modelID string) int {
+	count := 0
+	for _, k := range s.keys {
+		if k.ModelID == modelID {
+			count++
+		}
+	}
+	return count
+}
+
 func (s *RouterService) availableKeys(modelID string) []domain.APIKey {
 	now := time.Now()
 	var out []domain.APIKey
@@ -243,32 +301,25 @@ func cloneRequestWithBody(req *http.Request, body []byte) *http.Request {
 	return cloned
 }
 
-func extractModelFromBody(body []byte) string {
-	marker := `"model"`
-	idx := strings.Index(string(body), marker)
-	if idx < 0 {
-		return ""
+func extractModelFromBody(body []byte) (string, error) {
+	var payload struct {
+		Model string `json:"model"`
 	}
-	rest := string(body)[idx+len(marker):]
-	colon := strings.Index(rest, ":")
-	if colon < 0 {
-		return ""
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return "", fmt.Errorf("invalid JSON request body: %w", err)
 	}
-	rest = rest[colon+1:]
-	rest = strings.TrimLeft(rest, " \t\r\n\"")
-	end := strings.IndexAny(rest, "\" ,}\r\n\t")
-	if end < 0 {
-		return strings.Trim(rest, "\"")
+	if payload.Model == "" {
+		return "", errors.New("request body missing model")
 	}
-	return strings.Trim(rest[:end], "\"")
+	return payload.Model, nil
 }
 
 func classifyResult(resp *http.Response, err error, cfg *config.Config) inbound.KeyResult {
 	if err != nil {
-		return inbound.KeyResult{ShouldRotateKey: true, Error: err.Error()}
+		return inbound.KeyResult{ShouldRotateKey: true, Error: err.Error(), CooldownSeconds: cfg.Cooldown.TimeoutSeconds}
 	}
 	if resp == nil {
-		return inbound.KeyResult{ShouldRotateKey: true, Error: "empty response"}
+		return inbound.KeyResult{ShouldRotateKey: true, Error: "empty response", CooldownSeconds: cfg.Cooldown.TimeoutSeconds}
 	}
 	result := inbound.KeyResult{StatusCode: resp.StatusCode}
 	switch resp.StatusCode {
@@ -287,9 +338,10 @@ func classifyResult(resp *http.Response, err error, cfg *config.Config) inbound.
 	default:
 		if resp.StatusCode >= 500 {
 			result.ShouldRotateKey = true
+			result.CooldownSeconds = cfg.Cooldown.ServerErrorSeconds
 		}
 	}
-	if !result.Success && !result.ShouldRotateKey {
+	if !result.Success {
 		result.Error = resp.Status
 	}
 	return result
