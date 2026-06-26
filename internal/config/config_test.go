@@ -150,3 +150,28 @@ func TestValidateRejectsDuplicateKeyIDMixedValueAndValueEnv(t *testing.T) {
 		t.Fatal("expected duplicate key id error for mixed value/value_env keys")
 	}
 }
+
+func TestReloadFlowFailsWhenValueEnvMissing(t *testing.T) {
+	cfg := Default()
+	cfg.Keys[0].Value = ""
+	cfg.Keys[0].ValueEnv = "MUX_RELOAD_MISSING"
+
+	if err := cfg.ResolveSecrets(); err == nil {
+		t.Fatal("expected resolve secrets error for missing env var during reload")
+	}
+}
+
+func TestReloadFlowSucceedsWhenValueEnvAvailable(t *testing.T) {
+	t.Setenv("MUX_RELOAD_EXISTS", "reload-token")
+
+	cfg := Default()
+	cfg.Keys[0].Value = ""
+	cfg.Keys[0].ValueEnv = "MUX_RELOAD_EXISTS"
+
+	if err := cfg.ResolveSecrets(); err != nil {
+		t.Fatalf("resolve secrets failed: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate failed: %v", err)
+	}
+}

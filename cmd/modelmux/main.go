@@ -68,6 +68,9 @@ func main() {
 					return config.Save(configPath, next)
 				},
 				ReloadRouter: func(next *config.Config) (inbound.RouterService, error) {
+					if err := next.ResolveSecrets(); err != nil {
+						return nil, err
+					}
 					if err := next.Validate(); err != nil {
 						return nil, err
 					}
