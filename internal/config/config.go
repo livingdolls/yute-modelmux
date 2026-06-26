@@ -33,6 +33,7 @@ type ServerConfig struct {
 	WriteTimeoutSecond int    `yaml:"write_timeout_seconds"`
 	RequireAuth        bool   `yaml:"require_auth"`
 	AuthTokenEnv       string `yaml:"auth_token_env"`
+	MaxRequestBodyMB   int    `yaml:"max_request_body_mb"`
 }
 
 type CooldownConfig struct {
@@ -103,7 +104,7 @@ func DefaultConfigPath() string {
 func Default() *Config {
 	return &Config{
 		App:         AppConfig{Name: "modelmux", LogLevel: "info"},
-		Server:      ServerConfig{Host: "127.0.0.1", Port: 8787, ReadTimeoutSecond: 60, WriteTimeoutSecond: 300},
+		Server:      ServerConfig{Host: "127.0.0.1", Port: 8787, ReadTimeoutSecond: 60, WriteTimeoutSecond: 300, MaxRequestBodyMB: 10},
 		Cooldown:    CooldownConfig{RateLimitSeconds: 300, ServerErrorSeconds: 60, TimeoutSeconds: 60},
 		Retry:       RetryConfig{MaxRetryPerKey: 1, MaxTotalAttempts: 5, BackoffMilliseconds: []int{300, 700, 1500}},
 		Providers:   []ProviderConfig{{ID: "mimo", Name: "Xiaomi MiMo", Type: "openai-compatible", BaseURL: "https://api.example.com/v1", AuthType: "bearer", TimeoutSeconds: 120, Enabled: true}},

@@ -43,6 +43,11 @@ func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	maxBytes := int64(s.cfg.Server.MaxRequestBodyMB) * 1024 * 1024
+	if maxBytes <= 0 {
+		maxBytes = 10 * 1024 * 1024
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 	resp, err := s.rs.HandleChatCompletion(r.Context(), r)
 	if err != nil {
 		writeProxyError(w, err)

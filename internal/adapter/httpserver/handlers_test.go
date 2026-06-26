@@ -89,3 +89,19 @@ func TestChatReturns403ForDisabledModel(t *testing.T) {
 		t.Fatalf("expected 403 for disabled model, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestChatReturnsErrorForLargeRequestBody(t *testing.T) {
+	cfg := config.Default()
+	cfg.Server.MaxRequestBodyMB = 1
+	rs := service.NewRouterService(cfg)
+	srv := New(rs, cfg)
+
+	largeBody := strings.Repeat("x", 2*1024*1024)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(largeBody))
+	rec := httptest.NewRecorder()
+	srv.chatCompletionsHandler(rec, req)
+
+	if rec.Code < 400 {
+		t.Fatalf("expected error for oversized body, got %d", rec.Code)
+	}
+}
