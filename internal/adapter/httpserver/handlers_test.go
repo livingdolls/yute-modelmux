@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/livingdolls/yute-modelmux/internal/app/service"
 	"github.com/livingdolls/yute-modelmux/internal/config"
@@ -203,4 +204,84 @@ func TestChatSSEForwardsChunksAndHeaders(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "DONE") {
 		t.Log("SSE [DONE] marker forwarded successfully")
 	}
+}
+
+func TestChatSSEDeliversChunksBeforeStreamEnds(t *testing.T) {
+	// Upstream sends SSE chunks with flush and delays
+	chunk1Sent := make(chan struct{})
+	chunk2Sent := make(chan struct{})
+	doneSent := make(chan struct{})
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("upstream must support Flusher")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("data: first\n\n"))
+		flusher.Flush()
+		close(chunk1Sent)
+
+		w.Write([]byte("data: second\n\n"))
+		flusher.Flush()
+		close(chunk2Sent)
+
+		w.Write([]byte("data: [DONE]\n\n"))
+		flusher.Flush()
+		close(doneSent)
+	}))
+	defer upstream.Close()
+
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = upstream.URL + "/v1"
+	cfg.Models[0].ModelName = cfg.Models[0].ID
+	rs := service.NewRouterService(cfg)
+	srv := New(rs, cfg)
+
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srv.chatCompletionsHandler(w, r)
+	}))
+	defer proxy.Close()
+
+	resp, err := http.Post(proxy.URL+"/v1/chat/completions", "application/json",
+		strings.NewReader(`{"model":"mimo-v2.5-pro","messages":[],"stream":true}`))
+	if err != nil {
+		t.Fatalf("proxy request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected Content-Type text/event-stream, got %s", ct)
+	}
+
+	buf := make([]byte, 64)
+	n, err := resp.Body.Read(buf)
+	if err != nil {
+		t.Fatalf("read first chunk failed: %v", err)
+	}
+	firstChunk := string(buf[:n])
+
+	select {
+	case <-chunk1Sent:
+		t.Log("first chunk delivered after upstream sent it")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for first chunk to arrive")
+	}
+
+	if firstChunk == "" {
+		t.Fatal("first chunk is empty")
+	}
+	t.Logf("received: %s", firstChunk)
+
+	// Read remaining data
+	remaining, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read remaining body failed: %v", err)
+	}
+	fullBody := firstChunk + string(remaining)
+	if !strings.Contains(fullBody, "first") || !strings.Contains(fullBody, "second") || !strings.Contains(fullBody, "DONE") {
+		t.Fatalf("expected all SSE chunks in body, got: %s", fullBody)
+	}
+	t.Logf("full stream body received (%d bytes)", len(fullBody))
 }
