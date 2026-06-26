@@ -229,10 +229,10 @@ func (m model) View() string {
 	if width == 0 {
 		width = 100
 	}
-	contentWidth := maxInt(48, width-26)
+	contentWidth := maxInt(48, width-30)
 
 	header := m.renderHeader(width - 4)
-	sidebar := m.renderSidebar(15)
+	sidebar := m.renderSidebar(20)
 	content := m.styles.panel.Width(contentWidth).Render(m.renderPage())
 	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, " ", content)
 	footerText := "Navigate: up/down or tab  Select: enter  Quit: q"
@@ -372,7 +372,7 @@ func (m model) renderChat() string {
 		return m.emptyState("No chat sessions")
 	}
 	active := m.chats[m.activeChat]
-	left := m.renderChatSessionList(16)
+	left := m.renderChatSessionList(20)
 	right := m.renderChatConversation(active)
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
 }
