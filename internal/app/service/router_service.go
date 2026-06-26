@@ -57,6 +57,7 @@ type RouterService struct {
 	providers    []domain.Provider
 	models       []domain.Model
 	groups       []domain.ModelGroup
+	sessions     []domain.ChatSession
 	keys         []domain.APIKey
 }
 
@@ -101,6 +102,9 @@ func NewRouterService(cfg *config.Config) *RouterService {
 		}
 		rs.groups = append(rs.groups, group)
 	}
+	for _, session := range cfg.ChatSessions {
+		rs.sessions = append(rs.sessions, domain.ChatSession{ID: session.ID, Name: session.Name, Target: session.Target, Enabled: session.Enabled})
+	}
 	now := time.Now()
 	for _, k := range cfg.Keys {
 		status := domain.APIKeyStatus(k.Status)
@@ -126,6 +130,11 @@ func (s *RouterService) ListModelGroups() []domain.ModelGroup {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]domain.ModelGroup(nil), s.groups...)
+}
+func (s *RouterService) ListChatSessions() []domain.ChatSession {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]domain.ChatSession(nil), s.sessions...)
 }
 func (s *RouterService) ListKeys() []domain.APIKey {
 	s.mu.Lock()
@@ -190,17 +199,45 @@ func (s *RouterService) HandleChatCompletion(ctx context.Context, req *http.Requ
 		if !model.Enabled {
 			return nil, fmt.Errorf("model %s is disabled", requestedID)
 		}
-		return s.handleModelChatCompletion(ctx, req, bodyBytes, "", model)
+		return s.handleModelChatCompletion(ctx, req, bodyBytes, "", "", model)
 	}
 
 	group, ok := s.groupByID(requestedID)
-	if !ok || !group.Enabled {
-		return nil, fmt.Errorf("unknown model or model group %s", requestedID)
+	if ok {
+		if !group.Enabled {
+			return nil, fmt.Errorf("model group %s is disabled", requestedID)
+		}
+		return s.handleGroupChatCompletion(ctx, req, bodyBytes, "", group)
 	}
-	return s.handleGroupChatCompletion(ctx, req, bodyBytes, group)
+
+	session, ok := s.sessionByID(requestedID)
+	if !ok || !session.Enabled {
+		return nil, fmt.Errorf("unknown model, model group, or chat session %s", requestedID)
+	}
+	return s.handleSessionChatCompletion(ctx, req, bodyBytes, session)
 }
 
-func (s *RouterService) handleGroupChatCompletion(ctx context.Context, req *http.Request, bodyBytes []byte, group domain.ModelGroup) (*http.Response, error) {
+func (s *RouterService) handleSessionChatCompletion(ctx context.Context, req *http.Request, bodyBytes []byte, session domain.ChatSession) (*http.Response, error) {
+	model, ok := s.modelByID(session.Target)
+	if ok {
+		if !model.Enabled {
+			return nil, fmt.Errorf("chat session %s target model %s is disabled", session.ID, session.Target)
+		}
+		return s.handleModelChatCompletion(ctx, req, bodyBytes, session.ID, "", model)
+	}
+
+	group, ok := s.groupByID(session.Target)
+	if ok {
+		if !group.Enabled {
+			return nil, fmt.Errorf("chat session %s target group %s is disabled", session.ID, session.Target)
+		}
+		return s.handleGroupChatCompletion(ctx, req, bodyBytes, session.ID, group)
+	}
+
+	return nil, fmt.Errorf("chat session %s target %s not found", session.ID, session.Target)
+}
+
+func (s *RouterService) handleGroupChatCompletion(ctx context.Context, req *http.Request, bodyBytes []byte, sessionID string, group domain.ModelGroup) (*http.Response, error) {
 	attemptedModels := map[string]struct{}{}
 
 	for len(attemptedModels) < len(group.Members) {
@@ -210,7 +247,7 @@ func (s *RouterService) handleGroupChatCompletion(ctx context.Context, req *http
 		}
 		attemptedModels[member.ModelID] = struct{}{}
 
-		resp, err := s.handleModelChatCompletion(ctx, req, bodyBytes, group.ID, model)
+		resp, err := s.handleModelChatCompletion(ctx, req, bodyBytes, sessionID, group.ID, model)
 		if isUnavailable(err) {
 			continue
 		}
@@ -220,7 +257,7 @@ func (s *RouterService) handleGroupChatCompletion(ctx context.Context, req *http
 	return nil, GroupUnavailableError(group.ID)
 }
 
-func (s *RouterService) handleModelChatCompletion(ctx context.Context, req *http.Request, bodyBytes []byte, groupID string, model domain.Model) (*http.Response, error) {
+func (s *RouterService) handleModelChatCompletion(ctx context.Context, req *http.Request, bodyBytes []byte, sessionID string, groupID string, model domain.Model) (*http.Response, error) {
 	provider, ok := s.providerByID(model.ProviderID)
 	if !ok || !provider.Enabled {
 		return nil, fmt.Errorf("unknown provider %s", model.ProviderID)
@@ -253,6 +290,7 @@ func (s *RouterService) handleModelChatCompletion(ctx context.Context, req *http
 		resp, err := s.client.ForwardChatCompletion(ctx, provider, model, *key, clonedReq)
 		result := classifyResult(resp, err, s.cfg)
 		result.ModelID = model.ID
+		result.SessionID = sessionID
 		result.GroupID = groupID
 		result.ProviderID = provider.ID
 		result.LatencyMs = time.Since(startedAt).Milliseconds()
@@ -282,7 +320,7 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 		s.keys[i].UpdatedAt = now
 		s.keys[i].UsedCount++
 		s.keys[i].LastUsedAt = &now
-		log := domain.RequestLog{ID: fmt.Sprintf("log-%d", now.UnixNano()), GroupID: result.GroupID, ModelID: result.ModelID, ProviderID: result.ProviderID, KeyID: keyID, StatusCode: result.StatusCode, Error: result.Error, LatencyMs: result.LatencyMs, CreatedAt: now}
+		log := domain.RequestLog{ID: fmt.Sprintf("log-%d", now.UnixNano()), SessionID: result.SessionID, GroupID: result.GroupID, ModelID: result.ModelID, ProviderID: result.ProviderID, KeyID: keyID, StatusCode: result.StatusCode, Error: result.Error, LatencyMs: result.LatencyMs, CreatedAt: now}
 		if result.Success {
 			s.keys[i].ErrorCount = 0
 			s.keys[i].Status = domain.KeyStatusActive
@@ -341,6 +379,15 @@ func (s *RouterService) groupByID(id string) (domain.ModelGroup, bool) {
 		}
 	}
 	return domain.ModelGroup{}, false
+}
+
+func (s *RouterService) sessionByID(id string) (domain.ChatSession, bool) {
+	for _, session := range s.sessions {
+		if session.ID == id {
+			return session, true
+		}
+	}
+	return domain.ChatSession{}, false
 }
 
 func (s *RouterService) SelectGroupMember(groupID string, attempted map[string]struct{}) (domain.ModelGroupMember, domain.Model, bool) {

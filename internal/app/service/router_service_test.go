@@ -205,6 +205,72 @@ func TestHandleChatCompletionGroupUnavailable(t *testing.T) {
 	}
 }
 
+func TestHandleChatCompletionRoutesChatSessionToGroup(t *testing.T) {
+	var gotModel string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode upstream request: %v", err)
+		}
+		gotModel = payload.Model
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := groupRoutingConfig(server.URL + "/v1")
+	rs := NewRouterService(cfg)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"chat-session-1","messages":[]}`))
+
+	resp, err := rs.HandleChatCompletion(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handle session request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if gotModel != "gpt-5.5-xHigh" {
+		t.Fatalf("expected provider model gpt-5.5-xHigh, got %s", gotModel)
+	}
+	logs := rs.Logs()
+	if len(logs) != 1 || logs[0].SessionID != "chat-session-1" || logs[0].GroupID != "high-price" || logs[0].ModelID != "gpt-5.5-xhigh" {
+		t.Fatalf("unexpected session log: %+v", logs)
+	}
+}
+
+func TestHandleChatCompletionRoutesChatSessionToModel(t *testing.T) {
+	var gotModel string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode upstream request: %v", err)
+		}
+		gotModel = payload.Model
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := groupRoutingConfig(server.URL + "/v1")
+	rs := NewRouterService(cfg)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"chat-session-2","messages":[]}`))
+
+	resp, err := rs.HandleChatCompletion(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handle direct session request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if gotModel != "gpt-5.5-fast" {
+		t.Fatalf("expected provider model gpt-5.5-fast, got %s", gotModel)
+	}
+	logs := rs.Logs()
+	if len(logs) != 1 || logs[0].SessionID != "chat-session-2" || logs[0].GroupID != "" || logs[0].ModelID != "gpt-5.5-fast" {
+		t.Fatalf("unexpected direct session log: %+v", logs)
+	}
+}
+
 func groupRoutingConfig(baseURL string) *config.Config {
 	return &config.Config{
 		App:      config.AppConfig{Name: "modelmux", LogLevel: "info"},
@@ -223,6 +289,10 @@ func groupRoutingConfig(baseURL string) *config.Config {
 				{ModelID: "gpt-5.5-xhigh", Priority: 1, Weight: 1, Enabled: true},
 				{ModelID: "gpt-5.5-fast", Priority: 2, Weight: 1, Enabled: true},
 			}},
+		},
+		ChatSessions: []config.ChatSessionConfig{
+			{ID: "chat-session-1", Name: "Chat Session 1", Target: "high-price", Enabled: true},
+			{ID: "chat-session-2", Name: "Chat Session 2", Target: "gpt-5.5-fast", Enabled: true},
 		},
 		Keys: []config.KeyConfig{
 			{ID: "openai-xhigh-key-1", ProviderID: "openai", ModelID: "gpt-5.5-xhigh", Value: "xhigh-key", Status: "active", Priority: 1},

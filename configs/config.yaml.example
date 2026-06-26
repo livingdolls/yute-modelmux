@@ -91,7 +91,7 @@ keys:
     provider_id: "openai"
     model_id: "gpt-5.5-xhigh"
     name: "OpenAI xHigh 1"
-    value_env: "OPENAI_XHIGH_KEY_1"
+    value: "replace-with-openai-xhigh-key-1"
     status: "active"
     priority: 1
 
@@ -99,7 +99,7 @@ keys:
     provider_id: "openai"
     model_id: "gpt-5.5-xhigh"
     name: "OpenAI xHigh 2"
-    value_env: "OPENAI_XHIGH_KEY_2"
+    value: "replace-with-openai-xhigh-key-2"
     status: "active"
     priority: 2
 
@@ -107,7 +107,7 @@ keys:
     provider_id: "openai"
     model_id: "gpt-5.5-xhigh"
     name: "OpenAI xHigh 3"
-    value_env: "OPENAI_XHIGH_KEY_3"
+    value: "replace-with-openai-xhigh-key-3"
     status: "active"
     priority: 3
 
@@ -115,7 +115,7 @@ keys:
     provider_id: "openai"
     model_id: "gpt-5.5-fast"
     name: "OpenAI Fast 1"
-    value_env: "OPENAI_FAST_KEY_1"
+    value: "replace-with-openai-fast-key-1"
     status: "active"
     priority: 1
 
@@ -123,7 +123,7 @@ keys:
     provider_id: "claude"
     model_id: "claude-4.8"
     name: "Claude 4.8 1"
-    value_env: "CLAUDE_48_KEY_1"
+    value: "replace-with-claude-48-key-1"
     status: "active"
     priority: 1
 
@@ -131,7 +131,7 @@ keys:
     provider_id: "claude"
     model_id: "claude-4.8"
     name: "Claude 4.8 2"
-    value_env: "CLAUDE_48_KEY_2"
+    value: "replace-with-claude-48-key-2"
     status: "active"
     priority: 2
 
@@ -139,7 +139,7 @@ keys:
     provider_id: "claude"
     model_id: "claude-fable"
     name: "Claude Fable 1"
-    value_env: "CLAUDE_FABLE_KEY_1"
+    value: "replace-with-claude-fable-key-1"
     status: "active"
     priority: 1
 
@@ -147,6 +147,6 @@ keys:
     provider_id: "claude"
     model_id: "claude-fable"
     name: "Claude Fable 2"
-    value_env: "CLAUDE_FABLE_KEY_2"
+    value: "replace-with-claude-fable-key-2"
     status: "active"
     priority: 2
