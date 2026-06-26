@@ -13,6 +13,12 @@ import (
 )
 
 func main() {
+	if err := newRootCommand().Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+func newRootCommand() *cobra.Command {
 	var configPath string
 
 	rootCmd := &cobra.Command{
@@ -109,7 +115,5 @@ func main() {
 		},
 	})
 
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
+	return rootCmd
 }
