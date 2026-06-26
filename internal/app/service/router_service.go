@@ -31,6 +31,33 @@ type ProxyError struct {
 
 func (e *ProxyError) Error() string { return e.Message }
 
+func InvalidRequestBodyError(msg string) *ProxyError {
+	return &ProxyError{
+		HTTPStatus: http.StatusBadRequest,
+		Type:       "modelmux_invalid_request",
+		Code:       "invalid_request_body",
+		Message:    msg,
+	}
+}
+
+func NotFoundError(msg string) *ProxyError {
+	return &ProxyError{
+		HTTPStatus: http.StatusNotFound,
+		Type:       "modelmux_not_found",
+		Code:       "not_found",
+		Message:    msg,
+	}
+}
+
+func DisabledError(msg string) *ProxyError {
+	return &ProxyError{
+		HTTPStatus: http.StatusForbidden,
+		Type:       "modelmux_disabled",
+		Code:       "resource_disabled",
+		Message:    msg,
+	}
+}
+
 func AllKeysUnavailableError(modelID string) *ProxyError {
 	return &ProxyError{
 		HTTPStatus: http.StatusTooManyRequests,
@@ -185,16 +212,16 @@ func (s *RouterService) SelectKey(ctx context.Context, modelID string) (*domain.
 func (s *RouterService) HandleChatCompletion(ctx context.Context, req *http.Request) (*http.Response, error) {
 	bodyBytes, err := io.ReadAll(req.Body)
 	if err != nil {
-		return nil, err
+		return nil, InvalidRequestBodyError(err.Error())
 	}
 	requestedID, err := extractModelFromBody(bodyBytes)
 	if err != nil {
-		return nil, err
+		return nil, InvalidRequestBodyError(err.Error())
 	}
 	model, ok := s.modelByID(requestedID)
 	if ok {
 		if !model.Enabled {
-			return nil, fmt.Errorf("model %s is disabled", requestedID)
+			return nil, DisabledError(fmt.Sprintf("model %s is disabled", requestedID))
 		}
 		return s.handleModelChatCompletion(ctx, req, bodyBytes, "", model)
 	}
@@ -202,12 +229,12 @@ func (s *RouterService) HandleChatCompletion(ctx context.Context, req *http.Requ
 	group, ok := s.groupByID(requestedID)
 	if ok {
 		if !group.Enabled {
-			return nil, fmt.Errorf("model group %s is disabled", requestedID)
+			return nil, DisabledError(fmt.Sprintf("model group %s is disabled", requestedID))
 		}
 		return s.handleGroupChatCompletion(ctx, req, bodyBytes, group)
 	}
 
-	return nil, fmt.Errorf("unknown model or model group %s", requestedID)
+	return nil, NotFoundError(fmt.Sprintf("unknown model or model group %s", requestedID))
 }
 
 func (s *RouterService) handleGroupChatCompletion(ctx context.Context, req *http.Request, bodyBytes []byte, group domain.ModelGroup) (*http.Response, error) {
