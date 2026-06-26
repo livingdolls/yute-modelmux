@@ -514,6 +514,9 @@ func (s *RouterService) availableKeys(modelID string) []domain.APIKey {
 }
 
 func (s *RouterService) clearKeyCooldown(keyID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	for i := range s.keys {
 		if s.keys[i].ID == keyID {
 			s.keys[i].Status = domain.KeyStatusActive
