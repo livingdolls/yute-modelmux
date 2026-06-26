@@ -182,6 +182,7 @@ func (c *Config) Validate() error {
 		providerIDs[p.ID] = struct{}{}
 	}
 	modelIDs := map[string]struct{}{}
+	modelByProviderID := map[string]string{}
 	for _, m := range c.Models {
 		if m.ID == "" {
 			return errors.New("model.id is required")
@@ -193,6 +194,7 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("model %s references unknown provider %s", m.ID, m.ProviderID)
 		}
 		modelIDs[m.ID] = struct{}{}
+		modelByProviderID[m.ID] = m.ProviderID
 	}
 	groupIDs := map[string]struct{}{}
 	for _, g := range c.ModelGroups {
@@ -235,6 +237,9 @@ func (c *Config) Validate() error {
 		}
 		if _, ok := modelIDs[k.ModelID]; !ok {
 			return fmt.Errorf("key %s references unknown model %s", k.ID, k.ModelID)
+		}
+		if modelProviderID := modelByProviderID[k.ModelID]; modelProviderID != k.ProviderID {
+			return fmt.Errorf("key %s provider %s does not match model %s provider %s", k.ID, k.ProviderID, k.ModelID, modelProviderID)
 		}
 		if k.Value == "" {
 			if k.ValueEnv != "" {

@@ -105,3 +105,13 @@ func TestValidateAllowsEmptyValueWithValueEnv(t *testing.T) {
 		t.Fatalf("validate should allow key with value_env: %v", err)
 	}
 }
+
+func TestValidateRejectsKeyProviderMismatchWithModel(t *testing.T) {
+	cfg := Default()
+	cfg.Providers = append(cfg.Providers, ProviderConfig{ID: "other", Name: "Other", Type: "openai-compatible", BaseURL: "https://other.example.com/v1", AuthType: "bearer", TimeoutSeconds: 120, Enabled: true})
+	cfg.Keys[0].ProviderID = "other"
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected key provider/model provider mismatch error")
+	}
+}
