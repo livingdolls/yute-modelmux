@@ -69,6 +69,11 @@ func main() {
 				return err
 			}
 
+			if cfg.Server.Host == "0.0.0.0" && !cfg.Server.RequireAuth {
+				fmt.Fprintln(cmd.ErrOrStderr(), "WARNING: server bound to 0.0.0.0 without authentication enabled.")
+				fmt.Fprintln(cmd.ErrOrStderr(), "Anyone on the network can use your API keys. Set server.require_auth=true and server.auth_token_env.")
+			}
+
 			router := service.NewRouterService(cfg)
 			srv := httpserver.New(router, cfg)
 			return srv.Run(cmd.Context())
