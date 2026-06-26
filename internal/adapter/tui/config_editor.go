@@ -183,7 +183,7 @@ func (m model) renderConfigEditor() string {
 	sections := []string{"Providers", "Models", "Groups", "Keys"}
 	var tabs []string
 	for i, section := range sections {
-		label := "  " + section + "  "
+		label := section
 		if configSection(i) == m.editor.section {
 			label = m.styles.navActive.Render(label)
 		} else {
@@ -193,20 +193,19 @@ func (m model) renderConfigEditor() string {
 	}
 	var b strings.Builder
 	b.WriteString(strings.Join(tabs, " "))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 	b.WriteString(m.renderConfigSectionTable())
-	b.WriteString("\n\n")
 	status := "saved"
 	if m.editor.dirty {
 		status = "dirty"
 	}
-	b.WriteString(m.styles.muted.Render("status: " + status + "  config: " + defaultText(m.configPath, "default")))
+	b.WriteString("\n")
+	b.WriteString(m.styles.muted.Render(status + " | " + defaultText(m.configPath, "default")))
 	if m.editor.message != "" {
-		b.WriteString("\n")
-		b.WriteString(m.styles.muted.Render(m.editor.message))
+		b.WriteString(" | " + m.editor.message)
 	}
-	b.WriteString("\n\n")
-	b.WriteString(m.styles.muted.Render("a add  e edit  d delete  space enable/disable  s save  r reload  left/right section"))
+	b.WriteString("\n")
+	b.WriteString(m.styles.muted.Render("a:add e:edit d:del sp:toggle s:save r:reload ←→:section"))
 	return b.String()
 }
 
@@ -217,25 +216,25 @@ func (m model) renderConfigSectionTable() string {
 		for i, item := range m.cfg.Models {
 			rows = append(rows, m.markSelectedRow(i, []string{item.ID, item.ProviderID, item.ModelName, defaultText(item.Strategy, "failover"), boolString(item.Enabled)}))
 		}
-		return renderTable(m.styles, []string{"ID", "Provider", "Provider Model", "Strategy", "Enabled"}, rows, []int{24, 18, 28, 14, 10})
+		return renderTable(m.styles, []string{"ID", "Provider", "Provider Model", "Strategy", "Enabled"}, rows, []int{20, 14, 24, 12, 8})
 	case configSectionGroups:
 		rows := make([][]string, 0, len(m.cfg.ModelGroups))
 		for i, item := range m.cfg.ModelGroups {
 			rows = append(rows, m.markSelectedRow(i, []string{item.ID, item.Name, defaultText(item.Strategy, "failover"), fmt.Sprint(len(item.Members)), boolString(item.Enabled)}))
 		}
-		return renderTable(m.styles, []string{"ID", "Name", "Strategy", "Members", "Enabled"}, rows, []int{24, 24, 14, 10, 10})
+		return renderTable(m.styles, []string{"ID", "Name", "Strategy", "Members", "Enabled"}, rows, []int{20, 18, 12, 8, 8})
 	case configSectionKeys:
 		rows := make([][]string, 0, len(m.cfg.Keys))
 		for i, item := range m.cfg.Keys {
 			rows = append(rows, m.markSelectedRow(i, []string{item.ID, item.ProviderID, item.ModelID, item.Name, defaultText(item.Status, "active"), fmt.Sprint(item.Priority)}))
 		}
-		return renderTable(m.styles, []string{"ID", "Provider", "Model", "Name", "Status", "Priority"}, rows, []int{24, 16, 24, 20, 12, 10})
+		return renderTable(m.styles, []string{"ID", "Provider", "Model", "Name", "Status", "Priority"}, rows, []int{18, 14, 20, 16, 10, 8})
 	default:
 		rows := make([][]string, 0, len(m.cfg.Providers))
 		for i, item := range m.cfg.Providers {
 			rows = append(rows, m.markSelectedRow(i, []string{item.ID, item.Name, item.Type, truncate(item.BaseURL, 30), item.AuthType, boolString(item.Enabled)}))
 		}
-		return renderTable(m.styles, []string{"ID", "Name", "Type", "Base URL", "Auth", "Enabled"}, rows, []int{18, 22, 20, 32, 10, 10})
+		return renderTable(m.styles, []string{"ID", "Name", "Type", "Base URL", "Auth", "Enabled"}, rows, []int{14, 18, 16, 28, 8, 8})
 	}
 }
 
@@ -251,9 +250,9 @@ func (m model) renderConfigForm() string {
 	form := m.editor.form
 	var b strings.Builder
 	b.WriteString(m.styles.panelTitle.Render(form.title))
+	b.WriteString("  ")
+	b.WriteString(m.styles.muted.Render("enter:next ctrl+s:save esc:cancel"))
 	b.WriteString("\n")
-	b.WriteString(m.styles.muted.Render("enter next/apply  ctrl+s save form  esc cancel"))
-	b.WriteString("\n\n")
 	for i, field := range form.items {
 		prefix := "  "
 		if i == form.field {
@@ -263,7 +262,7 @@ func (m model) renderConfigForm() string {
 		if field.mask && value != "" {
 			value = strings.Repeat("*", minInt(12, len([]rune(value))))
 		}
-		b.WriteString(fmt.Sprintf("%s%-16s %s\n", prefix, field.label+":", value))
+		b.WriteString(fmt.Sprintf("%s%-14s %s\n", prefix, field.label+":", value))
 	}
 	if m.editor.message != "" {
 		b.WriteString("\n")
@@ -276,9 +275,9 @@ func (m model) renderDeleteConfirm() string {
 	confirm := m.editor.confirm
 	var b strings.Builder
 	b.WriteString(m.styles.bad.Render(confirm.title))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 	b.WriteString(confirm.impact)
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 	b.WriteString(m.styles.muted.Render("Type delete to confirm, esc to cancel"))
 	b.WriteString("\n")
 	b.WriteString("> ")

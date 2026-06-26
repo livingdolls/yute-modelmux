@@ -1,3 +1,4 @@
 dev
 modelmux
 configs/*.yaml
+bin/

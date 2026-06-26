@@ -33,13 +33,13 @@ type navItem struct {
 }
 
 var navItems = []navItem{
-	{label: "Providers", description: "Upstream endpoints"},
-	{label: "Models", description: "Routable models"},
-	{label: "Groups", description: "Model aliases"},
-	{label: "Chat", description: "TUI sessions"},
-	{label: "Keys", description: "Live key state"},
-	{label: "Logs", description: "Recent requests"},
-	{label: "Config", description: "Edit routing"},
+	{label: "Providers", description: "Upstream"},
+	{label: "Models", description: "Models"},
+	{label: "Groups", description: "Aliases"},
+	{label: "Chat", description: "Chat"},
+	{label: "Keys", description: "Keys"},
+	{label: "Logs", description: "Logs"},
+	{label: "Config", description: "Edit"},
 }
 
 type Options struct {
@@ -130,21 +130,21 @@ func Run(options Options) error {
 
 func defaultStyles() styles {
 	return styles{
-		app:        lipgloss.NewStyle().Padding(1, 2),
-		header:     lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.NormalBorder(), false, false, true, false).BorderForeground(lipgloss.Color("238")),
+		app:        lipgloss.NewStyle().Padding(0, 1),
+		header:     lipgloss.NewStyle().Padding(0, 0).Border(lipgloss.NormalBorder(), false, false, true, false).BorderForeground(lipgloss.Color("238")),
 		title:      lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86")),
 		subtitle:   lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
-		sidebar:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238")).Padding(1, 1),
+		sidebar:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238")).Padding(0, 1),
 		nav:        lipgloss.NewStyle().Padding(0, 1),
 		navActive:  lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("62")).Padding(0, 1),
 		navMuted:   lipgloss.NewStyle().Foreground(lipgloss.Color("241")),
-		panel:      lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238")).Padding(1, 2),
+		panel:      lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238")).Padding(0, 1),
 		panelTitle: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213")),
 		tableHead:  lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111")),
 		muted:      lipgloss.NewStyle().Foreground(lipgloss.Color("241")),
 		good:       lipgloss.NewStyle().Foreground(lipgloss.Color("82")),
 		bad:        lipgloss.NewStyle().Foreground(lipgloss.Color("203")),
-		footer:     lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Padding(0, 1),
+		footer:     lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Padding(0, 0),
 	}
 }
 
@@ -229,12 +229,12 @@ func (m model) View() string {
 	if width == 0 {
 		width = 100
 	}
-	contentWidth := maxInt(48, width-34)
+	contentWidth := maxInt(48, width-26)
 
 	header := m.renderHeader(width - 4)
-	sidebar := m.renderSidebar(25)
+	sidebar := m.renderSidebar(15)
 	content := m.styles.panel.Width(contentWidth).Render(m.renderPage())
-	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, "  ", content)
+	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, " ", content)
 	footerText := "Navigate: up/down or tab  Select: enter  Quit: q"
 	if m.page == pageChat {
 		footerText = "Chat: type message, enter send, ctrl+n new, ctrl+t change target, up/down switch session, tab menu, q quit"
@@ -243,40 +243,32 @@ func (m model) View() string {
 	}
 	footer := m.styles.footer.Render(footerText)
 
-	return m.styles.app.Render(lipgloss.JoinVertical(lipgloss.Left, header, "", body, "", footer))
+	return m.styles.app.Render(lipgloss.JoinVertical(lipgloss.Left, header, body, footer))
 }
 
 func (m model) renderHeader(width int) string {
 	providers, models, groups, chats, keys := m.counts()
-	left := m.styles.title.Render("ModelMux") + " " + m.styles.subtitle.Render("LLM key router")
-	right := fmt.Sprintf("providers=%d  models=%d  groups=%d  chats=%d  keys=%d", providers, models, groups, chats, keys)
-	line := left + strings.Repeat(" ", maxInt(1, width-lipgloss.Width(left)-lipgloss.Width(right))) + m.styles.subtitle.Render(right)
+	left := m.styles.title.Render("ModelMux")
+	right := m.styles.subtitle.Render(fmt.Sprintf("P:%d M:%d G:%d C:%d K:%d", providers, models, groups, chats, keys))
+	line := left + strings.Repeat(" ", maxInt(1, width-lipgloss.Width(left)-lipgloss.Width(right))) + right
 	return m.styles.header.Width(width).Render(line)
 }
 
 func (m model) renderSidebar(width int) string {
 	var b strings.Builder
-	b.WriteString(m.styles.muted.Render("SELECT MENU"))
-	b.WriteString("\n\n")
 	for i, item := range navItems {
 		cursor := "  "
-		style := m.styles.nav.Width(width - 4)
+		style := m.styles.nav.Width(width - 3)
 		if i == m.selected {
 			cursor = "> "
-			style = m.styles.navActive.Width(width - 4)
+			style = m.styles.navActive.Width(width - 3)
 		}
 		label := style.Render(cursor + item.label)
 		b.WriteString(label)
-		b.WriteString("\n")
-		desc := "  " + item.description
-		b.WriteString(m.styles.navMuted.Width(width - 2).Render(desc))
 		if i < len(navItems)-1 {
-			b.WriteString("\n\n")
+			b.WriteString("\n")
 		}
 	}
-	b.WriteString("\n\n")
-	b.WriteString(m.styles.muted.Render("Active page: "))
-	b.WriteString(navItems[m.page].label)
 	return m.styles.sidebar.Width(width).Render(b.String())
 }
 
@@ -309,15 +301,15 @@ func (m model) renderPage() string {
 	default:
 		body = m.renderProviders(m.cfg.Providers)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, title, m.styles.muted.Render(strings.Repeat("-", 72)), body)
+	return lipgloss.JoinVertical(lipgloss.Left, title, m.styles.muted.Render(strings.Repeat("-", 48)), body)
 }
 
 func (m model) renderProviders(items []config.ProviderConfig) string {
 	rows := [][]string{}
 	for _, item := range items {
-		rows = append(rows, []string{item.ID, item.Name, item.Type, truncate(item.BaseURL, 32), m.statusText(item.Enabled)})
+		rows = append(rows, []string{item.ID, item.Name, item.Type, truncate(item.BaseURL, 28), m.statusText(item.Enabled)})
 	}
-	return renderTable(m.styles, []string{"ID", "Name", "Type", "Base URL", "Status"}, rows, []int{16, 24, 20, 34, 10})
+	return renderTable(m.styles, []string{"ID", "Name", "Type", "Base URL", "Status"}, rows, []int{14, 18, 16, 28, 10})
 }
 
 func (m model) renderModels(items []config.ModelConfig) string {
@@ -325,7 +317,7 @@ func (m model) renderModels(items []config.ModelConfig) string {
 	for _, item := range items {
 		rows = append(rows, []string{item.ID, item.ProviderID, item.ModelName, defaultText(item.Strategy, "failover"), m.statusText(item.Enabled)})
 	}
-	return renderTable(m.styles, []string{"ID", "Provider", "Provider Model", "Strategy", "Status"}, rows, []int{22, 14, 28, 14, 10})
+	return renderTable(m.styles, []string{"ID", "Provider", "Provider Model", "Strategy", "Status"}, rows, []int{18, 12, 24, 12, 10})
 }
 
 func (m model) renderConfigGroups(items []config.ModelGroupConfig) string {
@@ -333,7 +325,7 @@ func (m model) renderConfigGroups(items []config.ModelGroupConfig) string {
 	for _, item := range items {
 		rows = append(rows, []string{item.ID, defaultText(item.Strategy, "failover"), fmt.Sprint(len(item.Members)), m.statusText(item.Enabled)})
 	}
-	return renderTable(m.styles, []string{"ID", "Strategy", "Members", "Status"}, rows, []int{24, 16, 10, 10})
+	return renderTable(m.styles, []string{"ID", "Strategy", "Members", "Status"}, rows, []int{20, 14, 8, 10})
 }
 
 func (m model) renderDomainGroups(items []domain.ModelGroup) string {
@@ -349,7 +341,7 @@ func (m model) renderDomainGroups(items []domain.ModelGroup) string {
 		for _, member := range item.Members {
 			rows = append(rows, []string{member.ModelID, fmt.Sprint(member.Priority), fmt.Sprint(member.Weight), m.statusText(member.Enabled)})
 		}
-		b.WriteString(renderTable(m.styles, []string{"Model", "Priority", "Weight", "Status"}, rows, []int{28, 10, 8, 10}))
+		b.WriteString(renderTable(m.styles, []string{"Model", "Priority", "Weight", "Status"}, rows, []int{24, 8, 7, 10}))
 		b.WriteString("\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
@@ -360,7 +352,7 @@ func (m model) renderConfigKeys(items []config.KeyConfig) string {
 	for _, item := range items {
 		rows = append(rows, []string{item.ID, item.ModelID, defaultText(item.Status, "active"), fmt.Sprint(item.Priority)})
 	}
-	return renderTable(m.styles, []string{"ID", "Model", "Status", "Priority"}, rows, []int{24, 24, 12, 10})
+	return renderTable(m.styles, []string{"ID", "Model", "Status", "Priority"}, rows, []int{20, 20, 10, 8})
 }
 
 func (m model) renderDomainKeys(items []domain.APIKey) string {
@@ -372,7 +364,7 @@ func (m model) renderDomainKeys(items []domain.APIKey) string {
 		}
 		rows = append(rows, []string{item.ID, item.ModelID, string(item.Status), fmt.Sprint(item.UsedCount), fmt.Sprint(item.ErrorCount), cooldown})
 	}
-	return renderTable(m.styles, []string{"ID", "Model", "Status", "Used", "Errors", "Cooldown"}, rows, []int{24, 24, 12, 8, 8, 12})
+	return renderTable(m.styles, []string{"ID", "Model", "Status", "Used", "Errs", "Cooldown"}, rows, []int{20, 20, 10, 6, 6, 10})
 }
 
 func (m model) renderChat() string {
@@ -380,35 +372,31 @@ func (m model) renderChat() string {
 		return m.emptyState("No chat sessions")
 	}
 	active := m.chats[m.activeChat]
-	left := m.renderChatSessionList(24)
+	left := m.renderChatSessionList(16)
 	right := m.renderChatConversation(active)
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
 }
 
 func (m model) renderChatSessionList(width int) string {
 	var b strings.Builder
-	b.WriteString(m.styles.tableHead.Render("SESSIONS"))
-	b.WriteString("\n\n")
 	for i, chat := range m.chats {
 		label := fmt.Sprintf("%d. %s", chat.ID, chat.Title)
 		if chat.Pending {
 			label += " ..."
 		}
-		style := m.styles.nav.Width(width - 4)
+		style := m.styles.nav.Width(width - 3)
 		prefix := "  "
 		if i == m.activeChat {
-			style = m.styles.navActive.Width(width - 4)
+			style = m.styles.navActive.Width(width - 3)
 			prefix = "> "
 		}
-		b.WriteString(style.Render(prefix + truncate(label, width-6)))
+		b.WriteString(style.Render(prefix + truncate(label, width-5)))
 		b.WriteString("\n")
-		b.WriteString(m.styles.navMuted.Render("  target: " + truncate(chat.Target, width-12)))
+		b.WriteString(m.styles.navMuted.Render("  " + truncate(chat.Target, width-4)))
 		if i < len(m.chats)-1 {
-			b.WriteString("\n\n")
+			b.WriteString("\n")
 		}
 	}
-	b.WriteString("\n\n")
-	b.WriteString(m.styles.muted.Render("ctrl+n new\nctrl+t target\nup/down switch"))
 	return m.styles.sidebar.Width(width).Render(b.String())
 }
 
@@ -416,20 +404,20 @@ func (m model) renderChatConversation(chat tuiChatSession) string {
 	var b strings.Builder
 	header := fmt.Sprintf("%s  target=%s", chat.Title, chat.Target)
 	if chat.Pending {
-		header += "  sending..."
+		header += "  ..."
 	}
 	b.WriteString(m.styles.panelTitle.Render(header))
 	b.WriteString("\n")
-	b.WriteString(m.styles.muted.Render(strings.Repeat("-", 74)))
+	b.WriteString(m.styles.muted.Render(strings.Repeat("-", 60)))
 	b.WriteString("\n")
 
 	if len(chat.Messages) == 0 {
-		b.WriteString(m.styles.muted.Render("Start typing below, then press enter to send."))
+		b.WriteString(m.styles.muted.Render("Type a message and press enter to send."))
 		b.WriteString("\n")
 	} else {
 		start := 0
-		if len(chat.Messages) > 12 {
-			start = len(chat.Messages) - 12
+		if len(chat.Messages) > 10 {
+			start = len(chat.Messages) - 10
 		}
 		for _, message := range chat.Messages[start:] {
 			role := message.Role
@@ -447,7 +435,7 @@ func (m model) renderChatConversation(chat tuiChatSession) string {
 			b.WriteString(" ")
 			b.WriteString(m.styles.muted.Render(message.CreatedAt.Format("15:04:05")))
 			b.WriteString("\n")
-			b.WriteString(wrapText(message.Content, 78))
+			b.WriteString(wrapText(message.Content, 70))
 			b.WriteString("\n\n")
 		}
 	}
@@ -456,12 +444,10 @@ func (m model) renderChatConversation(chat tuiChatSession) string {
 		b.WriteString(m.styles.bad.Render("Error: " + chat.Error))
 		b.WriteString("\n")
 	}
-	b.WriteString(m.styles.muted.Render(strings.Repeat("-", 74)))
-	b.WriteString("\n")
-	b.WriteString(m.styles.tableHead.Render("Input"))
+	b.WriteString(m.styles.muted.Render(strings.Repeat("-", 60)))
 	b.WriteString("\n")
 	b.WriteString("> ")
-	b.WriteString(defaultText(m.chatInput, m.styles.muted.Render("type message...")))
+	b.WriteString(defaultText(m.chatInput, m.styles.muted.Render("type...")))
 	return b.String()
 }
 
@@ -672,7 +658,7 @@ func (m model) renderLogs() string {
 		errorText := defaultText(item.Error, "-")
 		rows = append(rows, []string{item.CreatedAt.Format("15:04:05"), group, item.ModelID, item.KeyID, fmt.Sprint(item.StatusCode), fmt.Sprintf("%dms", item.LatencyMs), truncate(errorText, 28)})
 	}
-	return renderTable(m.styles, []string{"Time", "Group", "Model", "Key", "Status", "Latency", "Error"}, rows, []int{10, 18, 22, 22, 8, 10, 30})
+	return renderTable(m.styles, []string{"Time", "Group", "Model", "Key", "St", "Latency", "Error"}, rows, []int{8, 16, 20, 20, 5, 8, 28})
 }
 
 func (m model) counts() (int, int, int, int, int) {
@@ -705,31 +691,48 @@ func renderTable(styles styles, headers []string, rows [][]string, widths []int)
 	if len(rows) == 0 {
 		return styles.muted.Render("No data")
 	}
+	sep := styles.muted.Render("│")
+	pad := "  "
+
+	topParts := make([]string, len(widths))
+	headParts := make([]string, len(widths))
+	for i, w := range widths {
+		topParts[i] = styles.muted.Render(strings.Repeat("─", w+4))
+		headParts[i] = styles.tableHead.Render(padRight(truncate(headers[i], w), w))
+	}
+	topLine := "┌" + strings.Join(topParts, "┬") + "┐"
+
 	var b strings.Builder
-	for i, header := range headers {
-		b.WriteString(styles.tableHead.Render(padRight(truncate(header, widths[i]), widths[i])))
-		if i < len(headers)-1 {
-			b.WriteString("  ")
-		}
-	}
+	b.WriteString(topLine)
 	b.WriteString("\n")
-	for i, width := range widths {
-		b.WriteString(styles.muted.Render(strings.Repeat("-", width)))
-		if i < len(widths)-1 {
-			b.WriteString("  ")
-		}
-	}
+	b.WriteString(sep + pad + strings.Join(headParts, pad+sep+pad) + pad + sep)
 	b.WriteString("\n")
+
+	midParts := make([]string, len(widths))
+	for i, w := range widths {
+		midParts[i] = styles.muted.Render(strings.Repeat("─", w+4))
+	}
+	midLine := "├" + strings.Join(midParts, "┼") + "┤"
+	b.WriteString(midLine)
+	b.WriteString("\n")
+
 	for _, row := range rows {
+		cells := make([]string, len(row))
 		for i, cell := range row {
-			b.WriteString(padRight(truncate(cell, widths[i]), widths[i]))
-			if i < len(row)-1 {
-				b.WriteString("  ")
-			}
+			cells[i] = padRight(truncate(cell, widths[i]), widths[i])
 		}
+		b.WriteString(sep + pad + strings.Join(cells, pad+sep+pad) + pad + sep)
 		b.WriteString("\n")
 	}
-	return strings.TrimRight(b.String(), "\n")
+
+	botParts := make([]string, len(widths))
+	for i, w := range widths {
+		botParts[i] = styles.muted.Render(strings.Repeat("─", w+4))
+	}
+	botLine := "└" + strings.Join(botParts, "┴") + "┘"
+	b.WriteString(botLine)
+
+	return b.String()
 }
 
 func previousIndex(current, length int) int {
