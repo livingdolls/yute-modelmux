@@ -20,6 +20,31 @@ import (
 	"github.com/livingdolls/yute-modelmux/internal/core/port/inbound"
 )
 
+type ctxKey int
+
+const (
+	ctxKeyStreamResult ctxKey = iota
+)
+
+type streamResultInfo struct {
+	KeyID      string
+	ModelID    string
+	ProviderID string
+	GroupID    string
+	StatusCode int
+	Error      string
+	LatencyMs  int64
+}
+
+func SetStreamResultContext(ctx context.Context, info streamResultInfo) context.Context {
+	return context.WithValue(ctx, ctxKeyStreamResult, info)
+}
+
+func getStreamResultContext(ctx context.Context) (streamResultInfo, bool) {
+	info, ok := ctx.Value(ctxKeyStreamResult).(streamResultInfo)
+	return info, ok
+}
+
 var ErrNoAvailableKey = errors.New("no available key")
 
 type ProxyError struct {
@@ -321,6 +346,21 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 		result.GroupID = groupID
 		result.ProviderID = provider.ID
 		result.LatencyMs = time.Since(startedAt).Milliseconds()
+
+		if isStreamRequest(bodyBytes) && result.Success {
+			ctx = SetStreamResultContext(ctx, streamResultInfo{
+				KeyID:      key.ID,
+				ModelID:    model.ID,
+				ProviderID: provider.ID,
+				GroupID:    groupID,
+				StatusCode: result.StatusCode,
+				Error:      result.Error,
+				LatencyMs:  result.LatencyMs,
+			})
+			*req = *req.WithContext(ctx)
+			return resp, nil
+		}
+
 		_ = s.MarkKeyResult(ctx, key.ID, result)
 		if result.Success {
 			return resp, nil
@@ -377,19 +417,25 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 	return fmt.Errorf("key %s not found", keyID)
 }
 
-func (s *RouterService) LogStreamError(ctx context.Context, copyErr error) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := time.Now()
-	log := domain.RequestLog{
-		ID:        fmt.Sprintf("log-%d", now.UnixNano()),
-		ModelID:   "stream",
-		Error:     "stream copy error: " + copyErr.Error(),
-		LatencyMs: 0,
-		CreatedAt: now,
+func (s *RouterService) FinalizeStreamResult(ctx context.Context, copyErr error) {
+	info, ok := getStreamResultContext(ctx)
+	if !ok {
+		return
 	}
-	s.appendLog(log)
-	return nil
+
+	result := inbound.KeyResult{
+		Success:    copyErr == nil,
+		ModelID:    info.ModelID,
+		GroupID:    info.GroupID,
+		ProviderID: info.ProviderID,
+		StatusCode: info.StatusCode,
+		LatencyMs:  info.LatencyMs,
+	}
+	if copyErr != nil {
+		result.Error = "stream copy error: " + copyErr.Error()
+		result.ShouldRotateKey = true
+	}
+	_ = s.MarkKeyResult(ctx, info.KeyID, result)
 }
 
 func (s *RouterService) TestKey(ctx context.Context, keyID string) error {

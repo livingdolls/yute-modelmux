@@ -61,8 +61,10 @@ func (s *Server) completionsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	if err := copyWithFlush(w, resp.Body); err != nil {
-		_ = s.rs.LogStreamError(r.Context(), err)
+		s.rs.FinalizeStreamResult(r.Context(), err)
+		return
 	}
+	s.rs.FinalizeStreamResult(r.Context(), nil)
 }
 
 func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
@@ -88,8 +90,10 @@ func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	w.WriteHeader(resp.StatusCode)
 	if err := copyWithFlush(w, resp.Body); err != nil {
-		_ = s.rs.LogStreamError(r.Context(), err)
+		s.rs.FinalizeStreamResult(r.Context(), err)
+		return
 	}
+	s.rs.FinalizeStreamResult(r.Context(), nil)
 }
 
 func copyWithFlush(dst io.Writer, src io.Reader) error {
