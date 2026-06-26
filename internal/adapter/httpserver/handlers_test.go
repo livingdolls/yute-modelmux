@@ -169,3 +169,38 @@ func TestCompletionsRoutesToCorrectEndpoint(t *testing.T) {
 		t.Fatalf("expected upstream path /v1/completions, got %s", gotPath)
 	}
 }
+
+func TestChatSSEForwardsChunksAndHeaders(t *testing.T) {
+	sseBody := "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" World\"}}]}\n\ndata: [DONE]\n\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(sseBody))
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = server.URL + "/v1"
+	cfg.Models[0].ModelName = cfg.Models[0].ID
+	rs := service.NewRouterService(cfg)
+	srv := New(rs, cfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"mimo-v2.5-pro","messages":[],"stream":true}`))
+	rec := httptest.NewRecorder()
+	srv.chatCompletionsHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	ct := rec.Header().Get("Content-Type")
+	if ct != "text/event-stream" {
+		t.Fatalf("expected Content-Type text/event-stream, got %s", ct)
+	}
+	if rec.Body.String() != sseBody {
+		t.Fatalf("expected SSE body %q, got %q", sseBody, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "DONE") {
+		t.Log("SSE [DONE] marker forwarded successfully")
+	}
+}

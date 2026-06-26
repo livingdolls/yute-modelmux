@@ -377,6 +377,21 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 	return fmt.Errorf("key %s not found", keyID)
 }
 
+func (s *RouterService) LogStreamError(ctx context.Context, copyErr error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	log := domain.RequestLog{
+		ID:        fmt.Sprintf("log-%d", now.UnixNano()),
+		ModelID:   "stream",
+		Error:     "stream copy error: " + copyErr.Error(),
+		LatencyMs: 0,
+		CreatedAt: now,
+	}
+	s.appendLog(log)
+	return nil
+}
+
 func (s *RouterService) TestKey(ctx context.Context, keyID string) error {
 	s.mu.Lock()
 	keyIdx := -1
@@ -596,6 +611,16 @@ func extractModelFromBody(body []byte) (string, error) {
 		return "", errors.New("request body missing model")
 	}
 	return payload.Model, nil
+}
+
+func isStreamRequest(body []byte) bool {
+	var payload struct {
+		Stream bool `json:"stream"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false
+	}
+	return payload.Stream
 }
 
 func classifyResult(resp *http.Response, err error, cfg *config.Config) inbound.KeyResult {
