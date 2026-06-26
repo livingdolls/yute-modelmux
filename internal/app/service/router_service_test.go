@@ -339,6 +339,36 @@ func TestHandleChatCompletionRoutesWeightedGroup(t *testing.T) {
 	}
 }
 
+func TestHandleChatCompletionPreservesCooldownWhenTotalAttemptsExhausted(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	cfg := singleKeyRetryConfig(server.URL + "/v1")
+	cfg.Retry.MaxRetryPerKey = 5
+	cfg.Retry.MaxTotalAttempts = 2
+
+	rs := NewRouterService(cfg)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test-model","messages":[]}`))
+
+	_, err := rs.HandleChatCompletion(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error after total attempts exhausted")
+	}
+
+	keys := rs.ListKeys()
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+	if keys[0].Status != domain.KeyStatusCooldown {
+		t.Fatalf("expected key to be cooldown after total attempts exhausted, got status %s", keys[0].Status)
+	}
+	if keys[0].CooldownEnd == nil {
+		t.Fatal("expected key to have cooldown set")
+	}
+}
+
 func singleKeyRetryConfig(baseURL string) *config.Config {
 	return &config.Config{
 		App:      config.AppConfig{Name: "test", LogLevel: "info"},

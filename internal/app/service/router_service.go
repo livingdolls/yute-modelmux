@@ -320,7 +320,7 @@ func (s *RouterService) handleModelChatCompletion(ctx context.Context, req *http
 		if !result.ShouldRotateKey {
 			return resp, err
 		}
-		if retried[key.ID] <= maxRetryPerKey {
+		if retried[key.ID] <= maxRetryPerKey && totalAttempts < maxTotal {
 			s.clearKeyCooldown(key.ID)
 		}
 		if resp != nil && resp.Body != nil {
