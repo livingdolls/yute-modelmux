@@ -235,16 +235,19 @@ func (s *RouterService) handleModelChatCompletion(ctx context.Context, req *http
 		return nil, fmt.Errorf("unknown provider %s", model.ProviderID)
 	}
 
-	attempted := map[string]struct{}{}
-	maxAttempts := s.keyCountForModel(model.ID)
-	if s.cfg.Retry.MaxTotalAttempts > 0 && s.cfg.Retry.MaxTotalAttempts < maxAttempts {
-		maxAttempts = s.cfg.Retry.MaxTotalAttempts
+	retried := map[string]int{}
+	maxRetryPerKey := s.cfg.Retry.MaxRetryPerKey
+	maxTotal := s.cfg.Retry.MaxTotalAttempts
+	totalKeys := s.keyCountForModel(model.ID)
+	if maxTotal <= 0 {
+		maxTotal = totalKeys * (maxRetryPerKey + 1)
 	}
-	if maxAttempts == 0 {
+	if maxTotal == 0 {
 		return nil, AllKeysUnavailableError(model.ID)
 	}
 
-	for attempts := 0; attempts < maxAttempts; attempts++ {
+	skipCount := 0
+	for totalAttempts := 0; totalAttempts < maxTotal; {
 		key, err := s.SelectKey(ctx, model.ID)
 		if err != nil {
 			if errors.Is(err, ErrNoAvailableKey) {
@@ -252,10 +255,27 @@ func (s *RouterService) handleModelChatCompletion(ctx context.Context, req *http
 			}
 			return nil, err
 		}
-		if _, seen := attempted[key.ID]; seen {
-			return nil, AllKeysUnavailableError(model.ID)
+		if retried[key.ID] > maxRetryPerKey {
+			skipCount++
+			if skipCount > totalKeys*2 || skipCount > 100 {
+				return nil, AllKeysUnavailableError(model.ID)
+			}
+			continue
 		}
-		attempted[key.ID] = struct{}{}
+		skipCount = 0
+		retried[key.ID]++
+		totalAttempts++
+
+		if retried[key.ID] > 1 {
+			backoffIdx := retried[key.ID] - 2
+			if backoffIdx < len(s.cfg.Retry.BackoffMilliseconds) {
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(time.Duration(s.cfg.Retry.BackoffMilliseconds[backoffIdx]) * time.Millisecond):
+				}
+			}
+		}
 
 		clonedReq := cloneRequestWithBody(req, bodyBytes)
 		startedAt := time.Now()
@@ -271,6 +291,9 @@ func (s *RouterService) handleModelChatCompletion(ctx context.Context, req *http
 		}
 		if !result.ShouldRotateKey {
 			return resp, err
+		}
+		if retried[key.ID] <= maxRetryPerKey {
+			s.clearKeyCooldown(key.ID)
 		}
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
@@ -438,6 +461,16 @@ func (s *RouterService) availableKeys(modelID string) []domain.APIKey {
 		out = append(out, k)
 	}
 	return out
+}
+
+func (s *RouterService) clearKeyCooldown(keyID string) {
+	for i := range s.keys {
+		if s.keys[i].ID == keyID {
+			s.keys[i].Status = domain.KeyStatusActive
+			s.keys[i].CooldownEnd = nil
+			return
+		}
+	}
 }
 
 func cloneRequestWithBody(req *http.Request, body []byte) *http.Request {

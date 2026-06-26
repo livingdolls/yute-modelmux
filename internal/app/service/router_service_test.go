@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -202,6 +203,93 @@ func TestHandleChatCompletionGroupUnavailable(t *testing.T) {
 	}
 	if proxyErr.HTTPStatus != http.StatusTooManyRequests || proxyErr.Code != "all_group_models_unavailable" {
 		t.Fatalf("unexpected proxy error: %+v", proxyErr)
+	}
+}
+
+func TestHandleChatCompletionRetriesPerKeyWithBackoff(t *testing.T) {
+	var reqCount int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := atomic.AddInt32(&reqCount, 1)
+		var payload struct {
+			Model string `json:"model"`
+		}
+		json.NewDecoder(r.Body).Decode(&payload)
+		if count == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}))
+	defer server.Close()
+
+	cfg := singleKeyRetryConfig(server.URL + "/v1")
+	cfg.Retry.MaxRetryPerKey = 3
+	cfg.Retry.BackoffMilliseconds = []int{10, 20}
+
+	rs := NewRouterService(cfg)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test-model","messages":[]}`))
+
+	started := time.Now()
+	resp, err := rs.HandleChatCompletion(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected retry to succeed after transient error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	finalCount := atomic.LoadInt32(&reqCount)
+	if finalCount < 2 {
+		t.Fatalf("expected at least 2 requests (1 failed + 1 success), got %d", finalCount)
+	}
+	if time.Since(started) < 10*time.Millisecond {
+		t.Fatal("expected backoff delay")
+	}
+}
+
+func TestHandleChatCompletionRetryRespectsMaxTotalAttempts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	cfg := singleKeyRetryConfig(server.URL + "/v1")
+	cfg.Retry.MaxRetryPerKey = 5
+	cfg.Retry.MaxTotalAttempts = 2
+
+	rs := NewRouterService(cfg)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test-model","messages":[]}`))
+
+	_, err := rs.HandleChatCompletion(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected all keys unavailable error after exhausting total attempts")
+	}
+	var proxyErr *ProxyError
+	if !errors.As(err, &proxyErr) {
+		t.Fatalf("expected ProxyError, got %T", err)
+	}
+	if proxyErr.Code != "all_keys_limited" {
+		t.Fatalf("expected all_keys_limited, got %s", proxyErr.Code)
+	}
+}
+
+func singleKeyRetryConfig(baseURL string) *config.Config {
+	return &config.Config{
+		App:      config.AppConfig{Name: "test", LogLevel: "info"},
+		Server:   config.ServerConfig{Host: "127.0.0.1", Port: 8787, ReadTimeoutSecond: 60, WriteTimeoutSecond: 300},
+		Cooldown: config.CooldownConfig{RateLimitSeconds: 300, ServerErrorSeconds: 60, TimeoutSeconds: 60},
+		Retry:    config.RetryConfig{MaxRetryPerKey: 1, MaxTotalAttempts: 3, BackoffMilliseconds: []int{10}},
+		Providers: []config.ProviderConfig{
+			{ID: "test-provider", Name: "Test", Type: "openai-compatible", BaseURL: baseURL, AuthType: "bearer", TimeoutSeconds: 5, Enabled: true},
+		},
+		Models: []config.ModelConfig{
+			{ID: "test-model", ProviderID: "test-provider", ModelName: "test-model", Strategy: "failover", Enabled: true},
+		},
+		Keys: []config.KeyConfig{
+			{ID: "test-key", ProviderID: "test-provider", ModelID: "test-model", Value: "test-secret", Status: "active", Priority: 1},
+		},
 	}
 }
 
