@@ -275,6 +275,70 @@ func TestHandleChatCompletionRetryRespectsMaxTotalAttempts(t *testing.T) {
 	}
 }
 
+func TestHandleChatCompletionRoutesWeightedGroup(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Model string `json:"model"`
+		}
+		json.NewDecoder(r.Body).Decode(&payload)
+		requests = append(requests, payload.Model)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		App:      config.AppConfig{Name: "test", LogLevel: "info"},
+		Server:   config.ServerConfig{Host: "127.0.0.1", Port: 8787, ReadTimeoutSecond: 60, WriteTimeoutSecond: 300},
+		Cooldown: config.CooldownConfig{RateLimitSeconds: 300, ServerErrorSeconds: 60, TimeoutSeconds: 60},
+		Retry:    config.RetryConfig{MaxRetryPerKey: 0, MaxTotalAttempts: 5},
+		Providers: []config.ProviderConfig{
+			{ID: "openai", Name: "OpenAI", Type: "openai-compatible", BaseURL: server.URL + "/v1", AuthType: "bearer", TimeoutSeconds: 5, Enabled: true},
+		},
+		Models: []config.ModelConfig{
+			{ID: "model-a", ProviderID: "openai", ModelName: "model-a", Strategy: "failover", Enabled: true},
+			{ID: "model-b", ProviderID: "openai", ModelName: "model-b", Strategy: "failover", Enabled: true},
+		},
+		ModelGroups: []config.ModelGroupConfig{
+			{ID: "weighted-group", Name: "Weighted", Strategy: "weighted", Enabled: true, Members: []config.ModelGroupMemberConfig{
+				{ModelID: "model-a", Priority: 1, Weight: 1, Enabled: true},
+				{ModelID: "model-b", Priority: 2, Weight: 1, Enabled: true},
+			}},
+		},
+		Keys: []config.KeyConfig{
+			{ID: "key-a", ProviderID: "openai", ModelID: "model-a", Value: "a-key", Status: "active", Priority: 1},
+			{ID: "key-b", ProviderID: "openai", ModelID: "model-b", Value: "b-key", Status: "active", Priority: 1},
+		},
+	}
+
+	rs := NewRouterService(cfg)
+	for range 10 {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"weighted-group","messages":[]}`))
+		resp, err := rs.HandleChatCompletion(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handle weighted group request failed: %v", err)
+		}
+		resp.Body.Close()
+	}
+
+	if len(requests) != 10 {
+		t.Fatalf("expected 10 routed requests, got %d", len(requests))
+	}
+	hasA := false
+	hasB := false
+	for _, r := range requests {
+		if r == "model-a" {
+			hasA = true
+		}
+		if r == "model-b" {
+			hasB = true
+		}
+	}
+	if !hasA || !hasB {
+		t.Fatalf("weighted group should route to both members, got %v", requests)
+	}
+}
+
 func singleKeyRetryConfig(baseURL string) *config.Config {
 	return &config.Config{
 		App:      config.AppConfig{Name: "test", LogLevel: "info"},

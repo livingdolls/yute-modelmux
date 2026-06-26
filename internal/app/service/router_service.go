@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"sort"
@@ -393,10 +394,32 @@ func (s *RouterService) SelectGroupMember(groupID string, attempted map[string]s
 		idx := s.groupRRIndex[groupID] % len(members)
 		s.groupRRIndex[groupID] = (idx + 1) % len(members)
 		return members[idx].member, members[idx].model, true
+	case domain.GroupStrategyWeighted:
+		m := s.selectWeightedMember(members)
+		return m.member, m.model, true
 	default:
 		sort.SliceStable(members, func(i, j int) bool { return members[i].member.Priority < members[j].member.Priority })
 		return members[0].member, members[0].model, true
 	}
+}
+
+func (s *RouterService) selectWeightedMember(members []availableGroupMember) availableGroupMember {
+	totalWeight := 0
+	for _, m := range members {
+		totalWeight += m.member.Weight
+	}
+	if totalWeight <= 0 {
+		return members[0]
+	}
+	pick := rand.IntN(totalWeight)
+	cumulative := 0
+	for _, m := range members {
+		cumulative += m.member.Weight
+		if pick < cumulative {
+			return m
+		}
+	}
+	return members[len(members)-1]
 }
 
 func (s *RouterService) keyCountForModel(modelID string) int {
