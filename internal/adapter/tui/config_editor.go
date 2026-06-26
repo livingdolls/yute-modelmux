@@ -293,9 +293,9 @@ func (m model) renderConfigSectionTable() string {
 		rows := make([][]string, 0, len(indexes))
 		for _, i := range indexes {
 			item := m.cfg.Keys[i]
-			rows = append(rows, m.markSelectedRow(i, []string{item.ID, item.ProviderID, item.ModelID, item.Name, defaultText(item.Status, "active"), fmt.Sprint(item.Priority)}))
+			rows = append(rows, m.markSelectedRow(i, []string{item.ID, item.ProviderID, item.ModelID, item.Name, item.ValueEnv, defaultText(item.Status, "active"), fmt.Sprint(item.Priority)}))
 		}
-		return m.renderAdaptiveTable([]string{"ID", "Provider", "Model", "Name", "Status", "Priority"}, rows, []int{18, 14, 20, 16, 10, 8}, []int{10, 8, 10, 8, 8, 6})
+		return m.renderAdaptiveTable([]string{"ID", "Provider", "Model", "Name", "Value Env", "Status", "Priority"}, rows, []int{16, 14, 18, 14, 14, 10, 8}, []int{8, 8, 10, 8, 10, 8, 6})
 	default:
 		rows := make([][]string, 0, len(indexes))
 		for _, i := range indexes {
@@ -508,7 +508,7 @@ func newConfigForm(section configSection, index int, m *model) configFormState {
 		if m != nil && index >= 0 {
 			item = m.cfg.Keys[index]
 		}
-		form.items = []formField{{"ID", item.ID, false}, {"Provider ID", item.ProviderID, false}, {"Model ID", item.ModelID, false}, {"Name", item.Name, false}, {"Value", item.Value, true}, {"Status", defaultText(item.Status, "active"), false}, {"Priority", fmt.Sprint(defaultInt(item.Priority, 1)), false}}
+		form.items = []formField{{"ID", item.ID, false}, {"Provider ID", item.ProviderID, false}, {"Model ID", item.ModelID, false}, {"Name", item.Name, false}, {"Value", item.Value, true}, {"Value Env", item.ValueEnv, false}, {"Status", defaultText(item.Status, "active"), false}, {"Priority", fmt.Sprint(defaultInt(item.Priority, 1)), false}}
 	default:
 		form.title = suffix + " Provider"
 		item := config.ProviderConfig{Type: "openai-compatible", AuthType: "bearer", TimeoutSeconds: 120, Enabled: true}
@@ -543,12 +543,12 @@ func (m *model) applyConfigForm() {
 			m.editor.sectionSelected[int(m.editor.section)] = m.editor.selected
 		}
 	case configSectionKeys:
-		priority, err := strconv.Atoi(defaultText(values[6], "1"))
+		priority, err := strconv.Atoi(defaultText(values[7], "1"))
 		if err != nil || priority <= 0 {
 			m.editor.message = "priority must be a positive number"
 			return
 		}
-		item := config.KeyConfig{ID: values[0], ProviderID: values[1], ModelID: values[2], Name: values[3], Value: values[4], Status: defaultText(values[5], "active"), Priority: priority}
+		item := config.KeyConfig{ID: values[0], ProviderID: values[1], ModelID: values[2], Name: values[3], Value: values[4], ValueEnv: values[5], Status: defaultText(values[6], "active"), Priority: priority}
 		if form.index >= 0 {
 			m.cfg.Keys[form.index] = item
 		} else {
