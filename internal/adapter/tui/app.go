@@ -93,6 +93,9 @@ type model struct {
 	showHelp         bool
 	showThemePicker  bool
 	themePickerIndex int
+	keyTesting       bool
+	keyTestInput     string
+	keyTestResult    string
 }
 
 type styles struct {
@@ -264,6 +267,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showThemePicker {
 			return m.updateThemePicker(msg)
 		}
+		if m.keyTesting {
+			return m.updateKeyTest(msg)
+		}
 		if key == "?" && !m.isTextEntryMode() {
 			m.showHelp = !m.showHelp
 			return m, nil
@@ -289,6 +295,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.page == pageLogs && m.applyLogFilterKey(key) {
+			return m, nil
+		}
+		if m.page == pageKeys && key == "x" {
+			m.keyTesting = true
+			m.keyTestInput = ""
+			m.keyTestResult = ""
 			return m, nil
 		}
 		switch key {
@@ -401,7 +413,12 @@ func (m model) View() string {
 	if m.page == pageChat {
 		footerText = "CHAT enter:send  ctrl+n:new  ctrl+t:target  ctrl+f:filter  ?:help"
 	} else if m.page == pageKeys {
-		footerText = "KEYS 1:status  2:cooldown  3:errors  t/T theme  ?:help"
+		footerText = "KEYS 1:status  2:cooldown  3:errors  x:test  ?:help"
+		if m.keyTesting {
+			footerText = fmt.Sprintf("TEST KEY ID: %s", m.keyTestInput)
+		} else if m.keyTestResult != "" {
+			footerText = m.keyTestResult
+		}
 	} else if m.page == pageLogs {
 		footerText = "LOGS 1:latest  2:errors  3:slow  4:newest  5:slowest  ?:help"
 	} else if m.page == pageConfig {
@@ -557,6 +574,42 @@ func (m model) updateThemePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.themePickerIndex = nextIndex(m.themePickerIndex, len(themeOrder))
 		return m, nil
+	}
+	return m, nil
+}
+
+func (m model) updateKeyTest(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "esc":
+		m.keyTesting = false
+		m.keyTestInput = ""
+		return m, nil
+	case "backspace", "ctrl+h":
+		m.keyTestInput = dropLastRune(m.keyTestInput)
+		return m, nil
+	case "enter":
+		if strings.TrimSpace(m.keyTestInput) == "" {
+			m.keyTesting = false
+			return m, nil
+		}
+		m.keyTestResult = "testing key " + m.keyTestInput + "..."
+		if m.router != nil {
+			err := m.router.TestKey(context.TODO(), strings.TrimSpace(m.keyTestInput))
+			if err != nil {
+				m.keyTestResult = "key " + m.keyTestInput + " FAIL: " + err.Error()
+			} else {
+				m.keyTestResult = "key " + m.keyTestInput + " OK"
+			}
+		} else {
+			m.keyTestResult = "error: no router"
+		}
+		m.keyTesting = false
+		m.keyTestInput = ""
+		return m, nil
+	}
+	if len(msg.Runes) > 0 {
+		m.keyTestInput += string(msg.Runes)
 	}
 	return m, nil
 }
@@ -1866,6 +1919,9 @@ func (m model) emptyState(text string) string {
 
 func (m model) isTextEntryMode() bool {
 	if m.page == pageChat {
+		return true
+	}
+	if m.keyTesting {
 		return true
 	}
 	if m.page != pageConfig {
