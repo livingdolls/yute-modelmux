@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -103,5 +104,28 @@ func TestChatReturnsErrorForLargeRequestBody(t *testing.T) {
 
 	if rec.Code < 400 {
 		t.Fatalf("expected error for oversized body, got %d", rec.Code)
+	}
+}
+
+func TestCopyWithFlushForwardsChunks(t *testing.T) {
+	body := "data: hello\n\ndata: world\n\n"
+	rec := httptest.NewRecorder()
+	err := copyWithFlush(rec, io.NopCloser(strings.NewReader(body)))
+	if err != nil {
+		t.Fatalf("copyWithFlush failed: %v", err)
+	}
+	if rec.Body.String() != body {
+		t.Fatalf("expected body %q, got %q", body, rec.Body.String())
+	}
+}
+
+func TestCopyWithFlushHandlesEmptyStream(t *testing.T) {
+	rec := httptest.NewRecorder()
+	err := copyWithFlush(rec, io.NopCloser(strings.NewReader("")))
+	if err != nil {
+		t.Fatalf("copyWithFlush failed: %v", err)
+	}
+	if rec.Body.String() != "" {
+		t.Fatalf("expected empty body, got %q", rec.Body.String())
 	}
 }

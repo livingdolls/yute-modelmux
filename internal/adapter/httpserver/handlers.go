@@ -60,7 +60,29 @@ func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	_ = copyWithFlush(w, resp.Body)
+}
+
+func copyWithFlush(dst io.Writer, src io.Reader) error {
+	flusher, canFlush := dst.(http.Flusher)
+	buf := make([]byte, 4096)
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			if _, werr := dst.Write(buf[:n]); werr != nil {
+				return werr
+			}
+			if canFlush {
+				flusher.Flush()
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+	}
 }
 
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
