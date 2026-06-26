@@ -27,4 +27,22 @@ func TestMetricsDoesNotExposeAPIKeyValue(t *testing.T) {
 	if !strings.Contains(body, "active_keys") {
 		t.Fatalf("metrics missing model summary: %s", body)
 	}
+	if !strings.Contains(body, "groups") || !strings.Contains(body, "active_models") {
+		t.Fatalf("metrics missing group summary: %s", body)
+	}
+}
+
+func TestModelsIncludesModelGroups(t *testing.T) {
+	cfg := config.Default()
+	rs := service.NewRouterService(cfg)
+	srv := New(rs, cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	rec := httptest.NewRecorder()
+	srv.modelsHandler(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "high-price") {
+		t.Fatalf("models endpoint missing group id: %s", body)
+	}
 }

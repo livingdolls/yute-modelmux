@@ -15,33 +15,138 @@ cooldown:
 
 retry:
   max_retry_per_key: 1
-  max_total_attempts: 5
+  max_total_attempts: 8
   backoff_milliseconds:
     - 300
     - 700
     - 1500
 
 providers:
-  - id: "mimo"
-    name: "Xiaomi MiMo"
+  - id: "openai"
+    name: "OpenAI"
     type: "openai-compatible"
-    base_url: "https://api.example.com/v1"
+    base_url: "https://api.openai.com/v1"
+    auth_type: "bearer"
+    timeout_seconds: 120
+    enabled: true
+
+  - id: "claude"
+    name: "Claude OpenAI-compatible Gateway"
+    type: "openai-compatible"
+    base_url: "https://api.example-claude-gateway.com/v1"
     auth_type: "bearer"
     timeout_seconds: 120
     enabled: true
 
 models:
-  - id: "mimo-v2.5-pro"
-    provider_id: "mimo"
-    model_name: "mimo-v2.5-pro"
+  - id: "gpt-5.5-xhigh"
+    provider_id: "openai"
+    model_name: "gpt-5.5-xHigh"
     strategy: "failover"
     enabled: true
 
+  - id: "gpt-5.5-fast"
+    provider_id: "openai"
+    model_name: "gpt-5.5-fast"
+    strategy: "failover"
+    enabled: true
+
+  - id: "claude-4.8"
+    provider_id: "claude"
+    model_name: "claude-4.8"
+    strategy: "failover"
+    enabled: true
+
+  - id: "claude-fable"
+    provider_id: "claude"
+    model_name: "claude-fable"
+    strategy: "failover"
+    enabled: true
+
+model_groups:
+  - id: "high-price"
+    name: "High Price Models"
+    strategy: "failover"
+    enabled: true
+    members:
+      - model_id: "gpt-5.5-xhigh"
+        priority: 1
+        weight: 1
+        enabled: true
+      - model_id: "gpt-5.5-fast"
+        priority: 2
+        weight: 1
+        enabled: true
+      - model_id: "claude-4.8"
+        priority: 3
+        weight: 1
+        enabled: true
+      - model_id: "claude-fable"
+        priority: 4
+        weight: 1
+        enabled: true
+
 keys:
-  - id: "mimo-key-1"
-    provider_id: "mimo"
-    model_id: "mimo-v2.5-pro"
-    name: "MiMo Personal 1"
-    value_env: "MIMO_KEY_1"
+  - id: "openai-xhigh-key-1"
+    provider_id: "openai"
+    model_id: "gpt-5.5-xhigh"
+    name: "OpenAI xHigh 1"
+    value_env: "OPENAI_XHIGH_KEY_1"
     status: "active"
     priority: 1
+
+  - id: "openai-xhigh-key-2"
+    provider_id: "openai"
+    model_id: "gpt-5.5-xhigh"
+    name: "OpenAI xHigh 2"
+    value_env: "OPENAI_XHIGH_KEY_2"
+    status: "active"
+    priority: 2
+
+  - id: "openai-xhigh-key-3"
+    provider_id: "openai"
+    model_id: "gpt-5.5-xhigh"
+    name: "OpenAI xHigh 3"
+    value_env: "OPENAI_XHIGH_KEY_3"
+    status: "active"
+    priority: 3
+
+  - id: "openai-fast-key-1"
+    provider_id: "openai"
+    model_id: "gpt-5.5-fast"
+    name: "OpenAI Fast 1"
+    value_env: "OPENAI_FAST_KEY_1"
+    status: "active"
+    priority: 1
+
+  - id: "claude-48-key-1"
+    provider_id: "claude"
+    model_id: "claude-4.8"
+    name: "Claude 4.8 1"
+    value_env: "CLAUDE_48_KEY_1"
+    status: "active"
+    priority: 1
+
+  - id: "claude-48-key-2"
+    provider_id: "claude"
+    model_id: "claude-4.8"
+    name: "Claude 4.8 2"
+    value_env: "CLAUDE_48_KEY_2"
+    status: "active"
+    priority: 2
+
+  - id: "claude-fable-key-1"
+    provider_id: "claude"
+    model_id: "claude-fable"
+    name: "Claude Fable 1"
+    value_env: "CLAUDE_FABLE_KEY_1"
+    status: "active"
+    priority: 1
+
+  - id: "claude-fable-key-2"
+    provider_id: "claude"
+    model_id: "claude-fable"
+    name: "Claude Fable 2"
+    value_env: "CLAUDE_FABLE_KEY_2"
+    status: "active"
+    priority: 2

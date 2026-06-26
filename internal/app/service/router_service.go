@@ -38,22 +38,34 @@ func AllKeysUnavailableError(modelID string) *ProxyError {
 	}
 }
 
+func GroupUnavailableError(groupID string) *ProxyError {
+	return &ProxyError{
+		HTTPStatus: http.StatusTooManyRequests,
+		Type:       "modelmux_group_unavailable",
+		Code:       "all_group_models_unavailable",
+		Message:    fmt.Sprintf("all models in group %s are currently unavailable", groupID),
+	}
+}
+
 type RouterService struct {
-	cfg       *config.Config
-	client    *providerclient.OpenAICompatibleClient
-	mu        sync.Mutex
-	rrIndex   map[string]int
-	logs      []domain.RequestLog
-	providers []domain.Provider
-	models    []domain.Model
-	keys      []domain.APIKey
+	cfg          *config.Config
+	client       *providerclient.OpenAICompatibleClient
+	mu           sync.Mutex
+	rrIndex      map[string]int
+	groupRRIndex map[string]int
+	logs         []domain.RequestLog
+	providers    []domain.Provider
+	models       []domain.Model
+	groups       []domain.ModelGroup
+	keys         []domain.APIKey
 }
 
 func NewRouterService(cfg *config.Config) *RouterService {
 	rs := &RouterService{
-		cfg:     cfg,
-		client:  providerclient.New(),
-		rrIndex: map[string]int{},
+		cfg:          cfg,
+		client:       providerclient.New(),
+		rrIndex:      map[string]int{},
+		groupRRIndex: map[string]int{},
 	}
 	for _, p := range cfg.Providers {
 		rs.providers = append(rs.providers, domain.Provider{
@@ -69,6 +81,25 @@ func NewRouterService(cfg *config.Config) *RouterService {
 	}
 	for _, m := range cfg.Models {
 		rs.models = append(rs.models, domain.Model{ID: m.ID, ProviderID: m.ProviderID, ModelName: m.ModelName, Strategy: domain.RotationStrategy(m.Strategy), Enabled: m.Enabled})
+	}
+	for _, g := range cfg.ModelGroups {
+		strategy := domain.GroupStrategy(g.Strategy)
+		if strategy == "" {
+			strategy = domain.GroupStrategyFailover
+		}
+		group := domain.ModelGroup{ID: g.ID, Name: g.Name, Strategy: strategy, Enabled: g.Enabled}
+		for i, member := range g.Members {
+			priority := member.Priority
+			if priority == 0 {
+				priority = i + 1
+			}
+			weight := member.Weight
+			if weight <= 0 {
+				weight = 1
+			}
+			group.Members = append(group.Members, domain.ModelGroupMember{ModelID: member.ModelID, Priority: priority, Weight: weight, Enabled: member.Enabled})
+		}
+		rs.groups = append(rs.groups, group)
 	}
 	now := time.Now()
 	for _, k := range cfg.Keys {
@@ -90,6 +121,11 @@ func (s *RouterService) ListModels() []domain.Model {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]domain.Model(nil), s.models...)
+}
+func (s *RouterService) ListModelGroups() []domain.ModelGroup {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]domain.ModelGroup(nil), s.groups...)
 }
 func (s *RouterService) ListKeys() []domain.APIKey {
 	s.mu.Lock()
@@ -145,38 +181,70 @@ func (s *RouterService) HandleChatCompletion(ctx context.Context, req *http.Requ
 	if err != nil {
 		return nil, err
 	}
-	modelID, err := extractModelFromBody(bodyBytes)
+	requestedID, err := extractModelFromBody(bodyBytes)
 	if err != nil {
 		return nil, err
 	}
-	model, ok := s.modelByID(modelID)
-	if !ok || !model.Enabled {
-		return nil, fmt.Errorf("unknown model %s", modelID)
+	model, ok := s.modelByID(requestedID)
+	if ok {
+		if !model.Enabled {
+			return nil, fmt.Errorf("model %s is disabled", requestedID)
+		}
+		return s.handleModelChatCompletion(ctx, req, bodyBytes, "", model)
 	}
+
+	group, ok := s.groupByID(requestedID)
+	if !ok || !group.Enabled {
+		return nil, fmt.Errorf("unknown model or model group %s", requestedID)
+	}
+	return s.handleGroupChatCompletion(ctx, req, bodyBytes, group)
+}
+
+func (s *RouterService) handleGroupChatCompletion(ctx context.Context, req *http.Request, bodyBytes []byte, group domain.ModelGroup) (*http.Response, error) {
+	attemptedModels := map[string]struct{}{}
+
+	for len(attemptedModels) < len(group.Members) {
+		member, model, ok := s.SelectGroupMember(group.ID, attemptedModels)
+		if !ok {
+			return nil, GroupUnavailableError(group.ID)
+		}
+		attemptedModels[member.ModelID] = struct{}{}
+
+		resp, err := s.handleModelChatCompletion(ctx, req, bodyBytes, group.ID, model)
+		if isUnavailable(err) {
+			continue
+		}
+		return resp, err
+	}
+
+	return nil, GroupUnavailableError(group.ID)
+}
+
+func (s *RouterService) handleModelChatCompletion(ctx context.Context, req *http.Request, bodyBytes []byte, groupID string, model domain.Model) (*http.Response, error) {
 	provider, ok := s.providerByID(model.ProviderID)
 	if !ok || !provider.Enabled {
 		return nil, fmt.Errorf("unknown provider %s", model.ProviderID)
 	}
 
 	attempted := map[string]struct{}{}
-	maxAttempts := s.keyCountForModel(modelID)
+	maxAttempts := s.keyCountForModel(model.ID)
 	if s.cfg.Retry.MaxTotalAttempts > 0 && s.cfg.Retry.MaxTotalAttempts < maxAttempts {
 		maxAttempts = s.cfg.Retry.MaxTotalAttempts
 	}
 	if maxAttempts == 0 {
-		return nil, AllKeysUnavailableError(modelID)
+		return nil, AllKeysUnavailableError(model.ID)
 	}
 
 	for attempts := 0; attempts < maxAttempts; attempts++ {
-		key, err := s.SelectKey(ctx, modelID)
+		key, err := s.SelectKey(ctx, model.ID)
 		if err != nil {
 			if errors.Is(err, ErrNoAvailableKey) {
-				return nil, AllKeysUnavailableError(modelID)
+				return nil, AllKeysUnavailableError(model.ID)
 			}
 			return nil, err
 		}
 		if _, seen := attempted[key.ID]; seen {
-			return nil, AllKeysUnavailableError(modelID)
+			return nil, AllKeysUnavailableError(model.ID)
 		}
 		attempted[key.ID] = struct{}{}
 
@@ -185,6 +253,7 @@ func (s *RouterService) HandleChatCompletion(ctx context.Context, req *http.Requ
 		resp, err := s.client.ForwardChatCompletion(ctx, provider, model, *key, clonedReq)
 		result := classifyResult(resp, err, s.cfg)
 		result.ModelID = model.ID
+		result.GroupID = groupID
 		result.ProviderID = provider.ID
 		result.LatencyMs = time.Since(startedAt).Milliseconds()
 		_ = s.MarkKeyResult(ctx, key.ID, result)
@@ -198,7 +267,7 @@ func (s *RouterService) HandleChatCompletion(ctx context.Context, req *http.Requ
 			_ = resp.Body.Close()
 		}
 	}
-	return nil, AllKeysUnavailableError(modelID)
+	return nil, AllKeysUnavailableError(model.ID)
 }
 
 func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result inbound.KeyResult) error {
@@ -213,7 +282,7 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 		s.keys[i].UpdatedAt = now
 		s.keys[i].UsedCount++
 		s.keys[i].LastUsedAt = &now
-		log := domain.RequestLog{ID: fmt.Sprintf("log-%d", now.UnixNano()), ModelID: result.ModelID, ProviderID: result.ProviderID, KeyID: keyID, StatusCode: result.StatusCode, Error: result.Error, LatencyMs: result.LatencyMs, CreatedAt: now}
+		log := domain.RequestLog{ID: fmt.Sprintf("log-%d", now.UnixNano()), GroupID: result.GroupID, ModelID: result.ModelID, ProviderID: result.ProviderID, KeyID: keyID, StatusCode: result.StatusCode, Error: result.Error, LatencyMs: result.LatencyMs, CreatedAt: now}
 		if result.Success {
 			s.keys[i].ErrorCount = 0
 			s.keys[i].Status = domain.KeyStatusActive
@@ -265,7 +334,46 @@ func (s *RouterService) modelByID(id string) (domain.Model, bool) {
 	return domain.Model{}, false
 }
 
+func (s *RouterService) groupByID(id string) (domain.ModelGroup, bool) {
+	for _, g := range s.groups {
+		if g.ID == id {
+			return g, true
+		}
+	}
+	return domain.ModelGroup{}, false
+}
+
+func (s *RouterService) SelectGroupMember(groupID string, attempted map[string]struct{}) (domain.ModelGroupMember, domain.Model, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	group, ok := s.groupByID(groupID)
+	if !ok || !group.Enabled {
+		return domain.ModelGroupMember{}, domain.Model{}, false
+	}
+	members := s.availableGroupMembers(group, attempted)
+	if len(members) == 0 {
+		return domain.ModelGroupMember{}, domain.Model{}, false
+	}
+
+	switch group.Strategy {
+	case domain.GroupStrategyRoundRobin:
+		idx := s.groupRRIndex[groupID] % len(members)
+		s.groupRRIndex[groupID] = (idx + 1) % len(members)
+		return members[idx].member, members[idx].model, true
+	default:
+		sort.SliceStable(members, func(i, j int) bool { return members[i].member.Priority < members[j].member.Priority })
+		return members[0].member, members[0].model, true
+	}
+}
+
 func (s *RouterService) keyCountForModel(modelID string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.keyCountForModelLocked(modelID)
+}
+
+func (s *RouterService) keyCountForModelLocked(modelID string) int {
 	count := 0
 	for _, k := range s.keys {
 		if k.ModelID == modelID {
@@ -273,6 +381,36 @@ func (s *RouterService) keyCountForModel(modelID string) int {
 		}
 	}
 	return count
+}
+
+type availableGroupMember struct {
+	member domain.ModelGroupMember
+	model  domain.Model
+}
+
+func (s *RouterService) availableGroupMembers(group domain.ModelGroup, attempted map[string]struct{}) []availableGroupMember {
+	var members []availableGroupMember
+	for _, member := range group.Members {
+		if !member.Enabled {
+			continue
+		}
+		if _, seen := attempted[member.ModelID]; seen {
+			continue
+		}
+		model, ok := s.modelByID(member.ModelID)
+		if !ok || !model.Enabled {
+			continue
+		}
+		provider, ok := s.providerByID(model.ProviderID)
+		if !ok || !provider.Enabled {
+			continue
+		}
+		if len(s.availableKeys(member.ModelID)) == 0 {
+			continue
+		}
+		members = append(members, availableGroupMember{member: member, model: model})
+	}
+	return members
 }
 
 func (s *RouterService) availableKeys(modelID string) []domain.APIKey {
@@ -345,4 +483,12 @@ func classifyResult(resp *http.Response, err error, cfg *config.Config) inbound.
 		result.Error = resp.Status
 	}
 	return result
+}
+
+func isUnavailable(err error) bool {
+	var proxyErr *ProxyError
+	if !errors.As(err, &proxyErr) {
+		return false
+	}
+	return proxyErr.Code == "all_keys_limited" || proxyErr.Code == "all_group_models_unavailable"
 }

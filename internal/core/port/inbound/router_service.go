@@ -13,6 +13,7 @@ type RouterService interface {
 	MarkKeyResult(ctx context.Context, keyID string, result KeyResult) error
 	ListProviders() []domain.Provider
 	ListModels() []domain.Model
+	ListModelGroups() []domain.ModelGroup
 	ListKeys() []domain.APIKey
 	Logs() []domain.RequestLog
 }
@@ -21,6 +22,7 @@ type KeyResult struct {
 	Success         bool
 	ShouldRotateKey bool
 	ModelID         string
+	GroupID         string
 	ProviderID      string
 	StatusCode      int
 	Error           string

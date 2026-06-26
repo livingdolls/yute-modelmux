@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -113,5 +114,119 @@ func TestMarkKeyResultLogsSuccess(t *testing.T) {
 	}
 	if logs[0].StatusCode != 200 || logs[0].ModelID != "mimo-v2.5-pro" || logs[0].LatencyMs != 12 {
 		t.Fatalf("unexpected log entry: %+v", logs[0])
+	}
+}
+
+func TestHandleChatCompletionRoutesModelGroup(t *testing.T) {
+	var gotModel string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode upstream request: %v", err)
+		}
+		gotModel = payload.Model
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := groupRoutingConfig(server.URL + "/v1")
+	rs := NewRouterService(cfg)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"high-price","messages":[]}`))
+
+	resp, err := rs.HandleChatCompletion(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handle group request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if gotModel != "gpt-5.5-xHigh" {
+		t.Fatalf("expected provider model gpt-5.5-xHigh, got %s", gotModel)
+	}
+	logs := rs.Logs()
+	if len(logs) != 1 || logs[0].GroupID != "high-price" || logs[0].ModelID != "gpt-5.5-xhigh" {
+		t.Fatalf("unexpected group log: %+v", logs)
+	}
+}
+
+func TestHandleChatCompletionGroupFallsBackToNextMember(t *testing.T) {
+	var gotModel string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode upstream request: %v", err)
+		}
+		gotModel = payload.Model
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := groupRoutingConfig(server.URL + "/v1")
+	rs := NewRouterService(cfg)
+	cooldownEnd := time.Now().Add(time.Minute)
+	rs.keys[0].Status = domain.KeyStatusCooldown
+	rs.keys[0].CooldownEnd = &cooldownEnd
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"high-price","messages":[]}`))
+
+	resp, err := rs.HandleChatCompletion(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handle group fallback failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if gotModel != "gpt-5.5-fast" {
+		t.Fatalf("expected fallback provider model gpt-5.5-fast, got %s", gotModel)
+	}
+}
+
+func TestHandleChatCompletionGroupUnavailable(t *testing.T) {
+	cfg := groupRoutingConfig("https://example.test/v1")
+	rs := NewRouterService(cfg)
+	cooldownEnd := time.Now().Add(time.Minute)
+	for i := range rs.keys {
+		rs.keys[i].Status = domain.KeyStatusCooldown
+		rs.keys[i].CooldownEnd = &cooldownEnd
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"high-price","messages":[]}`))
+
+	_, err := rs.HandleChatCompletion(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected group unavailable error")
+	}
+	var proxyErr *ProxyError
+	if !errors.As(err, &proxyErr) {
+		t.Fatalf("expected ProxyError, got %T", err)
+	}
+	if proxyErr.HTTPStatus != http.StatusTooManyRequests || proxyErr.Code != "all_group_models_unavailable" {
+		t.Fatalf("unexpected proxy error: %+v", proxyErr)
+	}
+}
+
+func groupRoutingConfig(baseURL string) *config.Config {
+	return &config.Config{
+		App:      config.AppConfig{Name: "modelmux", LogLevel: "info"},
+		Server:   config.ServerConfig{Host: "127.0.0.1", Port: 8787, ReadTimeoutSecond: 60, WriteTimeoutSecond: 300},
+		Cooldown: config.CooldownConfig{RateLimitSeconds: 300, ServerErrorSeconds: 60, TimeoutSeconds: 60},
+		Retry:    config.RetryConfig{MaxRetryPerKey: 1, MaxTotalAttempts: 5},
+		Providers: []config.ProviderConfig{
+			{ID: "openai", Name: "OpenAI", Type: "openai-compatible", BaseURL: baseURL, AuthType: "bearer", TimeoutSeconds: 5, Enabled: true},
+		},
+		Models: []config.ModelConfig{
+			{ID: "gpt-5.5-xhigh", ProviderID: "openai", ModelName: "gpt-5.5-xHigh", Strategy: "failover", Enabled: true},
+			{ID: "gpt-5.5-fast", ProviderID: "openai", ModelName: "gpt-5.5-fast", Strategy: "failover", Enabled: true},
+		},
+		ModelGroups: []config.ModelGroupConfig{
+			{ID: "high-price", Name: "High Price", Strategy: "failover", Enabled: true, Members: []config.ModelGroupMemberConfig{
+				{ModelID: "gpt-5.5-xhigh", Priority: 1, Weight: 1, Enabled: true},
+				{ModelID: "gpt-5.5-fast", Priority: 2, Weight: 1, Enabled: true},
+			}},
+		},
+		Keys: []config.KeyConfig{
+			{ID: "openai-xhigh-key-1", ProviderID: "openai", ModelID: "gpt-5.5-xhigh", Value: "xhigh-key", Status: "active", Priority: 1},
+			{ID: "openai-fast-key-1", ProviderID: "openai", ModelID: "gpt-5.5-fast", Value: "fast-key", Status: "active", Priority: 1},
+		},
 	}
 }

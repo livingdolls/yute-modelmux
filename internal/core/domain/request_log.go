@@ -4,6 +4,7 @@ import "time"
 
 type RequestLog struct {
 	ID          string
+	GroupID     string
 	ModelID     string
 	ProviderID  string
 	KeyID       string

@@ -62,6 +62,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.page = 2
 		case "4":
 			m.page = 3
+		case "5":
+			m.page = 4
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -74,7 +76,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	head := m.styles.title.Render("ModelMux") + " " + m.styles.muted.Render("LLM key router")
-	menu := "[1] Providers  [2] Models  [3] Keys  [4] Logs  [q] Quit"
+	menu := "[1] Providers  [2] Models  [3] Groups  [4] Keys  [5] Logs  [q] Quit"
 	content := m.renderPage()
 	return lipgloss.JoinVertical(lipgloss.Left, head, m.styles.muted.Render(menu), "", content)
 }
@@ -85,10 +87,15 @@ func (m model) renderPage() string {
 		return m.styles.box.Render(renderModels(m.cfg.Models))
 	case 2:
 		if m.router != nil {
+			return m.styles.box.Render(renderDomainGroups(m.router.ListModelGroups()))
+		}
+		return m.styles.box.Render(renderConfigGroups(m.cfg.ModelGroups))
+	case 3:
+		if m.router != nil {
 			return m.styles.box.Render(renderDomainKeys(m.router.ListKeys()))
 		}
 		return m.styles.box.Render(renderConfigKeys(m.cfg.Keys))
-	case 3:
+	case 4:
 		return m.styles.box.Render(renderLogs(m.router))
 	default:
 		return m.styles.box.Render(renderProviders(m.cfg.Providers))
@@ -109,6 +116,27 @@ func renderModels(items []config.ModelConfig) string {
 	b.WriteString("Models\n\n")
 	for _, item := range items {
 		fmt.Fprintf(&b, "%s  provider=%s  strategy=%s\n", item.ID, item.ProviderID, item.Strategy)
+	}
+	return b.String()
+}
+
+func renderConfigGroups(items []config.ModelGroupConfig) string {
+	var b strings.Builder
+	b.WriteString("Groups\n\n")
+	for _, item := range items {
+		fmt.Fprintf(&b, "%s  strategy=%s  members=%d  %s\n", item.ID, item.Strategy, len(item.Members), boolText(item.Enabled))
+	}
+	return b.String()
+}
+
+func renderDomainGroups(items []domain.ModelGroup) string {
+	var b strings.Builder
+	b.WriteString("Groups\n\n")
+	for _, item := range items {
+		fmt.Fprintf(&b, "%s  strategy=%s  members=%d  %s\n", item.ID, item.Strategy, len(item.Members), boolText(item.Enabled))
+		for _, member := range item.Members {
+			fmt.Fprintf(&b, "  - %s  priority=%d  weight=%d  %s\n", member.ModelID, member.Priority, member.Weight, boolText(member.Enabled))
+		}
 	}
 	return b.String()
 }
@@ -148,6 +176,10 @@ func renderLogs(router inbound.RouterService) string {
 		return b.String()
 	}
 	for _, item := range items {
+		if item.GroupID != "" {
+			fmt.Fprintf(&b, "%s group=%s model=%s key=%s status=%d error=%s\n", item.CreatedAt.Format("15:04:05"), item.GroupID, item.ModelID, item.KeyID, item.StatusCode, item.Error)
+			continue
+		}
 		fmt.Fprintf(&b, "%s model=%s key=%s status=%d error=%s\n", item.CreatedAt.Format("15:04:05"), item.ModelID, item.KeyID, item.StatusCode, item.Error)
 	}
 	return b.String()

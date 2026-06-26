@@ -5,8 +5,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/livingdolls/yute-modelmux/internal/app/service"
+	"github.com/livingdolls/yute-modelmux/internal/core/domain"
 )
 
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -24,6 +26,12 @@ func (s *Server) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		items = append(items, modelItem{ID: m.ID, Object: "model"})
+	}
+	for _, g := range s.rs.ListModelGroups() {
+		if !g.Enabled {
+			continue
+		}
+		items = append(items, modelItem{ID: g.ID, Object: "model"})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": items})
 }
@@ -57,11 +65,19 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 		CooldownKeys int    `json:"cooldown_keys"`
 		InvalidKeys  int    `json:"invalid_keys"`
 	}
+	type groupMetric struct {
+		ID                string `json:"id"`
+		Requests          int    `json:"requests"`
+		Errors            int    `json:"errors"`
+		ActiveModels      int    `json:"active_models"`
+		UnavailableModels int    `json:"unavailable_models"`
+	}
 
 	keys := s.rs.ListKeys()
 	logs := s.rs.Logs()
+	models := s.rs.ListModels()
 	metrics := make([]modelMetric, 0, len(s.rs.ListModels()))
-	for _, model := range s.rs.ListModels() {
+	for _, model := range models {
 		metric := modelMetric{ID: model.ID}
 		for _, key := range keys {
 			if key.ModelID != model.ID {
@@ -87,8 +103,53 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		metrics = append(metrics, metric)
 	}
+	groupMetrics := make([]groupMetric, 0, len(s.rs.ListModelGroups()))
+	for _, group := range s.rs.ListModelGroups() {
+		metric := groupMetric{ID: group.ID}
+		for _, member := range group.Members {
+			active := false
+			for _, model := range models {
+				if model.ID == member.ModelID && model.Enabled && member.Enabled {
+					active = modelHasActiveKey(keys, model.ID)
+					break
+				}
+			}
+			if active {
+				metric.ActiveModels++
+			} else {
+				metric.UnavailableModels++
+			}
+		}
+		for _, log := range logs {
+			if log.GroupID != group.ID {
+				continue
+			}
+			metric.Requests++
+			if log.StatusCode >= 400 || log.Error != "" {
+				metric.Errors++
+			}
+		}
+		groupMetrics = append(groupMetrics, metric)
+	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"models": metrics})
+	writeJSON(w, http.StatusOK, map[string]any{"models": metrics, "groups": groupMetrics})
+}
+
+func modelHasActiveKey(keys []domain.APIKey, modelID string) bool {
+	now := time.Now()
+	for _, key := range keys {
+		if key.ModelID != modelID {
+			continue
+		}
+		if key.Status == domain.KeyStatusDisabled || key.Status == domain.KeyStatusInvalid {
+			continue
+		}
+		if key.Status == domain.KeyStatusCooldown && key.CooldownEnd != nil && key.CooldownEnd.After(now) {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func writeJSON(w http.ResponseWriter, code int, payload any) {

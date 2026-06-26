@@ -7,3 +7,19 @@ func TestDefaultConfigValid(t *testing.T) {
 		t.Fatalf("default config should be valid: %v", err)
 	}
 }
+
+func TestValidateRejectsModelGroupIDConflict(t *testing.T) {
+	cfg := Default()
+	cfg.ModelGroups[0].ID = cfg.Models[0].ID
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected model group id conflict error")
+	}
+}
+
+func TestValidateRejectsUnknownModelGroupMember(t *testing.T) {
+	cfg := Default()
+	cfg.ModelGroups[0].Members[0].ModelID = "missing-model"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected unknown model group member error")
+	}
+}

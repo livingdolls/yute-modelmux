@@ -11,13 +11,14 @@ import (
 )
 
 type Config struct {
-	App       AppConfig        `yaml:"app"`
-	Server    ServerConfig     `yaml:"server"`
-	Cooldown  CooldownConfig   `yaml:"cooldown"`
-	Retry     RetryConfig      `yaml:"retry"`
-	Providers []ProviderConfig `yaml:"providers"`
-	Models    []ModelConfig    `yaml:"models"`
-	Keys      []KeyConfig      `yaml:"keys"`
+	App         AppConfig          `yaml:"app"`
+	Server      ServerConfig       `yaml:"server"`
+	Cooldown    CooldownConfig     `yaml:"cooldown"`
+	Retry       RetryConfig        `yaml:"retry"`
+	Providers   []ProviderConfig   `yaml:"providers"`
+	Models      []ModelConfig      `yaml:"models"`
+	ModelGroups []ModelGroupConfig `yaml:"model_groups"`
+	Keys        []KeyConfig        `yaml:"keys"`
 }
 
 type AppConfig struct {
@@ -76,6 +77,21 @@ type KeyConfig struct {
 	Priority   int    `yaml:"priority"`
 }
 
+type ModelGroupConfig struct {
+	ID       string                   `yaml:"id"`
+	Name     string                   `yaml:"name"`
+	Strategy string                   `yaml:"strategy"`
+	Enabled  bool                     `yaml:"enabled"`
+	Members  []ModelGroupMemberConfig `yaml:"members"`
+}
+
+type ModelGroupMemberConfig struct {
+	ModelID  string `yaml:"model_id"`
+	Priority int    `yaml:"priority"`
+	Weight   int    `yaml:"weight"`
+	Enabled  bool   `yaml:"enabled"`
+}
+
 func DefaultConfigPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
@@ -86,13 +102,14 @@ func DefaultConfigPath() string {
 
 func Default() *Config {
 	return &Config{
-		App:       AppConfig{Name: "modelmux", LogLevel: "info"},
-		Server:    ServerConfig{Host: "127.0.0.1", Port: 8787, ReadTimeoutSecond: 60, WriteTimeoutSecond: 300},
-		Cooldown:  CooldownConfig{RateLimitSeconds: 300, ServerErrorSeconds: 60, TimeoutSeconds: 60},
-		Retry:     RetryConfig{MaxRetryPerKey: 1, MaxTotalAttempts: 5, BackoffMilliseconds: []int{300, 700, 1500}},
-		Providers: []ProviderConfig{{ID: "mimo", Name: "Xiaomi MiMo", Type: "openai-compatible", BaseURL: "https://api.example.com/v1", AuthType: "bearer", TimeoutSeconds: 120, Enabled: true}},
-		Models:    []ModelConfig{{ID: "mimo-v2.5-pro", ProviderID: "mimo", ModelName: "mimo-v2.5-pro", Strategy: "failover", Enabled: true}},
-		Keys:      []KeyConfig{{ID: "mimo-key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Name: "MiMo Personal 1", ValueEnv: "MIMO_KEY_1", Status: "active", Priority: 1}},
+		App:         AppConfig{Name: "modelmux", LogLevel: "info"},
+		Server:      ServerConfig{Host: "127.0.0.1", Port: 8787, ReadTimeoutSecond: 60, WriteTimeoutSecond: 300},
+		Cooldown:    CooldownConfig{RateLimitSeconds: 300, ServerErrorSeconds: 60, TimeoutSeconds: 60},
+		Retry:       RetryConfig{MaxRetryPerKey: 1, MaxTotalAttempts: 5, BackoffMilliseconds: []int{300, 700, 1500}},
+		Providers:   []ProviderConfig{{ID: "mimo", Name: "Xiaomi MiMo", Type: "openai-compatible", BaseURL: "https://api.example.com/v1", AuthType: "bearer", TimeoutSeconds: 120, Enabled: true}},
+		Models:      []ModelConfig{{ID: "mimo-v2.5-pro", ProviderID: "mimo", ModelName: "mimo-v2.5-pro", Strategy: "failover", Enabled: true}},
+		ModelGroups: []ModelGroupConfig{{ID: "high-price", Name: "High Price Models", Strategy: "failover", Enabled: true, Members: []ModelGroupMemberConfig{{ModelID: "mimo-v2.5-pro", Priority: 1, Weight: 1, Enabled: true}}}},
+		Keys:        []KeyConfig{{ID: "mimo-key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Name: "MiMo Personal 1", ValueEnv: "MIMO_KEY_1", Status: "active", Priority: 1}},
 	}
 }
 
@@ -161,6 +178,9 @@ func (c *Config) Validate() error {
 		if p.ID == "" {
 			return errors.New("provider.id is required")
 		}
+		if _, exists := providerIDs[p.ID]; exists {
+			return fmt.Errorf("duplicate provider id %s", p.ID)
+		}
 		providerIDs[p.ID] = struct{}{}
 	}
 	modelIDs := map[string]struct{}{}
@@ -168,14 +188,45 @@ func (c *Config) Validate() error {
 		if m.ID == "" {
 			return errors.New("model.id is required")
 		}
+		if _, exists := modelIDs[m.ID]; exists {
+			return fmt.Errorf("duplicate model id %s", m.ID)
+		}
 		if _, ok := providerIDs[m.ProviderID]; !ok {
 			return fmt.Errorf("model %s references unknown provider %s", m.ID, m.ProviderID)
 		}
 		modelIDs[m.ID] = struct{}{}
 	}
+	groupIDs := map[string]struct{}{}
+	for _, g := range c.ModelGroups {
+		if g.ID == "" {
+			return errors.New("model_group.id is required")
+		}
+		if _, exists := groupIDs[g.ID]; exists {
+			return fmt.Errorf("duplicate model group id %s", g.ID)
+		}
+		if _, exists := modelIDs[g.ID]; exists {
+			return fmt.Errorf("model group id %s conflicts with model id", g.ID)
+		}
+		if len(g.Members) == 0 {
+			return fmt.Errorf("model group %s must have at least one member", g.ID)
+		}
+		for _, member := range g.Members {
+			if member.ModelID == "" {
+				return fmt.Errorf("model group %s has member without model_id", g.ID)
+			}
+			if _, ok := modelIDs[member.ModelID]; !ok {
+				return fmt.Errorf("model group %s references unknown model %s", g.ID, member.ModelID)
+			}
+		}
+		groupIDs[g.ID] = struct{}{}
+	}
+	keyIDs := map[string]struct{}{}
 	for _, k := range c.Keys {
 		if k.ID == "" {
 			return errors.New("key.id is required")
+		}
+		if _, exists := keyIDs[k.ID]; exists {
+			return fmt.Errorf("duplicate key id %s", k.ID)
 		}
 		if _, ok := providerIDs[k.ProviderID]; !ok {
 			return fmt.Errorf("key %s references unknown provider %s", k.ID, k.ProviderID)
@@ -183,6 +234,7 @@ func (c *Config) Validate() error {
 		if _, ok := modelIDs[k.ModelID]; !ok {
 			return fmt.Errorf("key %s references unknown model %s", k.ID, k.ModelID)
 		}
+		keyIDs[k.ID] = struct{}{}
 	}
 	return nil
 }
