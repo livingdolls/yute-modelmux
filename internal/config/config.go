@@ -207,7 +207,11 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("model group id %s conflicts with model id", g.ID)
 		}
 		if len(g.Members) == 0 {
-			return fmt.Errorf("model group %s must have at least one member", g.ID)
+			if g.Enabled {
+				return fmt.Errorf("enabled model group %s must have at least one member", g.ID)
+			}
+			groupIDs[g.ID] = struct{}{}
+			continue
 		}
 		for _, member := range g.Members {
 			if member.ModelID == "" {

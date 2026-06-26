@@ -41,3 +41,16 @@ ModelMux will try group members by priority, then rotate keys inside the selecte
 ## TUI Chat Sessions
 
 The TUI includes in-memory chat sessions. Open the `Chat` page, type a message, and press enter. Use `ctrl+n` for a new session and `ctrl+t` to switch the active session target between configured groups/models.
+
+## TUI Config Editor
+
+Open the `Config` page to manage providers, models, groups, and keys without editing YAML manually.
+
+- `left/right`: switch config section
+- `up/down`: select row
+- `a`: add item
+- `e`: edit item
+- `d`: delete item with confirmation
+- `space`: enable/disable item
+- `s`: save config and reload router
+- `r`: discard unsaved changes

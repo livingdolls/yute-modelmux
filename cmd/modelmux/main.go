@@ -8,6 +8,7 @@ import (
 	"github.com/livingdolls/yute-modelmux/internal/adapter/tui"
 	"github.com/livingdolls/yute-modelmux/internal/app/service"
 	"github.com/livingdolls/yute-modelmux/internal/config"
+	"github.com/livingdolls/yute-modelmux/internal/core/port/inbound"
 	"github.com/spf13/cobra"
 )
 
@@ -59,7 +60,20 @@ func main() {
 				return err
 			}
 			router := service.NewRouterService(cfg)
-			return tui.Run(cfg, router)
+			return tui.Run(tui.Options{
+				ConfigPath: configPath,
+				Config:     cfg,
+				Router:     router,
+				SaveConfig: func(next *config.Config) error {
+					return config.Save(configPath, next)
+				},
+				ReloadRouter: func(next *config.Config) (inbound.RouterService, error) {
+					if err := next.Validate(); err != nil {
+						return nil, err
+					}
+					return service.NewRouterService(next), nil
+				},
+			})
 		},
 	})
 

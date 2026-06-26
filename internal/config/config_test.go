@@ -24,6 +24,15 @@ func TestValidateRejectsUnknownModelGroupMember(t *testing.T) {
 	}
 }
 
+func TestValidateAllowsDisabledEmptyModelGroup(t *testing.T) {
+	cfg := Default()
+	cfg.ModelGroups[0].Enabled = false
+	cfg.ModelGroups[0].Members = nil
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("disabled empty group should be valid: %v", err)
+	}
+}
+
 func TestValidateRejectsKeyWithoutValue(t *testing.T) {
 	cfg := Default()
 	cfg.Keys[0].Value = ""

@@ -24,6 +24,7 @@ const (
 	pageChat
 	pageKeys
 	pageLogs
+	pageConfig
 )
 
 type navItem struct {
@@ -38,6 +39,15 @@ var navItems = []navItem{
 	{label: "Chat", description: "TUI sessions"},
 	{label: "Keys", description: "Live key state"},
 	{label: "Logs", description: "Recent requests"},
+	{label: "Config", description: "Edit routing"},
+}
+
+type Options struct {
+	ConfigPath   string
+	Config       *config.Config
+	Router       inbound.RouterService
+	SaveConfig   func(*config.Config) error
+	ReloadRouter func(*config.Config) (inbound.RouterService, error)
 }
 
 type tuiChatMessage struct {
@@ -56,16 +66,21 @@ type tuiChatSession struct {
 }
 
 type model struct {
-	cfg        *config.Config
-	router     inbound.RouterService
-	selected   int
-	page       int
-	width      int
-	styles     styles
-	chats      []tuiChatSession
-	activeChat int
-	chatInput  string
-	nextChatID int
+	cfg          *config.Config
+	savedCfg     *config.Config
+	configPath   string
+	router       inbound.RouterService
+	saveConfig   func(*config.Config) error
+	reloadRouter func(*config.Config) (inbound.RouterService, error)
+	selected     int
+	page         int
+	width        int
+	styles       styles
+	editor       configEditorState
+	chats        []tuiChatSession
+	activeChat   int
+	chatInput    string
+	nextChatID   int
 }
 
 type styles struct {
@@ -94,9 +109,20 @@ type chatResponseMsg struct {
 	err       error
 }
 
-func Run(cfg *config.Config, router inbound.RouterService) error {
-	m := model{cfg: cfg, router: router, styles: defaultStyles(), nextChatID: 2}
-	m.chats = []tuiChatSession{newTUIChatSession(1, defaultChatTarget(cfg))}
+func Run(options Options) error {
+	draft := cloneConfig(options.Config)
+	m := model{
+		cfg:          draft,
+		savedCfg:     cloneConfig(options.Config),
+		configPath:   options.ConfigPath,
+		router:       options.Router,
+		saveConfig:   options.SaveConfig,
+		reloadRouter: options.ReloadRouter,
+		styles:       defaultStyles(),
+		nextChatID:   2,
+		editor:       newConfigEditorState(draft),
+	}
+	m.chats = []tuiChatSession{newTUIChatSession(1, defaultChatTarget(draft))}
 	prog := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := prog.Run()
 	return err
@@ -133,6 +159,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.page == pageChat {
 			return m.updateChat(msg)
+		}
+		if m.page == pageConfig {
+			return m.updateConfigEditor(msg)
 		}
 		switch key {
 		case "up", "k", "shift+tab":
@@ -209,6 +238,8 @@ func (m model) View() string {
 	footerText := "Navigate: up/down or tab  Select: enter  Quit: q"
 	if m.page == pageChat {
 		footerText = "Chat: type message, enter send, ctrl+n new, ctrl+t change target, up/down switch session, tab menu, q quit"
+	} else if m.page == pageConfig {
+		footerText = "Config: left/right section, up/down row, a add, e edit, d delete, space toggle, s save, r reload"
 	}
 	footer := m.styles.footer.Render(footerText)
 
@@ -271,6 +302,8 @@ func (m model) renderPage() string {
 		}
 	case pageLogs:
 		body = m.renderLogs()
+	case pageConfig:
+		body = m.renderConfigEditor()
 	case pageProviders:
 		body = m.renderProviders(m.cfg.Providers)
 	default:
