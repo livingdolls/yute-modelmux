@@ -27,13 +27,16 @@ const (
 )
 
 type configEditorState struct {
-	section  configSection
-	selected int
-	mode     editorMode
-	dirty    bool
-	message  string
-	form     configFormState
-	confirm  deleteConfirmState
+	section         configSection
+	selected        int
+	sectionSelected [4]int
+	mode            editorMode
+	dirty           bool
+	message         string
+	filter          string
+	filterOn        bool
+	form            configFormState
+	confirm         deleteConfirmState
 }
 
 type configFormState struct {
@@ -58,6 +61,19 @@ type deleteConfirmState struct {
 	input  string
 }
 
+func configSectionName(section configSection) string {
+	switch section {
+	case configSectionModels:
+		return "models"
+	case configSectionGroups:
+		return "groups"
+	case configSectionKeys:
+		return "keys"
+	default:
+		return "providers"
+	}
+}
+
 func newConfigEditorState(cfg *config.Config) configEditorState {
 	return configEditorState{section: configSectionProviders, mode: editorModeBrowse}
 }
@@ -70,6 +86,9 @@ func (m model) updateConfigEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.editor.mode == editorModeDelete {
 		return m.updateDeleteConfirm(msg)
 	}
+	if m.editor.filterOn {
+		return m.updateConfigFilter(msg)
+	}
 
 	switch key {
 	case "tab":
@@ -78,6 +97,12 @@ func (m model) updateConfigEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab":
 		m.selected = previousIndex(m.selected, len(navItems))
 		return m, nil
+	case "up":
+		m.selected = previousIndex(m.selected, len(navItems))
+		return m, nil
+	case "down":
+		m.selected = nextIndex(m.selected, len(navItems))
+		return m, nil
 	case "enter":
 		if m.selected != m.page {
 			m.page = m.selected
@@ -85,15 +110,19 @@ func (m model) updateConfigEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.startEditConfigItem()
 	case "left", "h":
+		m.editor.sectionSelected[int(m.editor.section)] = m.editor.selected
 		m.editor.section = configSection(previousIndex(int(m.editor.section), 4))
-		m.editor.selected = 0
+		m.editor.selected = m.editor.sectionSelected[int(m.editor.section)]
+		m.ensureConfigSelectionVisible()
 	case "right", "l":
+		m.editor.sectionSelected[int(m.editor.section)] = m.editor.selected
 		m.editor.section = configSection(nextIndex(int(m.editor.section), 4))
-		m.editor.selected = 0
-	case "up", "k":
-		m.editor.selected = previousIndex(m.editor.selected, m.configSectionLen())
-	case "down", "j":
-		m.editor.selected = nextIndex(m.editor.selected, m.configSectionLen())
+		m.editor.selected = m.editor.sectionSelected[int(m.editor.section)]
+		m.ensureConfigSelectionVisible()
+	case "k":
+		m.moveConfigSelection(-1)
+	case "j":
+		m.moveConfigSelection(1)
 	case "a":
 		m.startAddConfigItem()
 	case "e":
@@ -106,6 +135,31 @@ func (m model) updateConfigEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.saveDraftConfig()
 	case "r":
 		m.reloadDraftConfig()
+	case "/", "ctrl+f":
+		m.editor.filterOn = true
+	}
+	return m, nil
+}
+
+func (m model) updateConfigFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "esc", "enter", "/", "ctrl+f":
+		m.editor.filterOn = false
+		m.ensureConfigSelectionVisible()
+		return m, nil
+	case "backspace", "ctrl+h":
+		m.editor.filter = dropLastRune(m.editor.filter)
+		m.ensureConfigSelectionVisible()
+		return m, nil
+	case "ctrl+u":
+		m.editor.filter = ""
+		m.ensureConfigSelectionVisible()
+		return m, nil
+	}
+	if len(msg.Runes) > 0 {
+		m.editor.filter += string(msg.Runes)
+		m.ensureConfigSelectionVisible()
 	}
 	return m, nil
 }
@@ -192,49 +246,63 @@ func (m model) renderConfigEditor() string {
 		tabs = append(tabs, label)
 	}
 	var b strings.Builder
+	b.WriteString(m.styles.section.Render(".:: CONFIG DECK ::."))
+	b.WriteString("\n")
+	b.WriteString(m.styles.hint.Render("edit the live draft, then save to reload the router"))
+	b.WriteString("\n\n")
 	b.WriteString(strings.Join(tabs, " "))
 	b.WriteString("\n")
+	b.WriteString(m.styles.input.Render("/ " + defaultText(m.editor.filter, "all rows")))
+	b.WriteString("\n\n")
 	b.WriteString(m.renderConfigSectionTable())
 	status := "saved"
 	if m.editor.dirty {
 		status = "dirty"
 	}
-	b.WriteString("\n")
-	b.WriteString(m.styles.muted.Render(status + " | " + defaultText(m.configPath, "default")))
+	b.WriteString("\n\n")
+	b.WriteString(m.styles.badge.Render(strings.ToUpper(status)))
+	b.WriteString(" ")
+	b.WriteString(m.styles.hint.Render(defaultText(m.configPath, "default")))
 	if m.editor.message != "" {
-		b.WriteString(" | " + m.editor.message)
+		b.WriteString("\n")
+		b.WriteString(m.styles.hint.Render(m.editor.message))
 	}
 	b.WriteString("\n")
-	b.WriteString(m.styles.muted.Render("a:add e:edit d:del sp:toggle s:save r:reload ←→:section"))
+	b.WriteString(m.styles.hint.Render("up/down:menu  j/k:row  <- ->:section  a:add  e:edit  d:del  /:filter  s:save"))
 	return b.String()
 }
 
 func (m model) renderConfigSectionTable() string {
+	indexes := m.filteredConfigIndexes()
 	switch m.editor.section {
 	case configSectionModels:
-		rows := make([][]string, 0, len(m.cfg.Models))
-		for i, item := range m.cfg.Models {
+		rows := make([][]string, 0, len(indexes))
+		for _, i := range indexes {
+			item := m.cfg.Models[i]
 			rows = append(rows, m.markSelectedRow(i, []string{item.ID, item.ProviderID, item.ModelName, defaultText(item.Strategy, "failover"), boolString(item.Enabled)}))
 		}
-		return renderTable(m.styles, []string{"ID", "Provider", "Provider Model", "Strategy", "Enabled"}, rows, []int{20, 14, 24, 12, 8})
+		return m.renderAdaptiveTable([]string{"ID", "Provider", "Provider Model", "Strategy", "Enabled"}, rows, []int{20, 14, 24, 12, 8}, []int{10, 8, 12, 8, 7})
 	case configSectionGroups:
-		rows := make([][]string, 0, len(m.cfg.ModelGroups))
-		for i, item := range m.cfg.ModelGroups {
+		rows := make([][]string, 0, len(indexes))
+		for _, i := range indexes {
+			item := m.cfg.ModelGroups[i]
 			rows = append(rows, m.markSelectedRow(i, []string{item.ID, item.Name, defaultText(item.Strategy, "failover"), fmt.Sprint(len(item.Members)), boolString(item.Enabled)}))
 		}
-		return renderTable(m.styles, []string{"ID", "Name", "Strategy", "Members", "Enabled"}, rows, []int{20, 18, 12, 8, 8})
+		return m.renderAdaptiveTable([]string{"ID", "Name", "Strategy", "Members", "Enabled"}, rows, []int{20, 18, 12, 8, 8}, []int{10, 10, 8, 6, 7})
 	case configSectionKeys:
-		rows := make([][]string, 0, len(m.cfg.Keys))
-		for i, item := range m.cfg.Keys {
+		rows := make([][]string, 0, len(indexes))
+		for _, i := range indexes {
+			item := m.cfg.Keys[i]
 			rows = append(rows, m.markSelectedRow(i, []string{item.ID, item.ProviderID, item.ModelID, item.Name, defaultText(item.Status, "active"), fmt.Sprint(item.Priority)}))
 		}
-		return renderTable(m.styles, []string{"ID", "Provider", "Model", "Name", "Status", "Priority"}, rows, []int{18, 14, 20, 16, 10, 8})
+		return m.renderAdaptiveTable([]string{"ID", "Provider", "Model", "Name", "Status", "Priority"}, rows, []int{18, 14, 20, 16, 10, 8}, []int{10, 8, 10, 8, 8, 6})
 	default:
-		rows := make([][]string, 0, len(m.cfg.Providers))
-		for i, item := range m.cfg.Providers {
+		rows := make([][]string, 0, len(indexes))
+		for _, i := range indexes {
+			item := m.cfg.Providers[i]
 			rows = append(rows, m.markSelectedRow(i, []string{item.ID, item.Name, item.Type, truncate(item.BaseURL, 30), item.AuthType, boolString(item.Enabled)}))
 		}
-		return renderTable(m.styles, []string{"ID", "Name", "Type", "Base URL", "Auth", "Enabled"}, rows, []int{14, 18, 16, 28, 8, 8})
+		return m.renderAdaptiveTable([]string{"ID", "Name", "Type", "Base URL", "Auth", "Enabled"}, rows, []int{14, 18, 16, 28, 8, 8}, []int{8, 10, 8, 12, 6, 7})
 	}
 }
 
@@ -249,9 +317,11 @@ func (m model) markSelectedRow(index int, row []string) []string {
 func (m model) renderConfigForm() string {
 	form := m.editor.form
 	var b strings.Builder
-	b.WriteString(m.styles.panelTitle.Render(form.title))
-	b.WriteString("  ")
-	b.WriteString(m.styles.muted.Render("enter:next ctrl+s:save esc:cancel"))
+	b.WriteString(m.styles.panelTitle.Render(":: " + strings.ToUpper(form.title) + " ::"))
+	b.WriteString("\n")
+	b.WriteString(m.styles.hint.Render("enter:next/apply  ctrl+s:save  esc:cancel"))
+	b.WriteString("\n")
+	b.WriteString(m.styles.muted.Render(strings.Repeat("-", 46)))
 	b.WriteString("\n")
 	for i, field := range form.items {
 		prefix := "  "
@@ -274,14 +344,17 @@ func (m model) renderConfigForm() string {
 func (m model) renderDeleteConfirm() string {
 	confirm := m.editor.confirm
 	var b strings.Builder
-	b.WriteString(m.styles.bad.Render(confirm.title))
+	b.WriteString(m.styles.bad.Render(":: DELETE CONFIRM ::"))
+	b.WriteString("\n")
+	b.WriteString(m.styles.panelTitle.Render(confirm.title))
+	b.WriteString("\n")
+	b.WriteString(m.styles.muted.Render(strings.Repeat("-", 46)))
 	b.WriteString("\n")
 	b.WriteString(confirm.impact)
 	b.WriteString("\n")
-	b.WriteString(m.styles.muted.Render("Type delete to confirm, esc to cancel"))
+	b.WriteString(m.styles.hint.Render("Type delete to confirm, esc to cancel"))
 	b.WriteString("\n")
-	b.WriteString("> ")
-	b.WriteString(confirm.input)
+	b.WriteString(m.styles.input.Render("> " + confirm.input))
 	return b.String()
 }
 
@@ -298,6 +371,95 @@ func (m model) configSectionLen() int {
 	}
 }
 
+func (m model) filteredConfigIndexes() []int {
+	query := strings.ToLower(strings.TrimSpace(m.editor.filter))
+	out := make([]int, 0, m.configSectionLen())
+	appendIfMatch := func(index int, values ...string) {
+		if query == "" {
+			out = append(out, index)
+			return
+		}
+		for _, value := range values {
+			if strings.Contains(strings.ToLower(value), query) {
+				out = append(out, index)
+				return
+			}
+		}
+	}
+	switch m.editor.section {
+	case configSectionModels:
+		for i, item := range m.cfg.Models {
+			appendIfMatch(i, item.ID, item.ProviderID, item.ModelName, string(item.Strategy))
+		}
+	case configSectionGroups:
+		for i, item := range m.cfg.ModelGroups {
+			appendIfMatch(i, item.ID, item.Name, item.Strategy, groupMembersText(item.Members))
+		}
+	case configSectionKeys:
+		for i, item := range m.cfg.Keys {
+			appendIfMatch(i, item.ID, item.ProviderID, item.ModelID, item.Name, item.Status)
+		}
+	default:
+		for i, item := range m.cfg.Providers {
+			appendIfMatch(i, item.ID, item.Name, item.Type, item.BaseURL, item.AuthType)
+		}
+	}
+	return out
+}
+
+func (m *model) moveConfigSelection(step int) {
+	indexes := m.filteredConfigIndexes()
+	if len(indexes) == 0 {
+		return
+	}
+	pos := 0
+	for i, idx := range indexes {
+		if idx == m.editor.selected {
+			pos = i
+			break
+		}
+	}
+	if step < 0 {
+		pos = previousIndex(pos, len(indexes))
+	} else {
+		pos = nextIndex(pos, len(indexes))
+	}
+	m.editor.selected = indexes[pos]
+	m.editor.sectionSelected[int(m.editor.section)] = m.editor.selected
+}
+
+func (m *model) ensureConfigSelectionVisible() {
+	indexes := m.filteredConfigIndexes()
+	if len(indexes) == 0 {
+		m.editor.selected = m.editor.sectionSelected[int(m.editor.section)]
+		return
+	}
+	saved := m.editor.sectionSelected[int(m.editor.section)]
+	for _, idx := range indexes {
+		if idx == saved {
+			m.editor.selected = idx
+			return
+		}
+	}
+	for _, idx := range indexes {
+		if idx == m.editor.selected {
+			m.editor.sectionSelected[int(m.editor.section)] = m.editor.selected
+			return
+		}
+	}
+	m.editor.selected = indexes[0]
+	m.editor.sectionSelected[int(m.editor.section)] = m.editor.selected
+}
+
+func (m model) hasVisibleConfigSelection() bool {
+	for _, idx := range m.filteredConfigIndexes() {
+		if idx == m.editor.selected {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *model) startAddConfigItem() {
 	m.editor.mode = editorModeForm
 	m.editor.form = newConfigForm(m.editor.section, -1, nil)
@@ -305,6 +467,10 @@ func (m *model) startAddConfigItem() {
 }
 
 func (m *model) startEditConfigItem() {
+	if !m.hasVisibleConfigSelection() {
+		m.editor.message = "nothing selected"
+		return
+	}
 	idx := m.editor.selected
 	if idx < 0 || idx >= m.configSectionLen() {
 		m.editor.message = "nothing selected"
@@ -365,6 +531,7 @@ func (m *model) applyConfigForm() {
 		} else {
 			m.cfg.Models = append(m.cfg.Models, item)
 			m.editor.selected = len(m.cfg.Models) - 1
+			m.editor.sectionSelected[int(m.editor.section)] = m.editor.selected
 		}
 	case configSectionGroups:
 		item := config.ModelGroupConfig{ID: values[0], Name: values[1], Strategy: defaultText(values[2], "failover"), Members: parseGroupMembers(values[3]), Enabled: parseBool(values[4])}
@@ -373,6 +540,7 @@ func (m *model) applyConfigForm() {
 		} else {
 			m.cfg.ModelGroups = append(m.cfg.ModelGroups, item)
 			m.editor.selected = len(m.cfg.ModelGroups) - 1
+			m.editor.sectionSelected[int(m.editor.section)] = m.editor.selected
 		}
 	case configSectionKeys:
 		priority, err := strconv.Atoi(defaultText(values[6], "1"))
@@ -386,6 +554,7 @@ func (m *model) applyConfigForm() {
 		} else {
 			m.cfg.Keys = append(m.cfg.Keys, item)
 			m.editor.selected = len(m.cfg.Keys) - 1
+			m.editor.sectionSelected[int(m.editor.section)] = m.editor.selected
 		}
 	default:
 		timeout, err := strconv.Atoi(defaultText(values[6], "120"))
@@ -399,6 +568,7 @@ func (m *model) applyConfigForm() {
 		} else {
 			m.cfg.Providers = append(m.cfg.Providers, item)
 			m.editor.selected = len(m.cfg.Providers) - 1
+			m.editor.sectionSelected[int(m.editor.section)] = m.editor.selected
 		}
 	}
 	m.editor.mode = editorModeBrowse
@@ -407,6 +577,10 @@ func (m *model) applyConfigForm() {
 }
 
 func (m *model) startDeleteConfigItem() {
+	if !m.hasVisibleConfigSelection() {
+		m.editor.message = "nothing selected"
+		return
+	}
 	idx := m.editor.selected
 	if idx < 0 || idx >= m.configSectionLen() {
 		m.editor.message = "nothing selected"
@@ -468,12 +642,16 @@ func (m *model) applyDeleteConfigItem() {
 		removeModelsFromGroups(m.cfg, modelIDs)
 	}
 	m.editor.selected = clampIndex(m.editor.selected, m.configSectionLen())
+	m.editor.sectionSelected[int(m.editor.section)] = m.editor.selected
 	m.editor.mode = editorModeBrowse
 	m.editor.dirty = true
 	m.editor.message = "deleted; press s to save"
 }
 
 func (m *model) toggleConfigItem() {
+	if !m.hasVisibleConfigSelection() {
+		return
+	}
 	idx := m.editor.selected
 	if idx < 0 || idx >= m.configSectionLen() {
 		return
@@ -493,6 +671,7 @@ func (m *model) toggleConfigItem() {
 		m.cfg.Providers[idx].Enabled = !m.cfg.Providers[idx].Enabled
 	}
 	m.editor.dirty = true
+	m.editor.sectionSelected[int(m.editor.section)] = m.editor.selected
 	m.editor.message = "changed; press s to save"
 }
 
