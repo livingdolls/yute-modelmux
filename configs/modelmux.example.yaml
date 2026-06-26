@@ -1,0 +1,47 @@
+app:
+  name: "modelmux"
+  log_level: "info"
+
+server:
+  host: "127.0.0.1"
+  port: 8787
+  read_timeout_seconds: 60
+  write_timeout_seconds: 300
+
+cooldown:
+  rate_limit_seconds: 300
+  server_error_seconds: 60
+  timeout_seconds: 60
+
+retry:
+  max_retry_per_key: 1
+  max_total_attempts: 5
+  backoff_milliseconds:
+    - 300
+    - 700
+    - 1500
+
+providers:
+  - id: "mimo"
+    name: "Xiaomi MiMo"
+    type: "openai-compatible"
+    base_url: "https://api.example.com/v1"
+    auth_type: "bearer"
+    timeout_seconds: 120
+    enabled: true
+
+models:
+  - id: "mimo-v2.5-pro"
+    provider_id: "mimo"
+    model_name: "mimo-v2.5-pro"
+    strategy: "failover"
+    enabled: true
+
+keys:
+  - id: "mimo-key-1"
+    provider_id: "mimo"
+    model_id: "mimo-v2.5-pro"
+    name: "MiMo Personal 1"
+    value_env: "MIMO_KEY_1"
+    status: "active"
+    priority: 1
