@@ -11,6 +11,7 @@ type RouterService interface {
 	HandleChatCompletion(ctx context.Context, req *http.Request) (*http.Response, error)
 	SelectKey(ctx context.Context, modelID string) (*domain.APIKey, error)
 	MarkKeyResult(ctx context.Context, keyID string, result KeyResult) error
+	TestKey(ctx context.Context, keyID string) error
 	ListProviders() []domain.Provider
 	ListModels() []domain.Model
 	ListModelGroups() []domain.ModelGroup

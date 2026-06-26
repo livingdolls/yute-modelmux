@@ -420,6 +420,47 @@ func singleKeyRetryConfig(baseURL string) *config.Config {
 	}
 }
 
+func TestKeySuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" && r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	cfg := singleKeyRetryConfig(server.URL + "/v1")
+	rs := NewRouterService(cfg)
+
+	if err := rs.TestKey(context.Background(), "test-key"); err != nil {
+		t.Fatalf("TestKey failed: %v", err)
+	}
+}
+
+func TestKeyFailsOn401(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	cfg := singleKeyRetryConfig(server.URL + "/v1")
+	rs := NewRouterService(cfg)
+
+	if err := rs.TestKey(context.Background(), "test-key"); err == nil {
+		t.Fatal("TestKey should fail on 401")
+	}
+}
+
+func TestKeyUnknownKeyReturnsError(t *testing.T) {
+	cfg := singleKeyRetryConfig("https://example.com/v1")
+	rs := NewRouterService(cfg)
+
+	if err := rs.TestKey(context.Background(), "nonexistent-key"); err == nil {
+		t.Fatal("TestKey should fail for unknown key")
+	}
+}
+
 func groupRoutingConfig(baseURL string) *config.Config {
 	return &config.Config{
 		App:      config.AppConfig{Name: "modelmux", LogLevel: "info"},

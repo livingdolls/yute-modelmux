@@ -31,6 +31,8 @@ func (stubRouter) ListKeys() []domain.APIKey { return nil }
 
 func (stubRouter) Logs() []domain.RequestLog { return nil }
 
+func (stubRouter) TestKey(context.Context, string) error { return nil }
+
 func TestUpdateTypesQInChatInsteadOfQuitting(t *testing.T) {
 	m := model{
 		page:     pageChat,

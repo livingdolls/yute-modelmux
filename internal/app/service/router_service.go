@@ -369,6 +369,38 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 	return fmt.Errorf("key %s not found", keyID)
 }
 
+func (s *RouterService) TestKey(ctx context.Context, keyID string) error {
+	s.mu.Lock()
+	keyIdx := -1
+	for i, k := range s.keys {
+		if k.ID == keyID {
+			keyIdx = i
+			break
+		}
+	}
+	s.mu.Unlock()
+
+	if keyIdx == -1 {
+		return fmt.Errorf("key %s not found", keyID)
+	}
+
+	s.mu.Lock()
+	key := s.keys[keyIdx]
+	model, ok := s.modelByID(key.ModelID)
+	if !ok {
+		s.mu.Unlock()
+		return fmt.Errorf("model %s not found for key %s", key.ModelID, keyID)
+	}
+	provider, ok := s.providerByID(model.ProviderID)
+	if !ok {
+		s.mu.Unlock()
+		return fmt.Errorf("provider %s not found for key %s", model.ProviderID, keyID)
+	}
+	s.mu.Unlock()
+
+	return s.client.TestKey(ctx, provider, key)
+}
+
 func (s *RouterService) appendLog(log domain.RequestLog) {
 	s.logs = append(s.logs, log)
 	if len(s.logs) > 200 {
