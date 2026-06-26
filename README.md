@@ -10,14 +10,20 @@ vim ~/.config/modelmux/config.yaml
 modelmux start
 ```
 
-Put API keys directly in `keys[].value`:
+Use environment variables for API keys instead of storing them in the config file:
+
+```bash
+export MIMO_KEY_1="your-api-key"
+```
 
 ```yaml
 keys:
   - id: "mimo-key-1"
     model_id: "mimo-v2.5-pro"
-    value: "your-api-key"
+    value_env: "MIMO_KEY_1"
 ```
+
+The `value` field is also supported for dev/local use, but `value_env` is recommended for security. When using `value_env`, the actual secret is never written to the YAML file when saving from TUI or CLI.
 
 Open the dashboard with:
 
