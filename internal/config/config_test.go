@@ -115,3 +115,38 @@ func TestValidateRejectsKeyProviderMismatchWithModel(t *testing.T) {
 		t.Fatal("expected key provider/model provider mismatch error")
 	}
 }
+
+func TestValidateRejectsDuplicateKeyIDWithValueEnv(t *testing.T) {
+	t.Setenv("MUX_DUP_A", "token-a")
+	t.Setenv("MUX_DUP_B", "token-b")
+
+	cfg := Default()
+	cfg.Keys = []KeyConfig{
+		{ID: "dup", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", ValueEnv: "MUX_DUP_A", Status: "active", Priority: 1},
+		{ID: "dup", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", ValueEnv: "MUX_DUP_B", Status: "active", Priority: 2},
+	}
+
+	if err := cfg.ResolveSecrets(); err != nil {
+		t.Fatalf("resolve secrets failed: %v", err)
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected duplicate key id error for value_env keys")
+	}
+}
+
+func TestValidateRejectsDuplicateKeyIDMixedValueAndValueEnv(t *testing.T) {
+	t.Setenv("MUX_DUP_C", "token-c")
+
+	cfg := Default()
+	cfg.Keys = []KeyConfig{
+		{ID: "dup", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", ValueEnv: "MUX_DUP_C", Status: "active", Priority: 1},
+		{ID: "dup", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "direct-token", Status: "active", Priority: 2},
+	}
+
+	if err := cfg.ResolveSecrets(); err != nil {
+		t.Fatalf("resolve secrets failed: %v", err)
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected duplicate key id error for mixed value/value_env keys")
+	}
+}

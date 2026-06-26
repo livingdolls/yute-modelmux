@@ -233,6 +233,7 @@ func (c *Config) Validate() error {
 		if _, exists := keyIDs[k.ID]; exists {
 			return fmt.Errorf("duplicate key id %s", k.ID)
 		}
+		keyIDs[k.ID] = struct{}{}
 		if _, ok := providerIDs[k.ProviderID]; !ok {
 			return fmt.Errorf("key %s references unknown provider %s", k.ID, k.ProviderID)
 		}
@@ -242,13 +243,9 @@ func (c *Config) Validate() error {
 		if modelProviderID := modelByProviderID[k.ModelID]; modelProviderID != k.ProviderID {
 			return fmt.Errorf("key %s provider %s does not match model %s provider %s", k.ID, k.ProviderID, k.ModelID, modelProviderID)
 		}
-		if k.Value == "" {
-			if k.ValueEnv != "" {
-				continue
-			}
+		if k.Value == "" && k.ValueEnv == "" {
 			return fmt.Errorf("key %s has no value; set keys[].value in config", k.ID)
 		}
-		keyIDs[k.ID] = struct{}{}
 	}
 	return nil
 }
