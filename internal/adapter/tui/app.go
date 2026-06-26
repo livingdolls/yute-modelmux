@@ -94,8 +94,14 @@ type model struct {
 	showThemePicker  bool
 	themePickerIndex int
 	keyTesting       bool
+	keyTestRunning   bool
 	keyTestInput     string
 	keyTestResult    string
+}
+
+type keyTestResultMsg struct {
+	keyID string
+	err   error
 }
 
 type styles struct {
@@ -317,6 +323,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickCmd()
 	case chatResponseMsg:
 		m.applyChatResponse(msg)
+	case keyTestResultMsg:
+		m.keyTestRunning = false
+		m.keyTesting = false
+		m.keyTestInput = ""
+		if msg.err != nil {
+			m.keyTestResult = "key " + msg.keyID + " FAIL: " + msg.err.Error()
+		} else {
+			m.keyTestResult = "key " + msg.keyID + " OK"
+		}
 	}
 	return m, nil
 }
@@ -583,35 +598,46 @@ func (m model) updateKeyTest(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key {
 	case "esc":
 		m.keyTesting = false
+		m.keyTestRunning = false
 		m.keyTestInput = ""
 		return m, nil
 	case "backspace", "ctrl+h":
+		if m.keyTestRunning {
+			return m, nil
+		}
 		m.keyTestInput = dropLastRune(m.keyTestInput)
 		return m, nil
 	case "enter":
+		if m.keyTestRunning {
+			return m, nil
+		}
 		if strings.TrimSpace(m.keyTestInput) == "" {
 			m.keyTesting = false
 			return m, nil
 		}
-		m.keyTestResult = "testing key " + m.keyTestInput + "..."
-		if m.router != nil {
-			err := m.router.TestKey(context.TODO(), strings.TrimSpace(m.keyTestInput))
-			if err != nil {
-				m.keyTestResult = "key " + m.keyTestInput + " FAIL: " + err.Error()
-			} else {
-				m.keyTestResult = "key " + m.keyTestInput + " OK"
-			}
-		} else {
+		if m.router == nil {
 			m.keyTestResult = "error: no router"
+			m.keyTesting = false
+			m.keyTestInput = ""
+			return m, nil
 		}
-		m.keyTesting = false
-		m.keyTestInput = ""
-		return m, nil
+		keyID := strings.TrimSpace(m.keyTestInput)
+		m.keyTestRunning = true
+		m.keyTestResult = "testing key " + keyID + "..."
+		return m, keyTestCmd(m.router, keyID)
 	}
-	if len(msg.Runes) > 0 {
+	if !m.keyTestRunning && len(msg.Runes) > 0 {
 		m.keyTestInput += string(msg.Runes)
 	}
 	return m, nil
+}
+
+func keyTestCmd(router inbound.RouterService, keyID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		return keyTestResultMsg{keyID: keyID, err: router.TestKey(ctx, keyID)}
+	}
 }
 
 func pageGlyph(page int) string {

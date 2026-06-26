@@ -180,3 +180,47 @@ func TestConfigPageJKMovesRows(t *testing.T) {
 		t.Fatalf("expected row selection to move to next row, got %d", got.editor.selected)
 	}
 }
+
+func TestKeyTestEnterReturnsAsyncCommand(t *testing.T) {
+	m := model{
+		page:        pageKeys,
+		selected:    pageKeys,
+		router:      stubRouter{},
+		keyTesting:  true,
+		keyTestInput: "test-key-1",
+	}
+
+	msg := tea.KeyMsg{Type: tea.KeyEnter}
+	updated, cmd := m.updateKeyTest(msg)
+	got := updated.(model)
+
+	if cmd == nil {
+		t.Fatal("expected async command for key test, got nil")
+	}
+	if !got.keyTestRunning {
+		t.Fatal("expected keyTestRunning to be true after enter")
+	}
+	if got.keyTestResult != "testing key test-key-1..." {
+		t.Fatalf("expected 'testing key...' result, got %q", got.keyTestResult)
+	}
+}
+
+func TestKeyTestEscExitsMode(t *testing.T) {
+	m := model{
+		page:        pageKeys,
+		selected:    pageKeys,
+		keyTesting:  true,
+		keyTestInput: "some-key",
+	}
+
+	msg := tea.KeyMsg{Type: tea.KeyEscape}
+	updated, cmd := m.updateKeyTest(msg)
+	got := updated.(model)
+
+	if cmd != nil {
+		t.Fatal("expected no command for esc")
+	}
+	if got.keyTesting {
+		t.Fatal("expected keyTesting to be false after esc")
+	}
+}
