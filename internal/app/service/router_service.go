@@ -320,6 +320,35 @@ func (s *RouterService) Logs() []domain.RequestLog {
 	return append([]domain.RequestLog(nil), s.logs...)
 }
 
+func (s *RouterService) LogsForMetrics() []domain.RequestLog {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.store != nil {
+		records, _, err := s.store.QueryRequestLogs(storage.LogFilter{Limit: 10000})
+		if err == nil {
+			logs := make([]domain.RequestLog, len(records))
+			for i, r := range records {
+				createdAt := time.Now()
+				if r.CreatedAt != "" {
+					if t, err := time.Parse(time.RFC3339, r.CreatedAt); err == nil {
+						createdAt = t
+					}
+				}
+				logs[i] = domain.RequestLog{
+					ID: r.ID, GroupID: r.GroupID, ModelID: r.ModelID,
+					ProviderID: r.ProviderID, KeyID: r.KeyID,
+					StatusCode: r.StatusCode, Error: r.Error,
+					LatencyMs: r.LatencyMs, TokenInput: r.TokenInput,
+					TokenOutput: r.TokenOutput, CreatedAt: createdAt,
+				}
+			}
+			return logs
+		}
+	}
+	return append([]domain.RequestLog(nil), s.logs...)
+}
+
 func (s *RouterService) QueryLogs(filter storage.LogFilter) ([]domain.RequestLog, int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

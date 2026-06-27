@@ -138,7 +138,7 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 	format := r.URL.Query().Get("format")
 
 	keys := s.rs.ListKeys()
-	logs := s.rs.Logs()
+	logs := s.rs.LogsForMetrics()
 	models := s.rs.ListModels()
 	providers := s.rs.ListProviders()
 	groups := s.rs.ListModelGroups()
@@ -190,10 +190,10 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.writeJSONMetrics(w, models, groups, keys, modelMetrics)
+	s.writeJSONMetrics(w, models, groups, keys, logs, modelMetrics)
 }
 
-func (s *Server) writeJSONMetrics(w http.ResponseWriter, models []domain.Model, groups []domain.ModelGroup, keys []domain.APIKey, modelMetrics map[string]*metricSnapshot) {
+func (s *Server) writeJSONMetrics(w http.ResponseWriter, models []domain.Model, groups []domain.ModelGroup, keys []domain.APIKey, logs []domain.RequestLog, modelMetrics map[string]*metricSnapshot) {
 	type modelMetric struct {
 		ID           string  `json:"id"`
 		Requests     int     `json:"requests"`
@@ -268,10 +268,14 @@ func (s *Server) writeJSONMetrics(w http.ResponseWriter, models []domain.Model, 
 				metric.UnavailableModels++
 			}
 		}
-		ms := modelMetrics[group.ID]
-		if ms != nil {
-			metric.Requests = ms.requests
-			metric.Errors = ms.errors
+		for _, log := range logs {
+			if log.GroupID != group.ID {
+				continue
+			}
+			metric.Requests++
+			if log.StatusCode >= 400 || log.Error != "" {
+				metric.Errors++
+			}
 		}
 		gm = append(gm, metric)
 	}
@@ -409,6 +413,23 @@ func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.M
 		labels := fmt.Sprintf(`model="%s",provider="%s",key="%s"`, key.ModelID, key.ProviderID, key.ID)
 		b.WriteString(fmt.Sprintf("modelmux_requests_total{%s} %d\n", labels, keyRequests))
 		b.WriteString(fmt.Sprintf("modelmux_errors_total{%s} %d\n", labels, keyErrors))
+	}
+
+	for _, group := range groups {
+		groupRequests := 0
+		groupErrors := 0
+		for _, log := range logs {
+			if log.GroupID != group.ID {
+				continue
+			}
+			groupRequests++
+			if log.StatusCode >= 400 || log.Error != "" {
+				groupErrors++
+			}
+		}
+		labels := fmt.Sprintf(`group="%s"`, group.ID)
+		b.WriteString(fmt.Sprintf("modelmux_requests_total{%s} %d\n", labels, groupRequests))
+		b.WriteString(fmt.Sprintf("modelmux_errors_total{%s} %d\n", labels, groupErrors))
 	}
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
