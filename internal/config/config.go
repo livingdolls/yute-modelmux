@@ -13,6 +13,7 @@ import (
 type Config struct {
 	App         AppConfig          `yaml:"app"`
 	Server      ServerConfig       `yaml:"server"`
+	Storage     StorageConfig      `yaml:"storage"`
 	Cooldown    CooldownConfig     `yaml:"cooldown"`
 	Retry       RetryConfig        `yaml:"retry"`
 	Providers   []ProviderConfig   `yaml:"providers"`
@@ -34,6 +35,11 @@ type ServerConfig struct {
 	RequireAuth        bool   `yaml:"require_auth"`
 	AuthTokenEnv       string `yaml:"auth_token_env"`
 	MaxRequestBodyMB   int    `yaml:"max_request_body_mb"`
+}
+
+type StorageConfig struct {
+	Type string `yaml:"type"`
+	Path string `yaml:"path"`
 }
 
 type CooldownConfig struct {
@@ -101,10 +107,19 @@ func DefaultConfigPath() string {
 	return filepath.Join(home, ".config", "modelmux", "config.yaml")
 }
 
+func defaultStoragePath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "./modelmux.db"
+	}
+	return filepath.Join(home, ".local", "share", "modelmux", "modelmux.db")
+}
+
 func Default() *Config {
 	return &Config{
 		App:         AppConfig{Name: "modelmux", LogLevel: "info"},
 		Server:      ServerConfig{Host: "127.0.0.1", Port: 8787, ReadTimeoutSecond: 60, WriteTimeoutSecond: 300, MaxRequestBodyMB: 10},
+		Storage:     StorageConfig{Type: "", Path: defaultStoragePath()},
 		Cooldown:    CooldownConfig{RateLimitSeconds: 300, ServerErrorSeconds: 60, TimeoutSeconds: 60},
 		Retry:       RetryConfig{MaxRetryPerKey: 1, MaxTotalAttempts: 5, BackoffMilliseconds: []int{300, 700, 1500}},
 		Providers:   []ProviderConfig{{ID: "mimo", Name: "Xiaomi MiMo", Type: "openai-compatible", BaseURL: "https://api.example.com/v1", AuthType: "bearer", TimeoutSeconds: 120, Enabled: true}},
