@@ -70,7 +70,222 @@ func newRootCommand() *cobra.Command {
 	keyTestCmd.Flags().StringVar(&keyTestID, "id", "", "key id to test")
 	keyTestCmd.MarkFlagRequired("id")
 	keyCmd.AddCommand(keyTestCmd)
+
+	var keyID string
+	keyEnableCmd := &cobra.Command{
+		Use:   "enable",
+		Short: "Enable an API key",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return mutateKeyStatus(configPath, keyID, "active")
+		},
+	}
+	keyEnableCmd.Flags().StringVar(&keyID, "id", "", "key id to enable")
+	keyEnableCmd.MarkFlagRequired("id")
+	keyCmd.AddCommand(keyEnableCmd)
+
+	keyDisableCmd := &cobra.Command{
+		Use:   "disable",
+		Short: "Disable an API key",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return mutateKeyStatus(configPath, keyID, "disabled")
+		},
+	}
+	keyDisableCmd.Flags().StringVar(&keyID, "id", "", "key id to disable")
+	keyDisableCmd.MarkFlagRequired("id")
+	keyCmd.AddCommand(keyDisableCmd)
+
+	var (
+		keyAddID         string
+		keyAddProviderID string
+		keyAddModelID    string
+		keyAddName       string
+		keyAddValueEnv   string
+		keyAddPriority   int
+	)
+	keyAddCmd := &cobra.Command{
+		Use:   "add",
+		Short: "Add a new API key to config",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return err
+			}
+			if keyAddPriority <= 0 {
+				keyAddPriority = 1
+			}
+			cfg.Keys = append(cfg.Keys, config.KeyConfig{
+				ID:         keyAddID,
+				ProviderID: keyAddProviderID,
+				ModelID:    keyAddModelID,
+				Name:       keyAddName,
+				ValueEnv:   keyAddValueEnv,
+				Status:     "active",
+				Priority:   keyAddPriority,
+			})
+			if err := config.Save(configPath, cfg); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "added key", keyAddID)
+			return nil
+		},
+	}
+	keyAddCmd.Flags().StringVar(&keyAddID, "id", "", "key id")
+	keyAddCmd.Flags().StringVar(&keyAddProviderID, "provider-id", "", "provider id")
+	keyAddCmd.Flags().StringVar(&keyAddModelID, "model-id", "", "model id")
+	keyAddCmd.Flags().StringVar(&keyAddName, "name", "", "display name")
+	keyAddCmd.Flags().StringVar(&keyAddValueEnv, "value-env", "", "environment variable holding the API key value")
+	keyAddCmd.Flags().IntVar(&keyAddPriority, "priority", 1, "priority (lower = higher)")
+	keyAddCmd.MarkFlagRequired("id")
+	keyAddCmd.MarkFlagRequired("provider-id")
+	keyAddCmd.MarkFlagRequired("model-id")
+	keyAddCmd.MarkFlagRequired("value-env")
+	keyCmd.AddCommand(keyAddCmd)
 	rootCmd.AddCommand(keyCmd)
+
+	var (
+		providerAddID          string
+		providerAddName        string
+		providerAddType        string
+		providerAddBaseURL     string
+		providerAddAuthType    string
+		providerAddAuthHeader  string
+		providerAddTimeout     int
+	)
+	providerCmd := &cobra.Command{Use: "provider", Short: "Provider management"}
+	providerAddCmd := &cobra.Command{
+		Use:   "add",
+		Short: "Add a new provider to config",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return err
+			}
+			if providerAddTimeout <= 0 {
+				providerAddTimeout = 120
+			}
+			if providerAddType == "" {
+				providerAddType = "openai-compatible"
+			}
+			if providerAddAuthType == "" {
+				providerAddAuthType = "bearer"
+			}
+			cfg.Providers = append(cfg.Providers, config.ProviderConfig{
+				ID:             providerAddID,
+				Name:           providerAddName,
+				Type:           providerAddType,
+				BaseURL:        providerAddBaseURL,
+				AuthType:       providerAddAuthType,
+				AuthHeaderName: providerAddAuthHeader,
+				TimeoutSeconds: providerAddTimeout,
+				Enabled:        true,
+			})
+			if err := config.Save(configPath, cfg); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "added provider", providerAddID)
+			return nil
+		},
+	}
+	providerAddCmd.Flags().StringVar(&providerAddID, "id", "", "provider id")
+	providerAddCmd.Flags().StringVar(&providerAddName, "name", "", "display name")
+	providerAddCmd.Flags().StringVar(&providerAddType, "type", "openai-compatible", "provider type (openai-compatible, custom)")
+	providerAddCmd.Flags().StringVar(&providerAddBaseURL, "base-url", "", "provider base URL")
+	providerAddCmd.Flags().StringVar(&providerAddAuthType, "auth-type", "bearer", "auth type (bearer, header)")
+	providerAddCmd.Flags().StringVar(&providerAddAuthHeader, "auth-header", "", "custom auth header name")
+	providerAddCmd.Flags().IntVar(&providerAddTimeout, "timeout", 120, "request timeout in seconds")
+	providerAddCmd.MarkFlagRequired("id")
+	providerAddCmd.MarkFlagRequired("base-url")
+	providerCmd.AddCommand(providerAddCmd)
+	rootCmd.AddCommand(providerCmd)
+
+	var (
+		modelAddID         string
+		modelAddProviderID string
+		modelAddModelName  string
+		modelAddStrategy   string
+	)
+	modelCmd := &cobra.Command{Use: "model", Short: "Model management"}
+	modelAddCmd := &cobra.Command{
+		Use:   "add",
+		Short: "Add a new model to config",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return err
+			}
+			if modelAddStrategy == "" {
+				modelAddStrategy = "failover"
+			}
+			if modelAddModelName == "" {
+				modelAddModelName = modelAddID
+			}
+			cfg.Models = append(cfg.Models, config.ModelConfig{
+				ID:         modelAddID,
+				ProviderID: modelAddProviderID,
+				ModelName:  modelAddModelName,
+				Strategy:   modelAddStrategy,
+				Enabled:    true,
+			})
+			if err := config.Save(configPath, cfg); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "added model", modelAddID)
+			return nil
+		},
+	}
+	modelAddCmd.Flags().StringVar(&modelAddID, "id", "", "model id")
+	modelAddCmd.Flags().StringVar(&modelAddProviderID, "provider-id", "", "provider id")
+	modelAddCmd.Flags().StringVar(&modelAddModelName, "model-name", "", "upstream model name (defaults to id)")
+	modelAddCmd.Flags().StringVar(&modelAddStrategy, "strategy", "failover", "rotation strategy (failover, round_robin, least_error)")
+	modelAddCmd.MarkFlagRequired("id")
+	modelAddCmd.MarkFlagRequired("provider-id")
+	modelCmd.AddCommand(modelAddCmd)
+	rootCmd.AddCommand(modelCmd)
+
+	var (
+		groupAddID       string
+		groupAddName     string
+		groupAddStrategy string
+		groupAddMembers  []string
+	)
+	groupCmd := &cobra.Command{Use: "group", Short: "Model group management"}
+	groupAddCmd := &cobra.Command{
+		Use:   "add",
+		Short: "Add a new model group to config",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return err
+			}
+			if groupAddStrategy == "" {
+				groupAddStrategy = "failover"
+			}
+			members := make([]config.ModelGroupMemberConfig, len(groupAddMembers))
+			for i, m := range groupAddMembers {
+				members[i] = config.ModelGroupMemberConfig{ModelID: m, Priority: i + 1, Weight: 1, Enabled: true}
+			}
+			cfg.ModelGroups = append(cfg.ModelGroups, config.ModelGroupConfig{
+				ID:       groupAddID,
+				Name:     groupAddName,
+				Strategy: groupAddStrategy,
+				Enabled:  true,
+				Members:  members,
+			})
+			if err := config.Save(configPath, cfg); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "added group", groupAddID)
+			return nil
+		},
+	}
+	groupAddCmd.Flags().StringVar(&groupAddID, "id", "", "group id")
+	groupAddCmd.Flags().StringVar(&groupAddName, "name", "", "display name")
+	groupAddCmd.Flags().StringVar(&groupAddStrategy, "strategy", "failover", "group strategy (failover, round_robin, weighted)")
+	groupAddCmd.Flags().StringSliceVar(&groupAddMembers, "members", nil, "model IDs (comma-separated)")
+	groupAddCmd.MarkFlagRequired("id")
+	groupAddCmd.MarkFlagRequired("members")
+	groupCmd.AddCommand(groupAddCmd)
+	rootCmd.AddCommand(groupCmd)
 
 	var jsonOutput bool
 	var logLimit int
@@ -382,6 +597,29 @@ func newRootCommand() *cobra.Command {
 	})
 
 	return rootCmd
+}
+
+func mutateKeyStatus(configPath, keyID, status string) error {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+	found := false
+	for i := range cfg.Keys {
+		if cfg.Keys[i].ID == keyID {
+			cfg.Keys[i].Status = status
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("key %s not found", keyID)
+	}
+	if err := config.Save(configPath, cfg); err != nil {
+		return err
+	}
+	fmt.Printf("key %s set to %s\n", keyID, status)
+	return nil
 }
 
 func createStorage(cfg *config.Config) (storage.Storage, error) {
