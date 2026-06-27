@@ -118,6 +118,28 @@ func TestMarkKeyResultLogsSuccess(t *testing.T) {
 	}
 }
 
+func TestFinalizeStreamResultUsesFullStreamDuration(t *testing.T) {
+	cfg := config.Default()
+	rs := NewRouterService(cfg)
+	ctx := SetStreamResultContext(context.Background(), streamResultInfo{
+		KeyID:      "mimo-key-1",
+		ModelID:    "mimo-v2.5-pro",
+		ProviderID: "mimo",
+		StatusCode: http.StatusOK,
+		StartedAt:  time.Now().Add(-25 * time.Millisecond),
+	})
+
+	rs.FinalizeStreamResult(ctx, nil)
+
+	logs := rs.Logs()
+	if len(logs) != 1 {
+		t.Fatalf("expected 1 log, got %d", len(logs))
+	}
+	if logs[0].LatencyMs <= 0 {
+		t.Fatalf("expected stream latency to include elapsed body duration, got %d", logs[0].LatencyMs)
+	}
+}
+
 func TestHandleChatCompletionRoutesModelGroup(t *testing.T) {
 	var gotModel string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

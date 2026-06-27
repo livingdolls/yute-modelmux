@@ -57,7 +57,7 @@ func (c *OpenAICompatibleClient) forwardRequest(ctx context.Context, provider do
 		upstream.Header.Set("X-ModelMux-Model", model.ID)
 	}
 
-	client := &http.Client{Timeout: time.Duration(provider.TimeoutSeconds) * time.Second}
+	client := newForwardHTTPClient(provider.TimeoutSeconds, isStreamRequest(bodyBytes))
 	return client.Do(upstream)
 }
 
@@ -94,6 +94,19 @@ func setAuthHeader(headers http.Header, provider domain.Provider, apiKey domain.
 	headers.Set("Authorization", "Bearer "+apiKey.Value)
 }
 
+func newForwardHTTPClient(timeoutSeconds int, stream bool) *http.Client {
+	timeout := time.Duration(timeoutSeconds) * time.Second
+	if !stream {
+		return &http.Client{Timeout: timeout}
+	}
+	if timeout <= 0 {
+		return &http.Client{}
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = timeout
+	return &http.Client{Transport: transport}
+}
+
 func providerEndpoint(baseURL, path string) (string, error) {
 	endpoint := strings.TrimRight(baseURL, "/") + path
 	parsed, err := url.Parse(endpoint)
@@ -117,4 +130,14 @@ func rewriteModelName(body []byte, modelName string) ([]byte, error) {
 	}
 	payload["model"] = modelValue
 	return json.Marshal(payload)
+}
+
+func isStreamRequest(body []byte) bool {
+	var payload struct {
+		Stream bool `json:"stream"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false
+	}
+	return payload.Stream
 }

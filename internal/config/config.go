@@ -151,6 +151,9 @@ func WriteDefault(path string) error {
 }
 
 func (c *Config) ResolveSecrets() error {
+	if c.Server.RequireAuth && c.Server.AuthTokenEnv != "" && os.Getenv(c.Server.AuthTokenEnv) == "" {
+		return fmt.Errorf("server auth requires environment variable %q which is not set", c.Server.AuthTokenEnv)
+	}
 	for i := range c.Keys {
 		if c.Keys[i].Value != "" || c.Keys[i].ValueEnv == "" {
 			continue

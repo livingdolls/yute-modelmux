@@ -33,7 +33,7 @@ type streamResultInfo struct {
 	GroupID    string
 	StatusCode int
 	Error      string
-	LatencyMs  int64
+	StartedAt  time.Time
 }
 
 func SetStreamResultContext(ctx context.Context, info streamResultInfo) context.Context {
@@ -355,7 +355,7 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 				GroupID:    groupID,
 				StatusCode: result.StatusCode,
 				Error:      result.Error,
-				LatencyMs:  result.LatencyMs,
+				StartedAt:  startedAt,
 			})
 			*req = *req.WithContext(ctx)
 			return resp, nil
@@ -429,7 +429,9 @@ func (s *RouterService) FinalizeStreamResult(ctx context.Context, copyErr error)
 		GroupID:    info.GroupID,
 		ProviderID: info.ProviderID,
 		StatusCode: info.StatusCode,
-		LatencyMs:  info.LatencyMs,
+	}
+	if !info.StartedAt.IsZero() {
+		result.LatencyMs = time.Since(info.StartedAt).Milliseconds()
 	}
 	if copyErr != nil {
 		result.Error = "stream copy error: " + copyErr.Error()

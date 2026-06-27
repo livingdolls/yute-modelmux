@@ -175,3 +175,25 @@ func TestReloadFlowSucceedsWhenValueEnvAvailable(t *testing.T) {
 		t.Fatalf("validate failed: %v", err)
 	}
 }
+
+func TestResolveSecretsFailsWhenAuthTokenEnvMissing(t *testing.T) {
+	cfg := Default()
+	cfg.Server.RequireAuth = true
+	cfg.Server.AuthTokenEnv = "MUX_AUTH_MISSING"
+
+	if err := cfg.ResolveSecrets(); err == nil {
+		t.Fatal("expected resolve secrets error for missing auth token env")
+	}
+}
+
+func TestResolveSecretsAllowsConfiguredAuthTokenEnv(t *testing.T) {
+	t.Setenv("MUX_AUTH_EXISTS", "local-token")
+
+	cfg := Default()
+	cfg.Server.RequireAuth = true
+	cfg.Server.AuthTokenEnv = "MUX_AUTH_EXISTS"
+
+	if err := cfg.ResolveSecrets(); err != nil {
+		t.Fatalf("resolve secrets failed: %v", err)
+	}
+}

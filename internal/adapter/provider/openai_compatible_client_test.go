@@ -3,10 +3,12 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/livingdolls/yute-modelmux/internal/core/domain"
 )
@@ -81,5 +83,41 @@ func TestForwardChatCompletionCustomAuthDoesNotLeakLocalAuthorization(t *testing
 	}
 	if gotAPIKey != "provider-secret" {
 		t.Fatalf("expected custom provider key, got %q", gotAPIKey)
+	}
+}
+
+func TestForwardChatCompletionStreamDoesNotUseWholeBodyTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("test server must support flushing")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("data: first\n\n"))
+		flusher.Flush()
+		time.Sleep(1100 * time.Millisecond)
+		w.Write([]byte("data: second\n\n"))
+		flusher.Flush()
+	}))
+	defer server.Close()
+
+	provider := domain.Provider{BaseURL: server.URL + "/v1", AuthType: domain.AuthTypeBearer, TimeoutSeconds: 1}
+	model := domain.Model{ID: "stream-model", ModelName: "stream-model"}
+	key := domain.APIKey{Value: "provider-secret"}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"stream-model","messages":[],"stream":true}`))
+
+	resp, err := New().ForwardChatCompletion(context.Background(), provider, model, key, req)
+	if err != nil {
+		t.Fatalf("forward failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("stream body should outlive provider header timeout: %v", err)
+	}
+	if !strings.Contains(string(body), "first") || !strings.Contains(string(body), "second") {
+		t.Fatalf("expected complete stream body, got %q", string(body))
 	}
 }

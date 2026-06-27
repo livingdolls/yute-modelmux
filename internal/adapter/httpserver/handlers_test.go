@@ -207,9 +207,8 @@ func TestChatSSEForwardsChunksAndHeaders(t *testing.T) {
 }
 
 func TestChatSSEDeliversChunksBeforeStreamEnds(t *testing.T) {
-	// Upstream sends SSE chunks with flush and delays
-	chunk1Sent := make(chan struct{})
-	chunk2Sent := make(chan struct{})
+	firstChunkSent := make(chan struct{})
+	allowRest := make(chan struct{})
 	doneSent := make(chan struct{})
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -221,11 +220,16 @@ func TestChatSSEDeliversChunksBeforeStreamEnds(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("data: first\n\n"))
 		flusher.Flush()
-		close(chunk1Sent)
+		close(firstChunkSent)
 
+		select {
+		case <-allowRest:
+		case <-time.After(2 * time.Second):
+			t.Error("timeout waiting for test to read first chunk")
+			return
+		}
 		w.Write([]byte("data: second\n\n"))
 		flusher.Flush()
-		close(chunk2Sent)
 
 		w.Write([]byte("data: [DONE]\n\n"))
 		flusher.Flush()
@@ -235,6 +239,7 @@ func TestChatSSEDeliversChunksBeforeStreamEnds(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.Providers[0].BaseURL = upstream.URL + "/v1"
+	cfg.Providers[0].TimeoutSeconds = 5
 	cfg.Models[0].ModelName = cfg.Models[0].ID
 	rs := service.NewRouterService(cfg)
 	srv := New(rs, cfg)
@@ -244,37 +249,67 @@ func TestChatSSEDeliversChunksBeforeStreamEnds(t *testing.T) {
 	}))
 	defer proxy.Close()
 
-	resp, err := http.Post(proxy.URL+"/v1/chat/completions", "application/json",
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(proxy.URL+"/v1/chat/completions", "application/json",
 		strings.NewReader(`{"model":"mimo-v2.5-pro","messages":[],"stream":true}`))
 	if err != nil {
 		t.Fatalf("proxy request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected status 200, got %d: %s", resp.StatusCode, body)
+	}
 	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
 		t.Fatalf("expected Content-Type text/event-stream, got %s", ct)
 	}
 
-	buf := make([]byte, 64)
-	n, err := resp.Body.Read(buf)
-	if err != nil {
-		t.Fatalf("read first chunk failed: %v", err)
+	select {
+	case <-firstChunkSent:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for upstream to send first chunk")
 	}
-	firstChunk := string(buf[:n])
+
+	firstRead := make(chan struct {
+		body string
+		err  error
+	}, 1)
+	go func() {
+		buf := make([]byte, 64)
+		n, err := resp.Body.Read(buf)
+		firstRead <- struct {
+			body string
+			err  error
+		}{body: string(buf[:n]), err: err}
+	}()
+
+	var firstChunk string
+	select {
+	case result := <-firstRead:
+		if result.err != nil {
+			close(allowRest)
+			t.Fatalf("read first chunk failed: %v", result.err)
+		}
+		firstChunk = result.body
+	case <-time.After(2 * time.Second):
+		close(allowRest)
+		t.Fatal("timeout waiting for first chunk through proxy")
+	}
+	if !strings.Contains(firstChunk, "first") {
+		close(allowRest)
+		t.Fatalf("expected first SSE chunk before stream ended, got %q", firstChunk)
+	}
 
 	select {
-	case <-chunk1Sent:
-		t.Log("first chunk delivered after upstream sent it")
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for first chunk to arrive")
+	case <-doneSent:
+		close(allowRest)
+		t.Fatal("upstream finished before client read first chunk")
+	default:
 	}
 
-	if firstChunk == "" {
-		t.Fatal("first chunk is empty")
-	}
-	t.Logf("received: %s", firstChunk)
+	close(allowRest)
 
-	// Read remaining data
 	remaining, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read remaining body failed: %v", err)
