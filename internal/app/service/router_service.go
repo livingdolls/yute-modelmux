@@ -203,6 +203,34 @@ func newRouterService(cfg *config.Config, store storage.Storage) *RouterService 
 		}
 		rs.keys = append(rs.keys, key)
 	}
+
+	if store != nil {
+		logRecords, err := store.LoadRequestLogs()
+		if err == nil {
+			for _, lr := range logRecords {
+				createdAt := now
+				if lr.CreatedAt != "" {
+					if t, err := time.Parse(time.RFC3339, lr.CreatedAt); err == nil {
+						createdAt = t
+					}
+				}
+				rs.logs = append(rs.logs, domain.RequestLog{
+					ID:          lr.ID,
+					GroupID:     lr.GroupID,
+					ModelID:     lr.ModelID,
+					ProviderID:  lr.ProviderID,
+					KeyID:       lr.KeyID,
+					StatusCode:  lr.StatusCode,
+					Error:       lr.Error,
+					LatencyMs:   lr.LatencyMs,
+					TokenInput:  lr.TokenInput,
+					TokenOutput: lr.TokenOutput,
+					CreatedAt:   createdAt,
+				})
+			}
+		}
+	}
+
 	return rs
 }
 
@@ -532,6 +560,25 @@ func (s *RouterService) appendLog(log domain.RequestLog) {
 	s.logs = append(s.logs, log)
 	if len(s.logs) > 200 {
 		s.logs = s.logs[len(s.logs)-200:]
+	}
+	if s.store != nil {
+		createdAt := ""
+		if !log.CreatedAt.IsZero() {
+			createdAt = log.CreatedAt.Format(time.RFC3339)
+		}
+		_ = s.store.SaveRequestLog(storage.RequestLogRecord{
+			ID:          log.ID,
+			GroupID:     log.GroupID,
+			ModelID:     log.ModelID,
+			ProviderID:  log.ProviderID,
+			KeyID:       log.KeyID,
+			StatusCode:  log.StatusCode,
+			Error:       log.Error,
+			LatencyMs:   log.LatencyMs,
+			TokenInput:  log.TokenInput,
+			TokenOutput: log.TokenOutput,
+			CreatedAt:   createdAt,
+		})
 	}
 }
 

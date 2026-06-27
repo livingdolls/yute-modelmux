@@ -95,6 +95,35 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS request_logs (
+			id TEXT PRIMARY KEY,
+			group_id TEXT NOT NULL DEFAULT '',
+			model_id TEXT NOT NULL DEFAULT '',
+			provider_id TEXT NOT NULL DEFAULT '',
+			key_id TEXT NOT NULL DEFAULT '',
+			status_code INTEGER NOT NULL DEFAULT 0,
+			error TEXT NOT NULL DEFAULT '',
+			latency_ms INTEGER NOT NULL DEFAULT 0,
+			token_input INTEGER NOT NULL DEFAULT 0,
+			token_output INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL DEFAULT ''
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec("CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at)")
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec("CREATE INDEX IF NOT EXISTS idx_request_logs_model_id ON request_logs(model_id)")
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -132,9 +161,27 @@ func (s *sqliteStore) LoadKeyRuntime() ([]KeyRuntimeRecord, error) {
 }
 
 func (s *sqliteStore) SaveRequestLog(record RequestLogRecord) error {
-	return nil
+	_, err := s.db.Exec(`
+		INSERT INTO request_logs (id, group_id, model_id, provider_id, key_id, status_code, error, latency_ms, token_input, token_output, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, record.ID, record.GroupID, record.ModelID, record.ProviderID, record.KeyID, record.StatusCode, record.Error, record.LatencyMs, record.TokenInput, record.TokenOutput, record.CreatedAt)
+	return err
 }
 
 func (s *sqliteStore) LoadRequestLogs() ([]RequestLogRecord, error) {
-	return nil, nil
+	rows, err := s.db.Query("SELECT id, group_id, model_id, provider_id, key_id, status_code, error, latency_ms, token_input, token_output, created_at FROM request_logs ORDER BY created_at DESC LIMIT 200")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []RequestLogRecord
+	for rows.Next() {
+		var r RequestLogRecord
+		if err := rows.Scan(&r.ID, &r.GroupID, &r.ModelID, &r.ProviderID, &r.KeyID, &r.StatusCode, &r.Error, &r.LatencyMs, &r.TokenInput, &r.TokenOutput, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		records = append(records, r)
+	}
+	return records, rows.Err()
 }
