@@ -19,6 +19,10 @@ type AnthropicClient struct{}
 func NewAnthropicClient() *AnthropicClient { return &AnthropicClient{} }
 
 func (c *AnthropicClient) Forward(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey, req *http.Request, apiPath string) (*http.Response, error) {
+	if apiPath == "/completions" {
+		return nil, fmt.Errorf("anthropic provider does not support /v1/completions; use /v1/chat/completions")
+	}
+
 	bodyBytes, err := io.ReadAll(req.Body)
 	if err != nil {
 		return nil, err
@@ -64,8 +68,12 @@ func (c *AnthropicClient) Forward(ctx context.Context, provider domain.Provider,
 
 func (c *AnthropicClient) TestKey(ctx context.Context, provider domain.Provider, apiKey domain.APIKey) error {
 	endpoint := strings.TrimRight(provider.BaseURL, "/") + "/v1/messages"
+	model := apiKey.ModelID
+	if model == "" {
+		model = "claude-3-haiku-20240307"
+	}
 	body := map[string]any{
-		"model":      "claude-sonnet-4-5",
+		"model":      model,
 		"max_tokens": 1,
 		"messages":   []map[string]any{{"role": "user", "content": "hi"}},
 	}

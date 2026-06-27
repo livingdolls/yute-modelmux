@@ -19,6 +19,10 @@ type GeminiClient struct{}
 func NewGeminiClient() *GeminiClient { return &GeminiClient{} }
 
 func (c *GeminiClient) Forward(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey, req *http.Request, apiPath string) (*http.Response, error) {
+	if apiPath == "/completions" {
+		return nil, fmt.Errorf("gemini provider does not support /v1/completions; use /v1/chat/completions")
+	}
+
 	bodyBytes, err := io.ReadAll(req.Body)
 	if err != nil {
 		return nil, err
