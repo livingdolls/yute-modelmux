@@ -22,7 +22,7 @@ func TestSelectKeyPrefersLowestPriority(t *testing.T) {
 		{ID: "k1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Status: "active", Priority: 2, Value: "one"},
 		{ID: "k2", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Status: "active", Priority: 1, Value: "two"},
 	}
-	rs := NewRouterService(cfg)
+	rs, _ := NewRouterService(cfg)
 	key, err := rs.SelectKey(context.Background(), "mimo-v2.5-pro")
 	if err != nil {
 		t.Fatalf("select key failed: %v", err)
@@ -39,7 +39,7 @@ func TestSelectKeySkipsCooldown(t *testing.T) {
 		{ID: "k1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Status: "cooldown", Priority: 1, Value: "one"},
 		{ID: "k2", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Status: "active", Priority: 2, Value: "two"},
 	}
-	rs := NewRouterService(cfg)
+	rs, _ := NewRouterService(cfg)
 	rs.keys[0].CooldownEnd = &now
 	key, err := rs.SelectKey(context.Background(), "mimo-v2.5-pro")
 	if err != nil {
@@ -52,7 +52,7 @@ func TestSelectKeySkipsCooldown(t *testing.T) {
 
 func TestMarkKeyResultCooldown(t *testing.T) {
 	cfg := config.Default()
-	rs := NewRouterService(cfg)
+	rs, _ := NewRouterService(cfg)
 	if err := rs.MarkKeyResult(context.Background(), "mimo-key-1", inbound.KeyResult{StatusCode: 429, ShouldRotateKey: true, CooldownSeconds: 300}); err != nil {
 		t.Fatalf("mark key result failed: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestClassifyServerErrorSetsCooldown(t *testing.T) {
 func TestHandleChatCompletionReturnsAllKeysUnavailableError(t *testing.T) {
 	cfg := config.Default()
 	cfg.Keys[0].Status = "cooldown"
-	rs := NewRouterService(cfg)
+	rs, _ := NewRouterService(cfg)
 	cooldownEnd := time.Now().Add(time.Minute)
 	rs.keys[0].CooldownEnd = &cooldownEnd
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"mimo-v2.5-pro","messages":[]}`))
@@ -105,7 +105,7 @@ func TestHandleChatCompletionReturnsAllKeysUnavailableError(t *testing.T) {
 
 func TestMarkKeyResultLogsSuccess(t *testing.T) {
 	cfg := config.Default()
-	rs := NewRouterService(cfg)
+	rs, _ := NewRouterService(cfg)
 	if err := rs.MarkKeyResult(context.Background(), "mimo-key-1", inbound.KeyResult{Success: true, ModelID: "mimo-v2.5-pro", ProviderID: "mimo", StatusCode: 200, LatencyMs: 12}); err != nil {
 		t.Fatalf("mark key result failed: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestMarkKeyResultLogsSuccess(t *testing.T) {
 
 func TestFinalizeStreamResultUsesFullStreamDuration(t *testing.T) {
 	cfg := config.Default()
-	rs := NewRouterService(cfg)
+	rs, _ := NewRouterService(cfg)
 	ctx := SetStreamResultContext(context.Background(), streamResultInfo{
 		KeyID:      "mimo-key-1",
 		ModelID:    "mimo-v2.5-pro",
@@ -155,7 +155,7 @@ func TestHandleChatCompletionRoutesModelGroup(t *testing.T) {
 	defer server.Close()
 
 	cfg := groupRoutingConfig(server.URL + "/v1")
-	rs := NewRouterService(cfg)
+	rs, _ := NewRouterService(cfg)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"high-price","messages":[]}`))
 
 	resp, err := rs.HandleChatCompletion(context.Background(), req)
@@ -188,7 +188,7 @@ func TestHandleChatCompletionGroupFallsBackToNextMember(t *testing.T) {
 	defer server.Close()
 
 	cfg := groupRoutingConfig(server.URL + "/v1")
-	rs := NewRouterService(cfg)
+	rs, _ := NewRouterService(cfg)
 	cooldownEnd := time.Now().Add(time.Minute)
 	rs.keys[0].Status = domain.KeyStatusCooldown
 	rs.keys[0].CooldownEnd = &cooldownEnd
@@ -207,7 +207,7 @@ func TestHandleChatCompletionGroupFallsBackToNextMember(t *testing.T) {
 
 func TestHandleChatCompletionGroupUnavailable(t *testing.T) {
 	cfg := groupRoutingConfig("https://example.test/v1")
-	rs := NewRouterService(cfg)
+	rs, _ := NewRouterService(cfg)
 	cooldownEnd := time.Now().Add(time.Minute)
 	for i := range rs.keys {
 		rs.keys[i].Status = domain.KeyStatusCooldown
@@ -249,7 +249,7 @@ func TestHandleChatCompletionRetriesPerKeyWithBackoff(t *testing.T) {
 	cfg.Retry.MaxRetryPerKey = 3
 	cfg.Retry.BackoffMilliseconds = []int{10, 20}
 
-	rs := NewRouterService(cfg)
+	rs, _ := NewRouterService(cfg)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test-model","messages":[]}`))
 
 	started := time.Now()
@@ -281,7 +281,7 @@ func TestHandleChatCompletionRetryRespectsMaxTotalAttempts(t *testing.T) {
 	cfg.Retry.MaxRetryPerKey = 5
 	cfg.Retry.MaxTotalAttempts = 2
 
-	rs := NewRouterService(cfg)
+	rs, _ := NewRouterService(cfg)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test-model","messages":[]}`))
 
 	_, err := rs.HandleChatCompletion(context.Background(), req)
@@ -370,7 +370,7 @@ func TestHandleChatCompletionRoutesWeightedGroup(t *testing.T) {
 			},
 		}
 
-		rs := NewRouterService(cfg)
+		rs, _ := NewRouterService(cfg)
 		for range 5 {
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"weighted-group","messages":[]}`))
 			resp, err := rs.HandleChatCompletion(context.Background(), req)
@@ -404,7 +404,7 @@ func TestHandleChatCompletionPreservesCooldownWhenTotalAttemptsExhausted(t *test
 	cfg.Retry.MaxRetryPerKey = 5
 	cfg.Retry.MaxTotalAttempts = 2
 
-	rs := NewRouterService(cfg)
+	rs, _ := NewRouterService(cfg)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test-model","messages":[]}`))
 
 	_, err := rs.HandleChatCompletion(context.Background(), req)
@@ -453,7 +453,7 @@ func TestKeySuccess(t *testing.T) {
 	defer server.Close()
 
 	cfg := singleKeyRetryConfig(server.URL + "/v1")
-	rs := NewRouterService(cfg)
+	rs, _ := NewRouterService(cfg)
 
 	if err := rs.TestKey(context.Background(), "test-key"); err != nil {
 		t.Fatalf("TestKey failed: %v", err)
@@ -467,7 +467,7 @@ func TestKeyFailsOn401(t *testing.T) {
 	defer server.Close()
 
 	cfg := singleKeyRetryConfig(server.URL + "/v1")
-	rs := NewRouterService(cfg)
+	rs, _ := NewRouterService(cfg)
 
 	if err := rs.TestKey(context.Background(), "test-key"); err == nil {
 		t.Fatal("TestKey should fail on 401")
@@ -476,7 +476,7 @@ func TestKeyFailsOn401(t *testing.T) {
 
 func TestKeyUnknownKeyReturnsError(t *testing.T) {
 	cfg := singleKeyRetryConfig("https://example.com/v1")
-	rs := NewRouterService(cfg)
+	rs, _ := NewRouterService(cfg)
 
 	if err := rs.TestKey(context.Background(), "nonexistent-key"); err == nil {
 		t.Fatal("TestKey should fail for unknown key")

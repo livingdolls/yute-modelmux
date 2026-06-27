@@ -118,19 +118,19 @@ type RouterService struct {
 	keys        []domain.APIKey
 }
 
-func NewRouterService(cfg *config.Config) *RouterService {
+func NewRouterService(cfg *config.Config) (*RouterService, error) {
 	return newRouterService(cfg, nil, nil)
 }
 
-func NewRouterServiceWithStorage(cfg *config.Config, store storage.Storage) *RouterService {
+func NewRouterServiceWithStorage(cfg *config.Config, store storage.Storage) (*RouterService, error) {
 	return newRouterService(cfg, store, nil)
 }
 
-func NewRouterServiceWithSecret(cfg *config.Config, store storage.Storage, secretStore *secret.Store) *RouterService {
+func NewRouterServiceWithSecret(cfg *config.Config, store storage.Storage, secretStore *secret.Store) (*RouterService, error) {
 	return newRouterService(cfg, store, secretStore)
 }
 
-func newRouterService(cfg *config.Config, store storage.Storage, secretStore *secret.Store) *RouterService {
+func newRouterService(cfg *config.Config, store storage.Storage, secretStore *secret.Store) (*RouterService, error) {
 	rs := &RouterService{
 		cfg:         cfg,
 		clientReg:   providerclient.NewClientRegistry(),
@@ -190,14 +190,23 @@ func newRouterService(cfg *config.Config, store storage.Storage, secretStore *se
 		if status == "" {
 			status = domain.KeyStatusActive
 		}
-		value := k.Value
-		if value == "" && k.SecretRef != "" && secretStore != nil {
+		value := ""
+		if k.SecretRef != "" && secretStore != nil {
 			if sv, err := secretStore.Get(k.SecretRef); err == nil {
 				value = sv
 			}
 		}
 		if value == "" && k.ValueEnv != "" {
 			value = os.Getenv(k.ValueEnv)
+		}
+		if value == "" {
+			value = k.Value
+		}
+		if value == "" && k.SecretRef != "" {
+			if secretStore == nil {
+				return nil, fmt.Errorf("key %s uses secret_ref but secret store is not available (set MODELMUX_MASTER_KEY)", k.ID)
+			}
+			return nil, fmt.Errorf("key %s: secret_ref %q not found in secret store", k.ID, k.SecretRef)
 		}
 		key := domain.APIKey{
 			ID:                k.ID,
@@ -281,7 +290,7 @@ func newRouterService(cfg *config.Config, store storage.Storage, secretStore *se
 		}
 	}
 
-	return rs
+	return rs, nil
 }
 
 func (s *RouterService) ListProviders() []domain.Provider {

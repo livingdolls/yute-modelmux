@@ -60,7 +60,10 @@ func newRootCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			router := service.NewRouterService(cfg)
+			router, err := service.NewRouterService(cfg)
+			if err != nil {
+				return err
+			}
 			if err := router.TestKey(cmd.Context(), keyTestID); err != nil {
 				fmt.Fprintln(cmd.ErrOrStderr(), "FAIL:", err)
 				return err
@@ -388,7 +391,10 @@ func newRootCommand() *cobra.Command {
 				defer store.Close()
 			}
 
-			router := newRouterServiceWithSecret(cfg, store, nil)
+			router, rerr := newRouterServiceWithSecret(cfg, store, nil)
+			if rerr != nil {
+				return rerr
+			}
 			logs := router.Logs()
 			sort.SliceStable(logs, func(i, j int) bool {
 				return logs[i].CreatedAt.After(logs[j].CreatedAt)
@@ -636,7 +642,10 @@ func newRootCommand() *cobra.Command {
 
 			secStore, _ := createSecretStore(cfg)
 
-			router := newRouterServiceWithSecret(cfg, store, secStore)
+			router, rerr := newRouterServiceWithSecret(cfg, store, secStore)
+			if rerr != nil {
+				return rerr
+			}
 			srv := httpserver.New(router, cfg)
 			return srv.Run(cmd.Context())
 		},
@@ -659,9 +668,15 @@ func newRootCommand() *cobra.Command {
 				defer store.Close()
 			}
 
-			secStore, _ := createSecretStore(cfg)
+			secStore, err := createSecretStore(cfg)
+			if err != nil {
+				return err
+			}
 
-			router := newRouterServiceWithSecret(cfg, store, secStore)
+			router, rerr := newRouterServiceWithSecret(cfg, store, secStore)
+			if rerr != nil {
+				return rerr
+			}
 			return tui.Run(tui.Options{
 				ConfigPath: configPath,
 				Config:     cfg,
@@ -676,7 +691,11 @@ func newRootCommand() *cobra.Command {
 					if err := next.Validate(); err != nil {
 						return nil, err
 					}
-					return newRouterServiceWithSecret(next, store, secStore), nil
+					r, rerr := newRouterServiceWithSecret(next, store, secStore)
+					if rerr != nil {
+						return nil, rerr
+					}
+					return r, nil
 				},
 			})
 		},
@@ -748,7 +767,7 @@ func createStorage(cfg *config.Config) (storage.Storage, error) {
 	return storage.New(expandHome(path))
 }
 
-func newRouterServiceWithSecret(cfg *config.Config, store storage.Storage, secStore *secret.Store) *service.RouterService {
+func newRouterServiceWithSecret(cfg *config.Config, store storage.Storage, secStore *secret.Store) (*service.RouterService, error) {
 	if store != nil || secStore != nil {
 		return service.NewRouterServiceWithSecret(cfg, store, secStore)
 	}

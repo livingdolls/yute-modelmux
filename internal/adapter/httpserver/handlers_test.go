@@ -15,7 +15,7 @@ import (
 func TestMetricsDoesNotExposeAPIKeyValue(t *testing.T) {
 	cfg := config.Default()
 	cfg.Keys[0].Value = "provider-secret"
-	rs := service.NewRouterService(cfg)
+	rs, _ := service.NewRouterService(cfg)
 	srv := New(rs, cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
@@ -36,7 +36,7 @@ func TestMetricsDoesNotExposeAPIKeyValue(t *testing.T) {
 
 func TestModelsIncludesModelGroups(t *testing.T) {
 	cfg := config.Default()
-	rs := service.NewRouterService(cfg)
+	rs, _ := service.NewRouterService(cfg)
 	srv := New(rs, cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
@@ -51,7 +51,7 @@ func TestModelsIncludesModelGroups(t *testing.T) {
 
 func TestChatReturns400ForInvalidJSON(t *testing.T) {
 	cfg := config.Default()
-	rs := service.NewRouterService(cfg)
+	rs, _ := service.NewRouterService(cfg)
 	srv := New(rs, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`not json`))
@@ -65,7 +65,7 @@ func TestChatReturns400ForInvalidJSON(t *testing.T) {
 
 func TestChatReturns404ForUnknownModel(t *testing.T) {
 	cfg := config.Default()
-	rs := service.NewRouterService(cfg)
+	rs, _ := service.NewRouterService(cfg)
 	srv := New(rs, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"not-exists","messages":[]}`))
@@ -80,7 +80,7 @@ func TestChatReturns404ForUnknownModel(t *testing.T) {
 func TestChatReturns403ForDisabledModel(t *testing.T) {
 	cfg := config.Default()
 	cfg.Models[0].Enabled = false
-	rs := service.NewRouterService(cfg)
+	rs, _ := service.NewRouterService(cfg)
 	srv := New(rs, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"mimo-v2.5-pro","messages":[]}`))
@@ -95,7 +95,7 @@ func TestChatReturns403ForDisabledModel(t *testing.T) {
 func TestChatReturnsErrorForLargeRequestBody(t *testing.T) {
 	cfg := config.Default()
 	cfg.Server.MaxRequestBodyMB = 1
-	rs := service.NewRouterService(cfg)
+	rs, _ := service.NewRouterService(cfg)
 	srv := New(rs, cfg)
 
 	largeBody := strings.Repeat("x", 2*1024*1024)
@@ -133,7 +133,7 @@ func TestCopyWithFlushHandlesEmptyStream(t *testing.T) {
 
 func TestCompletionsReturns400ForInvalidJSON(t *testing.T) {
 	cfg := config.Default()
-	rs := service.NewRouterService(cfg)
+	rs, _ := service.NewRouterService(cfg)
 	srv := New(rs, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/completions", strings.NewReader(`not json`))
@@ -156,7 +156,7 @@ func TestCompletionsRoutesToCorrectEndpoint(t *testing.T) {
 	cfg := config.Default()
 	cfg.Providers[0].BaseURL = server.URL + "/v1"
 	cfg.Models[0].ModelName = cfg.Models[0].ID
-	rs := service.NewRouterService(cfg)
+	rs, _ := service.NewRouterService(cfg)
 	srv := New(rs, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/completions", strings.NewReader(`{"model":"mimo-v2.5-pro","prompt":"hello"}`))
@@ -184,7 +184,7 @@ func TestChatSSEForwardsChunksAndHeaders(t *testing.T) {
 	cfg := config.Default()
 	cfg.Providers[0].BaseURL = server.URL + "/v1"
 	cfg.Models[0].ModelName = cfg.Models[0].ID
-	rs := service.NewRouterService(cfg)
+	rs, _ := service.NewRouterService(cfg)
 	srv := New(rs, cfg)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"mimo-v2.5-pro","messages":[],"stream":true}`))
@@ -241,7 +241,7 @@ func TestChatSSEDeliversChunksBeforeStreamEnds(t *testing.T) {
 	cfg.Providers[0].BaseURL = upstream.URL + "/v1"
 	cfg.Providers[0].TimeoutSeconds = 5
 	cfg.Models[0].ModelName = cfg.Models[0].ID
-	rs := service.NewRouterService(cfg)
+	rs, _ := service.NewRouterService(cfg)
 	srv := New(rs, cfg)
 
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
