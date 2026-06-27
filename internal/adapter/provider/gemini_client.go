@@ -73,7 +73,7 @@ func (c *GeminiClient) Forward(ctx context.Context, provider domain.Provider, mo
 	}, nil
 }
 
-func (c *GeminiClient) TestKey(ctx context.Context, provider domain.Provider, apiKey domain.APIKey) error {
+func (c *GeminiClient) TestKey(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey) error {
 	baseURL := strings.TrimRight(provider.BaseURL, "/")
 	endpoint := fmt.Sprintf("%s/v1beta/models", baseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)

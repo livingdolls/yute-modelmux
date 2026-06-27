@@ -757,7 +757,7 @@ func (s *RouterService) TestKey(ctx context.Context, keyID string) error {
 	s.mu.Unlock()
 
 	client := s.clientReg.Get(provider.Type)
-	return client.TestKey(ctx, provider, key)
+	return client.TestKey(ctx, provider, model, key)
 }
 
 func (s *RouterService) appendLog(log domain.RequestLog) {

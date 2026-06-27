@@ -61,7 +61,7 @@ func (c *OpenAICompatibleClient) forwardRequest(ctx context.Context, provider do
 	return client.Do(upstream)
 }
 
-func (c *OpenAICompatibleClient) TestKey(ctx context.Context, provider domain.Provider, apiKey domain.APIKey) error {
+func (c *OpenAICompatibleClient) TestKey(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey) error {
 	endpoint, err := providerEndpoint(provider.BaseURL, "/models")
 	if err != nil {
 		return err

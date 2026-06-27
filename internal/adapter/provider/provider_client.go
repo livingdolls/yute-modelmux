@@ -9,7 +9,7 @@ import (
 
 type ProviderClient interface {
 	Forward(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey, req *http.Request, apiPath string) (*http.Response, error)
-	TestKey(ctx context.Context, provider domain.Provider, apiKey domain.APIKey) error
+	TestKey(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey) error
 }
 
 type ClientRegistry struct {

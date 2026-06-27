@@ -66,14 +66,17 @@ func (c *AnthropicClient) Forward(ctx context.Context, provider domain.Provider,
 	}, nil
 }
 
-func (c *AnthropicClient) TestKey(ctx context.Context, provider domain.Provider, apiKey domain.APIKey) error {
+func (c *AnthropicClient) TestKey(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey) error {
 	endpoint := strings.TrimRight(provider.BaseURL, "/") + "/v1/messages"
-	model := apiKey.ModelID
-	if model == "" {
-		model = "claude-3-haiku-20240307"
+	modelName := model.ModelName
+	if modelName == "" {
+		modelName = model.ID
+	}
+	if modelName == "" {
+		modelName = "claude-3-haiku-20240307"
 	}
 	body := map[string]any{
-		"model":      model,
+		"model":      modelName,
 		"max_tokens": 1,
 		"messages":   []map[string]any{{"role": "user", "content": "hi"}},
 	}
