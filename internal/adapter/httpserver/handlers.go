@@ -3,10 +3,12 @@ package httpserver
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/livingdolls/yute-modelmux/internal/app/service"
@@ -120,14 +122,88 @@ func copyWithFlush(dst io.Writer, src io.Reader) error {
 	}
 }
 
+type metricSnapshot struct {
+	requests     int
+	errors       int
+	rateLimits   int
+	latencies    []int64
+	activeKeys   int
+	cooldownKeys int
+	invalidKeys  int
+	limitedKeys  int
+}
+
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
+	format := r.URL.Query().Get("format")
+
+	keys := s.rs.ListKeys()
+	logs := s.rs.Logs()
+	models := s.rs.ListModels()
+	providers := s.rs.ListProviders()
+	groups := s.rs.ListModelGroups()
+
+	modelMetrics := map[string]*metricSnapshot{}
+	for _, model := range models {
+		modelMetrics[model.ID] = &metricSnapshot{}
+	}
+	for _, key := range keys {
+		m, ok := modelMetrics[key.ModelID]
+		if !ok {
+			continue
+		}
+		switch key.Status {
+		case domain.KeyStatusActive:
+			m.activeKeys++
+		case domain.KeyStatusCooldown:
+			m.cooldownKeys++
+		case domain.KeyStatusInvalid:
+			m.invalidKeys++
+		case domain.KeyStatusLimited:
+			m.limitedKeys++
+		}
+	}
+	for _, log := range logs {
+		m, ok := modelMetrics[log.ModelID]
+		if !ok {
+			continue
+		}
+		m.requests++
+		if log.StatusCode >= 400 || log.Error != "" {
+			m.errors++
+		}
+		if log.StatusCode == http.StatusTooManyRequests {
+			m.rateLimits++
+		}
+		if log.LatencyMs > 0 {
+			m.latencies = append(m.latencies, log.LatencyMs)
+		}
+	}
+
+	providerModelMap := map[string]string{}
+	for _, model := range models {
+		providerModelMap[model.ID] = model.ProviderID
+	}
+
+	if format == "prometheus" {
+		s.writePrometheusMetrics(w, models, groups, keys, providers, logs, modelMetrics, providerModelMap)
+		return
+	}
+
+	s.writeJSONMetrics(w, models, groups, keys, modelMetrics)
+}
+
+func (s *Server) writeJSONMetrics(w http.ResponseWriter, models []domain.Model, groups []domain.ModelGroup, keys []domain.APIKey, modelMetrics map[string]*metricSnapshot) {
 	type modelMetric struct {
-		ID           string `json:"id"`
-		Requests     int    `json:"requests"`
-		Errors       int    `json:"errors"`
-		ActiveKeys   int    `json:"active_keys"`
-		CooldownKeys int    `json:"cooldown_keys"`
-		InvalidKeys  int    `json:"invalid_keys"`
+		ID           string  `json:"id"`
+		Requests     int     `json:"requests"`
+		Errors       int     `json:"errors"`
+		RateLimits   int     `json:"rate_limits"`
+		LatencyAvgMs float64 `json:"latency_avg_ms"`
+		LatencyP95Ms int64   `json:"latency_p95_ms"`
+		ActiveKeys   int     `json:"active_keys"`
+		CooldownKeys int     `json:"cooldown_keys"`
+		InvalidKeys  int     `json:"invalid_keys"`
+		LimitedKeys  int     `json:"limited_keys"`
 	}
 	type groupMetric struct {
 		ID                string `json:"id"`
@@ -136,38 +212,45 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 		ActiveModels      int    `json:"active_models"`
 		UnavailableModels int    `json:"unavailable_models"`
 	}
-	keys := s.rs.ListKeys()
-	logs := s.rs.Logs()
-	models := s.rs.ListModels()
-	groups := s.rs.ListModelGroups()
-	metrics := make([]modelMetric, 0, len(models))
+
+	mm := make([]modelMetric, 0, len(models))
 	for _, model := range models {
-		metric := modelMetric{ID: model.ID}
-		for _, key := range keys {
-			if key.ModelID != model.ID {
-				continue
-			}
-			switch key.Status {
-			case "active":
-				metric.ActiveKeys++
-			case "cooldown":
-				metric.CooldownKeys++
-			case "invalid":
-				metric.InvalidKeys++
-			}
+		ms := modelMetrics[model.ID]
+		if ms == nil {
+			continue
 		}
-		for _, log := range logs {
-			if log.ModelID != model.ID {
-				continue
+		latencyAvg := float64(0)
+		latencyP95 := int64(0)
+		if len(ms.latencies) > 0 {
+			sorted := make([]int64, len(ms.latencies))
+			copy(sorted, ms.latencies)
+			sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+			var total int64
+			for _, l := range sorted {
+				total += l
 			}
-			metric.Requests++
-			if log.StatusCode >= 400 || log.Error != "" {
-				metric.Errors++
+			latencyAvg = float64(total) / float64(len(sorted))
+			p95Idx := int(float64(len(sorted)) * 0.95)
+			if p95Idx >= len(sorted) {
+				p95Idx = len(sorted) - 1
 			}
+			latencyP95 = sorted[p95Idx]
 		}
-		metrics = append(metrics, metric)
+		mm = append(mm, modelMetric{
+			ID:           model.ID,
+			Requests:     ms.requests,
+			Errors:       ms.errors,
+			RateLimits:   ms.rateLimits,
+			LatencyAvgMs: latencyAvg,
+			LatencyP95Ms: latencyP95,
+			ActiveKeys:   ms.activeKeys,
+			CooldownKeys: ms.cooldownKeys,
+			InvalidKeys:  ms.invalidKeys,
+			LimitedKeys:  ms.limitedKeys,
+		})
 	}
-	groupMetrics := make([]groupMetric, 0, len(groups))
+
+	gm := make([]groupMetric, 0, len(groups))
 	for _, group := range groups {
 		metric := groupMetric{ID: group.ID}
 		for _, member := range group.Members {
@@ -184,18 +267,136 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 				metric.UnavailableModels++
 			}
 		}
-		for _, log := range logs {
-			if log.GroupID != group.ID {
-				continue
-			}
-			metric.Requests++
-			if log.StatusCode >= 400 || log.Error != "" {
-				metric.Errors++
-			}
+		ms := modelMetrics[group.ID]
+		if ms != nil {
+			metric.Requests = ms.requests
+			metric.Errors = ms.errors
 		}
-		groupMetrics = append(groupMetrics, metric)
+		gm = append(gm, metric)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"models": metrics, "groups": groupMetrics})
+
+	writeJSON(w, http.StatusOK, map[string]any{"models": mm, "groups": gm})
+}
+
+func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.Model, groups []domain.ModelGroup, keys []domain.APIKey, providers []domain.Provider, logs []domain.RequestLog, modelMetrics map[string]*metricSnapshot, providerModelMap map[string]string) {
+	var b strings.Builder
+
+	totalRequests := 0
+	totalErrors := 0
+	totalRateLimits := 0
+	allLatencies := []int64{}
+	for _, log := range logs {
+		totalRequests++
+		if log.StatusCode >= 400 || log.Error != "" {
+			totalErrors++
+		}
+		if log.StatusCode == http.StatusTooManyRequests {
+			totalRateLimits++
+		}
+		if log.LatencyMs > 0 {
+			allLatencies = append(allLatencies, log.LatencyMs)
+		}
+	}
+
+	activeKeys := 0
+	cooldownKeys := 0
+	invalidKeys := 0
+	limitedKeys := 0
+	for _, key := range keys {
+		switch key.Status {
+		case domain.KeyStatusActive:
+			activeKeys++
+		case domain.KeyStatusCooldown:
+			cooldownKeys++
+		case domain.KeyStatusInvalid:
+			invalidKeys++
+		case domain.KeyStatusLimited:
+			limitedKeys++
+		}
+	}
+
+	b.WriteString("# HELP modelmux_requests_total Total number of requests\n")
+	b.WriteString("# TYPE modelmux_requests_total counter\n")
+	b.WriteString(fmt.Sprintf("modelmux_requests_total %d\n", totalRequests))
+
+	b.WriteString("# HELP modelmux_errors_total Total number of errors\n")
+	b.WriteString("# TYPE modelmux_errors_total counter\n")
+	b.WriteString(fmt.Sprintf("modelmux_errors_total %d\n", totalErrors))
+
+	b.WriteString("# HELP modelmux_rate_limits_total Total number of rate limit responses\n")
+	b.WriteString("# TYPE modelmux_rate_limits_total counter\n")
+	b.WriteString(fmt.Sprintf("modelmux_rate_limits_total %d\n", totalRateLimits))
+
+	if len(allLatencies) > 0 {
+		sort.Slice(allLatencies, func(i, j int) bool { return allLatencies[i] < allLatencies[j] })
+		var totalLatency int64
+		for _, l := range allLatencies {
+			totalLatency += l
+		}
+		avgMs := float64(totalLatency) / float64(len(allLatencies))
+		p95Idx := int(float64(len(allLatencies)) * 0.95)
+		if p95Idx >= len(allLatencies) {
+			p95Idx = len(allLatencies) - 1
+		}
+		p95Ms := allLatencies[p95Idx]
+
+		b.WriteString("# HELP modelmux_latency_avg_ms Average request latency in milliseconds\n")
+		b.WriteString("# TYPE modelmux_latency_avg_ms gauge\n")
+		b.WriteString(fmt.Sprintf("modelmux_latency_avg_ms %.0f\n", avgMs))
+
+		b.WriteString("# HELP modelmux_latency_p95_ms P95 request latency in milliseconds\n")
+		b.WriteString("# TYPE modelmux_latency_p95_ms gauge\n")
+		b.WriteString(fmt.Sprintf("modelmux_latency_p95_ms %d\n", p95Ms))
+	}
+
+	b.WriteString("# HELP modelmux_active_keys Number of active API keys\n")
+	b.WriteString("# TYPE modelmux_active_keys gauge\n")
+	b.WriteString(fmt.Sprintf("modelmux_active_keys %d\n", activeKeys))
+
+	b.WriteString("# HELP modelmux_cooldown_keys Number of keys in cooldown\n")
+	b.WriteString("# TYPE modelmux_cooldown_keys gauge\n")
+	b.WriteString(fmt.Sprintf("modelmux_cooldown_keys %d\n", cooldownKeys))
+
+	b.WriteString("# HELP modelmux_invalid_keys Number of invalid API keys\n")
+	b.WriteString("# TYPE modelmux_invalid_keys gauge\n")
+	b.WriteString(fmt.Sprintf("modelmux_invalid_keys %d\n", invalidKeys))
+
+	b.WriteString("# HELP modelmux_limited_keys Number of rate-limited API keys\n")
+	b.WriteString("# TYPE modelmux_limited_keys gauge\n")
+	b.WriteString(fmt.Sprintf("modelmux_limited_keys %d\n", limitedKeys))
+
+	for _, model := range models {
+		provider := providerModelMap[model.ID]
+		ms := modelMetrics[model.ID]
+		if ms == nil {
+			continue
+		}
+		labels := fmt.Sprintf(`model="%s",provider="%s"`, model.ID, provider)
+		b.WriteString(fmt.Sprintf("modelmux_requests_total{%s} %d\n", labels, ms.requests))
+		b.WriteString(fmt.Sprintf("modelmux_errors_total{%s} %d\n", labels, ms.errors))
+		b.WriteString(fmt.Sprintf("modelmux_rate_limits_total{%s} %d\n", labels, ms.rateLimits))
+
+		if len(ms.latencies) > 0 {
+			sorted := make([]int64, len(ms.latencies))
+			copy(sorted, ms.latencies)
+			sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+			var total int64
+			for _, l := range sorted {
+				total += l
+			}
+			avg := float64(total) / float64(len(sorted))
+			p95Idx := int(float64(len(sorted)) * 0.95)
+			if p95Idx >= len(sorted) {
+				p95Idx = len(sorted) - 1
+			}
+			b.WriteString(fmt.Sprintf("modelmux_latency_avg_ms{%s} %.0f\n", labels, avg))
+			b.WriteString(fmt.Sprintf("modelmux_latency_p95_ms{%s} %d\n", labels, sorted[p95Idx]))
+		}
+	}
+
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(b.String()))
 }
 
 func modelHasActiveKey(keys []domain.APIKey, modelID string) bool {
