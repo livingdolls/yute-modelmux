@@ -162,6 +162,159 @@ func newRootCommand() *cobra.Command {
 	logsCmd.Flags().IntVar(&logLimit, "limit", 20, "Limit number of logs")
 	rootCmd.AddCommand(logsCmd)
 
+	var readOnlyJSON bool
+	makeReadOnlyCmd := func(use, short string, runFn func(cmd *cobra.Command, cfg *config.Config)) *cobra.Command {
+		cmd := &cobra.Command{
+			Use:   use,
+			Short: short,
+			RunE: func(cmd *cobra.Command, args []string) error {
+				cfg, err := config.Load(configPath)
+				if err != nil {
+					return err
+				}
+				runFn(cmd, cfg)
+				return nil
+			},
+		}
+		cmd.Flags().BoolVar(&readOnlyJSON, "json", false, "Output in JSON format")
+		return cmd
+	}
+
+	rootCmd.AddCommand(makeReadOnlyCmd("providers", "List configured providers", func(cmd *cobra.Command, cfg *config.Config) {
+		if readOnlyJSON {
+			type item struct {
+				ID             string `json:"id"`
+				Name           string `json:"name"`
+				Type           string `json:"type"`
+				BaseURL        string `json:"base_url"`
+				AuthType       string `json:"auth_type"`
+				AuthHeaderName string `json:"auth_header_name,omitempty"`
+				TimeoutSeconds int    `json:"timeout_seconds"`
+				Enabled        bool   `json:"enabled"`
+			}
+			items := make([]item, len(cfg.Providers))
+			for i, p := range cfg.Providers {
+				items[i] = item{ID: p.ID, Name: p.Name, Type: p.Type, BaseURL: p.BaseURL, AuthType: p.AuthType, AuthHeaderName: p.AuthHeaderName, TimeoutSeconds: p.TimeoutSeconds, Enabled: p.Enabled}
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(items)
+			return
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-20s %-20s %-12s %-8s %s\n", "ID", "NAME", "TYPE", "AUTH", "ENABLED", "BASE URL")
+		fmt.Fprintln(cmd.OutOrStdout(), strings.Repeat("-", 120))
+		for _, p := range cfg.Providers {
+			enabled := "no"
+			if p.Enabled {
+				enabled = "yes"
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-20s %-20s %-12s %-8s %s\n", p.ID, p.Name, p.Type, p.AuthType, enabled, p.BaseURL)
+		}
+	}))
+
+	rootCmd.AddCommand(makeReadOnlyCmd("models", "List configured models", func(cmd *cobra.Command, cfg *config.Config) {
+		if readOnlyJSON {
+			type item struct {
+				ID         string `json:"id"`
+				ProviderID string `json:"provider_id"`
+				ModelName  string `json:"model_name"`
+				Strategy   string `json:"strategy"`
+				Enabled    bool   `json:"enabled"`
+			}
+			items := make([]item, len(cfg.Models))
+			for i, m := range cfg.Models {
+				items[i] = item{ID: m.ID, ProviderID: m.ProviderID, ModelName: m.ModelName, Strategy: m.Strategy, Enabled: m.Enabled}
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(items)
+			return
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-20s %-20s %-14s %-8s\n", "ID", "PROVIDER", "MODEL NAME", "STRATEGY", "ENABLED")
+		fmt.Fprintln(cmd.OutOrStdout(), strings.Repeat("-", 90))
+		for _, m := range cfg.Models {
+			enabled := "no"
+			if m.Enabled {
+				enabled = "yes"
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-20s %-20s %-14s %-8s\n", m.ID, m.ProviderID, m.ModelName, m.Strategy, enabled)
+		}
+	}))
+
+	rootCmd.AddCommand(makeReadOnlyCmd("groups", "List model groups", func(cmd *cobra.Command, cfg *config.Config) {
+		if readOnlyJSON {
+			type member struct {
+				ModelID  string `json:"model_id"`
+				Priority int    `json:"priority"`
+				Weight   int    `json:"weight"`
+				Enabled  bool   `json:"enabled"`
+			}
+			type item struct {
+				ID       string   `json:"id"`
+				Name     string   `json:"name"`
+				Strategy string   `json:"strategy"`
+				Enabled  bool     `json:"enabled"`
+				Members  []member `json:"members"`
+			}
+			items := make([]item, len(cfg.ModelGroups))
+			for i, g := range cfg.ModelGroups {
+				members := make([]member, len(g.Members))
+				for j, m := range g.Members {
+					members[j] = member{ModelID: m.ModelID, Priority: m.Priority, Weight: m.Weight, Enabled: m.Enabled}
+				}
+				items[i] = item{ID: g.ID, Name: g.Name, Strategy: g.Strategy, Enabled: g.Enabled, Members: members}
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(items)
+			return
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-20s %-14s %-8s %s\n", "ID", "NAME", "STRATEGY", "ENABLED", "MEMBERS")
+		fmt.Fprintln(cmd.OutOrStdout(), strings.Repeat("-", 90))
+		for _, g := range cfg.ModelGroups {
+			enabled := "no"
+			if g.Enabled {
+				enabled = "yes"
+			}
+			memberStrs := make([]string, len(g.Members))
+			for j, m := range g.Members {
+				status := ""
+				if !m.Enabled {
+					status = " (disabled)"
+				}
+				memberStrs[j] = fmt.Sprintf("%s%s", m.ModelID, status)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-20s %-14s %-8s %s\n", g.ID, g.Name, g.Strategy, enabled, strings.Join(memberStrs, ", "))
+		}
+	}))
+
+	rootCmd.AddCommand(makeReadOnlyCmd("keys", "List configured API keys", func(cmd *cobra.Command, cfg *config.Config) {
+		if readOnlyJSON {
+			type item struct {
+				ID         string `json:"id"`
+				ProviderID string `json:"provider_id"`
+				ModelID    string `json:"model_id"`
+				Name       string `json:"name"`
+				ValueEnv   string `json:"value_env,omitempty"`
+				Status     string `json:"status"`
+				Priority   int    `json:"priority"`
+			}
+			items := make([]item, len(cfg.Keys))
+			for i, k := range cfg.Keys {
+				items[i] = item{ID: k.ID, ProviderID: k.ProviderID, ModelID: k.ModelID, Name: k.Name, ValueEnv: k.ValueEnv, Status: k.Status, Priority: k.Priority}
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(items)
+			return
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-20s %-15s %-10s %-8s %s\n", "ID", "PROVIDER", "MODEL", "STATUS", "PRI", "NAME")
+		fmt.Fprintln(cmd.OutOrStdout(), strings.Repeat("-", 90))
+		for _, k := range cfg.Keys {
+			fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-20s %-15s %-10s %-8d %s\n", k.ID, k.ProviderID, k.ModelID, k.Status, k.Priority, k.Name)
+		}
+	}))
+
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "start",
 		Short: "Start the local proxy server",
