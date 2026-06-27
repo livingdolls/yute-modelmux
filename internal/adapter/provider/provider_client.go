@@ -22,6 +22,7 @@ func NewClientRegistry() *ClientRegistry {
 	}
 	r.clients[domain.ProviderTypeOpenAICompatible] = &OpenAICompatibleClient{}
 	r.clients[domain.ProviderTypeCustom] = &OpenAICompatibleClient{}
+	r.clients[domain.ProviderTypeAnthropic] = NewAnthropicClient()
 	return r
 }
 
