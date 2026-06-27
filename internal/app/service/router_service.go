@@ -576,7 +576,7 @@ func (s *RouterService) saveKeyRuntimeLocked(k domain.APIKey) {
 		lastUsedAt = k.LastUsedAt.Format(time.RFC3339)
 	}
 	updatedAt := k.UpdatedAt.Format(time.RFC3339)
-	_ = s.store.SaveKeyRuntime(storage.KeyRuntimeRecord{
+	if err := s.store.SaveKeyRuntime(storage.KeyRuntimeRecord{
 		KeyID:             k.ID,
 		Status:            string(k.Status),
 		UsedCount:         k.UsedCount,
@@ -589,7 +589,9 @@ func (s *RouterService) saveKeyRuntimeLocked(k domain.APIKey) {
 		DailyDate:         k.DailyDate,
 		DailyRequestLimit: k.DailyRequestLimit,
 		DailyTokenLimit:   k.DailyTokenLimit,
-	})
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "modelmux: storage write error: %v\n", err)
+	}
 }
 
 func (s *RouterService) checkDailyResetLocked(idx int) {
@@ -690,7 +692,7 @@ func (s *RouterService) appendLog(log domain.RequestLog) {
 		if !log.CreatedAt.IsZero() {
 			createdAt = log.CreatedAt.Format(time.RFC3339)
 		}
-		_ = s.store.SaveRequestLog(storage.RequestLogRecord{
+		if err := s.store.SaveRequestLog(storage.RequestLogRecord{
 			ID:          log.ID,
 			GroupID:     log.GroupID,
 			ModelID:     log.ModelID,
@@ -702,7 +704,9 @@ func (s *RouterService) appendLog(log domain.RequestLog) {
 			TokenInput:  log.TokenInput,
 			TokenOutput: log.TokenOutput,
 			CreatedAt:   createdAt,
-		})
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "modelmux: storage write error: %v\n", err)
+		}
 	}
 }
 

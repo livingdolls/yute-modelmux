@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -131,15 +132,26 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 
-	db.Exec("ALTER TABLE keys_runtime ADD COLUMN last_used_at TEXT NOT NULL DEFAULT ''")
-	db.Exec("ALTER TABLE keys_runtime ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
-	db.Exec("ALTER TABLE keys_runtime ADD COLUMN daily_request_count INTEGER NOT NULL DEFAULT 0")
-	db.Exec("ALTER TABLE keys_runtime ADD COLUMN daily_token_count INTEGER NOT NULL DEFAULT 0")
-	db.Exec("ALTER TABLE keys_runtime ADD COLUMN daily_date TEXT NOT NULL DEFAULT ''")
-	db.Exec("ALTER TABLE keys_runtime ADD COLUMN daily_request_limit INTEGER NOT NULL DEFAULT 0")
-	db.Exec("ALTER TABLE keys_runtime ADD COLUMN daily_token_limit INTEGER NOT NULL DEFAULT 0")
+	alterColumns(db,
+		"ALTER TABLE keys_runtime ADD COLUMN last_used_at TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE keys_runtime ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE keys_runtime ADD COLUMN daily_request_count INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE keys_runtime ADD COLUMN daily_token_count INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE keys_runtime ADD COLUMN daily_date TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE keys_runtime ADD COLUMN daily_request_limit INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE keys_runtime ADD COLUMN daily_token_limit INTEGER NOT NULL DEFAULT 0",
+	)
 
 	return nil
+}
+
+func alterColumns(db *sql.DB, stmts ...string) {
+	for _, stmt := range stmts {
+		_, err := db.Exec(stmt)
+		if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			fmt.Fprintf(os.Stderr, "storage: migration warning: %v\n", err)
+		}
+	}
 }
 
 func (s *sqliteStore) SaveKeyRuntime(record KeyRuntimeRecord) error {

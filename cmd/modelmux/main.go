@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -81,7 +82,7 @@ func newRootCommand() *cobra.Command {
 		Use:   "enable",
 		Short: "Enable an API key",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return mutateKeyStatus(configPath, keyID, "active")
+			return mutateKeyStatus(configPath, keyID, "active", cmd.OutOrStdout())
 		},
 	}
 	keyEnableCmd.Flags().StringVar(&keyID, "id", "", "key id to enable")
@@ -92,7 +93,7 @@ func newRootCommand() *cobra.Command {
 		Use:   "disable",
 		Short: "Disable an API key",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return mutateKeyStatus(configPath, keyID, "disabled")
+			return mutateKeyStatus(configPath, keyID, "disabled", cmd.OutOrStdout())
 		},
 	}
 	keyDisableCmd.Flags().StringVar(&keyID, "id", "", "key id to disable")
@@ -193,7 +194,7 @@ func newRootCommand() *cobra.Command {
 	}
 	providerAddCmd.Flags().StringVar(&providerAddID, "id", "", "provider id")
 	providerAddCmd.Flags().StringVar(&providerAddName, "name", "", "display name")
-	providerAddCmd.Flags().StringVar(&providerAddType, "type", "openai-compatible", "provider type (openai-compatible, custom)")
+	providerAddCmd.Flags().StringVar(&providerAddType, "type", "openai-compatible", "provider type (openai-compatible, anthropic, gemini, custom)")
 	providerAddCmd.Flags().StringVar(&providerAddBaseURL, "base-url", "", "provider base URL")
 	providerAddCmd.Flags().StringVar(&providerAddAuthType, "auth-type", "bearer", "auth type (bearer, header)")
 	providerAddCmd.Flags().StringVar(&providerAddAuthHeader, "auth-header", "", "custom auth header name")
@@ -704,7 +705,7 @@ func newRootCommand() *cobra.Command {
 	return rootCmd
 }
 
-func mutateKeyStatus(configPath, keyID, status string) error {
+func mutateKeyStatus(configPath, keyID, status string, w io.Writer) error {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return err
@@ -723,7 +724,7 @@ func mutateKeyStatus(configPath, keyID, status string) error {
 	if err := config.Save(configPath, cfg); err != nil {
 		return err
 	}
-	fmt.Printf("key %s set to %s\n", keyID, status)
+	fmt.Fprintf(w, "key %s set to %s\n", keyID, status)
 	return nil
 }
 
