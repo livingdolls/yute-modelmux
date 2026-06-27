@@ -104,7 +104,7 @@ func GroupUnavailableError(groupID string) *ProxyError {
 
 type RouterService struct {
 	cfg          *config.Config
-	client       *providerclient.OpenAICompatibleClient
+	clientReg    *providerclient.ClientRegistry
 	store        storage.Storage
 	mu           sync.Mutex
 	rrIndex      map[string]int
@@ -127,7 +127,7 @@ func NewRouterServiceWithStorage(cfg *config.Config, store storage.Storage) *Rou
 func newRouterService(cfg *config.Config, store storage.Storage) *RouterService {
 	rs := &RouterService{
 		cfg:          cfg,
-		client:       providerclient.New(),
+		clientReg:    providerclient.NewClientRegistry(),
 		store:        store,
 		rrIndex:      map[string]int{},
 		groupRRIndex: map[string]int{},
@@ -419,7 +419,8 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 
 		clonedReq := cloneRequestWithBody(req, bodyBytes)
 		startedAt := time.Now()
-		resp, err := s.client.Forward(ctx, provider, model, *key, clonedReq, apiPath)
+		client := s.clientReg.Get(provider.Type)
+		resp, err := client.Forward(ctx, provider, model, *key, clonedReq, apiPath)
 		result := classifyResult(resp, err, s.cfg)
 		result.ModelID = model.ID
 		result.GroupID = groupID
@@ -610,7 +611,8 @@ func (s *RouterService) TestKey(ctx context.Context, keyID string) error {
 	}
 	s.mu.Unlock()
 
-	return s.client.TestKey(ctx, provider, key)
+	client := s.clientReg.Get(provider.Type)
+	return client.TestKey(ctx, provider, key)
 }
 
 func (s *RouterService) appendLog(log domain.RequestLog) {

@@ -4,6 +4,8 @@ type ProviderType string
 
 const (
 	ProviderTypeOpenAICompatible ProviderType = "openai-compatible"
+	ProviderTypeAnthropic        ProviderType = "anthropic"
+	ProviderTypeGemini           ProviderType = "gemini"
 	ProviderTypeCustom           ProviderType = "custom"
 )
 
