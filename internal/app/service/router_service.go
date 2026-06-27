@@ -18,6 +18,7 @@ import (
 	"github.com/livingdolls/yute-modelmux/internal/config"
 	"github.com/livingdolls/yute-modelmux/internal/core/domain"
 	"github.com/livingdolls/yute-modelmux/internal/core/port/inbound"
+	"github.com/livingdolls/yute-modelmux/internal/secret"
 	"github.com/livingdolls/yute-modelmux/internal/storage"
 )
 
@@ -103,33 +104,39 @@ func GroupUnavailableError(groupID string) *ProxyError {
 }
 
 type RouterService struct {
-	cfg          *config.Config
-	clientReg    *providerclient.ClientRegistry
-	store        storage.Storage
-	mu           sync.Mutex
-	rrIndex      map[string]int
+	cfg         *config.Config
+	clientReg   *providerclient.ClientRegistry
+	store       storage.Storage
+	secretStore *secret.Store
+	mu          sync.Mutex
+	rrIndex     map[string]int
 	groupRRIndex map[string]int
-	logs         []domain.RequestLog
-	providers    []domain.Provider
-	models       []domain.Model
-	groups       []domain.ModelGroup
-	keys         []domain.APIKey
+	logs        []domain.RequestLog
+	providers   []domain.Provider
+	models      []domain.Model
+	groups      []domain.ModelGroup
+	keys        []domain.APIKey
 }
 
 func NewRouterService(cfg *config.Config) *RouterService {
-	return newRouterService(cfg, nil)
+	return newRouterService(cfg, nil, nil)
 }
 
 func NewRouterServiceWithStorage(cfg *config.Config, store storage.Storage) *RouterService {
-	return newRouterService(cfg, store)
+	return newRouterService(cfg, store, nil)
 }
 
-func newRouterService(cfg *config.Config, store storage.Storage) *RouterService {
+func NewRouterServiceWithSecret(cfg *config.Config, store storage.Storage, secretStore *secret.Store) *RouterService {
+	return newRouterService(cfg, store, secretStore)
+}
+
+func newRouterService(cfg *config.Config, store storage.Storage, secretStore *secret.Store) *RouterService {
 	rs := &RouterService{
-		cfg:          cfg,
-		clientReg:    providerclient.NewClientRegistry(),
-		store:        store,
-		rrIndex:      map[string]int{},
+		cfg:         cfg,
+		clientReg:   providerclient.NewClientRegistry(),
+		store:       store,
+		secretStore: secretStore,
+		rrIndex:     map[string]int{},
 		groupRRIndex: map[string]int{},
 	}
 	for _, p := range cfg.Providers {
@@ -184,6 +191,11 @@ func newRouterService(cfg *config.Config, store storage.Storage) *RouterService 
 			status = domain.KeyStatusActive
 		}
 		value := k.Value
+		if value == "" && k.SecretRef != "" && secretStore != nil {
+			if sv, err := secretStore.Get(k.SecretRef); err == nil {
+				value = sv
+			}
+		}
 		if value == "" && k.ValueEnv != "" {
 			value = os.Getenv(k.ValueEnv)
 		}

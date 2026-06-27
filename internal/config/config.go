@@ -80,6 +80,7 @@ type KeyConfig struct {
 	Name               string `yaml:"name"`
 	Value              string `yaml:"value"`
 	ValueEnv           string `yaml:"value_env"`
+	SecretRef          string `yaml:"secret_ref"`
 	Status             string `yaml:"status"`
 	Priority           int    `yaml:"priority"`
 	DailyRequestLimit  int    `yaml:"daily_request_limit"`
@@ -263,8 +264,8 @@ func (c *Config) Validate() error {
 		if modelProviderID := modelByProviderID[k.ModelID]; modelProviderID != k.ProviderID {
 			return fmt.Errorf("key %s provider %s does not match model %s provider %s", k.ID, k.ProviderID, k.ModelID, modelProviderID)
 		}
-		if k.Value == "" && k.ValueEnv == "" {
-			return fmt.Errorf("key %s has no value; set keys[].value in config", k.ID)
+		if k.Value == "" && k.ValueEnv == "" && k.SecretRef == "" {
+			return fmt.Errorf("key %s has no value; set keys[].value or keys[].value_env or keys[].secret_ref in config", k.ID)
 		}
 	}
 	return nil

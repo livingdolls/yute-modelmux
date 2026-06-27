@@ -14,6 +14,7 @@ import (
 	"github.com/livingdolls/yute-modelmux/internal/app/service"
 	"github.com/livingdolls/yute-modelmux/internal/config"
 	"github.com/livingdolls/yute-modelmux/internal/core/port/inbound"
+	"github.com/livingdolls/yute-modelmux/internal/secret"
 	"github.com/livingdolls/yute-modelmux/internal/storage"
 	"github.com/spf13/cobra"
 )
@@ -287,6 +288,86 @@ func newRootCommand() *cobra.Command {
 	groupCmd.AddCommand(groupAddCmd)
 	rootCmd.AddCommand(groupCmd)
 
+	var (
+		secretRef   string
+		secretValue string
+	)
+	secretCmd := &cobra.Command{Use: "secret", Short: "Secret store management"}
+	secretSetCmd := &cobra.Command{
+		Use:   "set",
+		Short: "Store an API key value in the encrypted secret store",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return err
+			}
+			storePath := secretPath(cfg)
+			s, err := secret.NewStore(storePath)
+			if err != nil {
+				return err
+			}
+			if err := s.Set(secretRef, secretValue); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "stored secret", secretRef)
+			return nil
+		},
+	}
+	secretSetCmd.Flags().StringVar(&secretRef, "ref", "", "secret reference name (used as keys[].secret_ref)")
+	secretSetCmd.Flags().StringVar(&secretValue, "value", "", "API key value to store")
+	secretSetCmd.MarkFlagRequired("ref")
+	secretSetCmd.MarkFlagRequired("value")
+	secretCmd.AddCommand(secretSetCmd)
+
+	secretListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List stored secret references",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return err
+			}
+			storePath := secretPath(cfg)
+			s, err := secret.NewStore(storePath)
+			if err != nil {
+				return err
+			}
+			for _, ref := range s.List() {
+				fmt.Fprintln(cmd.OutOrStdout(), ref)
+			}
+			return nil
+		},
+	}
+	secretCmd.AddCommand(secretListCmd)
+
+	var (
+		secretDeleteRef string
+	)
+	secretDeleteCmd := &cobra.Command{
+		Use:   "delete",
+		Short: "Delete a secret from the store",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return err
+			}
+			storePath := secretPath(cfg)
+			s, err := secret.NewStore(storePath)
+			if err != nil {
+				return err
+			}
+			if err := s.Delete(secretDeleteRef); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "deleted secret", secretDeleteRef)
+			return nil
+		},
+	}
+	secretDeleteCmd.Flags().StringVar(&secretDeleteRef, "ref", "", "secret reference to delete")
+	secretDeleteCmd.MarkFlagRequired("ref")
+	secretCmd.AddCommand(secretDeleteCmd)
+	rootCmd.AddCommand(secretCmd)
+
 	var jsonOutput bool
 	var logLimit int
 	logsCmd := &cobra.Command{
@@ -306,7 +387,7 @@ func newRootCommand() *cobra.Command {
 				defer store.Close()
 			}
 
-			router := newRouterServiceWithStorage(cfg, store)
+			router := newRouterServiceWithSecret(cfg, store, nil)
 			logs := router.Logs()
 			sort.SliceStable(logs, func(i, j int) bool {
 				return logs[i].CreatedAt.After(logs[j].CreatedAt)
@@ -552,7 +633,9 @@ func newRootCommand() *cobra.Command {
 				defer store.Close()
 			}
 
-			router := newRouterServiceWithStorage(cfg, store)
+			secStore, _ := createSecretStore(cfg)
+
+			router := newRouterServiceWithSecret(cfg, store, secStore)
 			srv := httpserver.New(router, cfg)
 			return srv.Run(cmd.Context())
 		},
@@ -575,7 +658,9 @@ func newRootCommand() *cobra.Command {
 				defer store.Close()
 			}
 
-			router := newRouterServiceWithStorage(cfg, store)
+			secStore, _ := createSecretStore(cfg)
+
+			router := newRouterServiceWithSecret(cfg, store, secStore)
 			return tui.Run(tui.Options{
 				ConfigPath: configPath,
 				Config:     cfg,
@@ -590,7 +675,7 @@ func newRootCommand() *cobra.Command {
 					if err := next.Validate(); err != nil {
 						return nil, err
 					}
-					return newRouterServiceWithStorage(next, store), nil
+					return newRouterServiceWithSecret(next, store, secStore), nil
 				},
 			})
 		},
@@ -622,6 +707,25 @@ func mutateKeyStatus(configPath, keyID, status string) error {
 	return nil
 }
 
+func secretPath(cfg *config.Config) string {
+	path := cfg.Storage.Path
+	if path == "" {
+		path = config.Default().Storage.Path
+	}
+	dir := strings.TrimSuffix(path, "modelmux.db")
+	if dir == path {
+		dir = path + ".d"
+	}
+	return dir + "secrets.enc"
+}
+
+func createSecretStore(cfg *config.Config) (*secret.Store, error) {
+	if os.Getenv("MODELMUX_MASTER_KEY") == "" {
+		return nil, nil
+	}
+	return secret.NewStore(secretPath(cfg))
+}
+
 func createStorage(cfg *config.Config) (storage.Storage, error) {
 	if cfg.Storage.Type != "sqlite" {
 		return nil, nil
@@ -633,9 +737,9 @@ func createStorage(cfg *config.Config) (storage.Storage, error) {
 	return storage.New(path)
 }
 
-func newRouterServiceWithStorage(cfg *config.Config, store storage.Storage) *service.RouterService {
-	if store != nil {
-		return service.NewRouterServiceWithStorage(cfg, store)
+func newRouterServiceWithSecret(cfg *config.Config, store storage.Storage, secStore *secret.Store) *service.RouterService {
+	if store != nil || secStore != nil {
+		return service.NewRouterServiceWithSecret(cfg, store, secStore)
 	}
 	return service.NewRouterService(cfg)
 }
