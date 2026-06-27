@@ -435,7 +435,7 @@ func (m model) View() string {
 			footerText = m.keyTestResult
 		}
 	} else if m.page == pageLogs {
-		footerText = "LOGS 1:latest  2:errors  3:slow  4:newest  5:slowest  ?:help"
+		footerText = "LOGS 1:latest  2:errors  3:slow  4:rate-limit  5:newest  6:slowest  ?:help"
 	} else if m.page == pageConfig {
 		footerText = "CFG up/down:menu  j/k:row  <- ->:section  a:add  e:edit  /:filter"
 	}
@@ -505,6 +505,12 @@ func (m model) renderSidebar(width int) string {
 	b.WriteString("\n")
 	b.WriteString(m.renderSidebarHealth(width - 2))
 	b.WriteString("\n\n")
+	if m.cfg.Server.Host == "0.0.0.0" && !m.cfg.Server.RequireAuth {
+		b.WriteString(m.styles.section.Render(".:: SECURITY ::."))
+		b.WriteString("\n")
+		b.WriteString(m.styles.bad.Render("Server bound to 0.0.0.0 without authentication. Enable server.require_auth!"))
+		b.WriteString("\n\n")
+	}
 	b.WriteString(m.styles.section.Render(".:: KEYS ::."))
 	b.WriteString("\n")
 	b.WriteString(m.styles.hint.Render("tab/jk move"))
@@ -716,7 +722,7 @@ func (m model) renderHelpText() string {
 		)
 	case pageLogs:
 		lines = append(lines,
-			"logs: 1 latest, 2 errors, 3 slow, 4 newest, 5 slowest",
+			"logs: 1 latest, 2 errors, 3 slow, 4 rate-limit, 5 newest, 6 slowest",
 		)
 	case pageConfig:
 		lines = append(lines,
@@ -1140,9 +1146,12 @@ func (m *model) applyLogFilterKey(key string) bool {
 		m.logsFilter = "slow"
 		return true
 	case "4":
-		m.logsSort = "newest"
+		m.logsFilter = "rate-limit"
 		return true
 	case "5":
+		m.logsSort = "newest"
+		return true
+	case "6":
 		m.logsSort = "slowest"
 		return true
 	default:
@@ -1712,7 +1721,7 @@ func (m model) renderLogs() string {
 		" ",
 		m.styles.hint.Render("1 latest  2 errors  3 slow"),
 		" ",
-		m.styles.hint.Render("4 newest  5 slowest"),
+		m.styles.hint.Render("5 newest  6 slowest"),
 	)
 	var sections []string
 	for _, item := range items {
@@ -1735,6 +1744,10 @@ func (m model) filteredLogs(items []domain.RequestLog) []domain.RequestLog {
 			}
 		case "slow":
 			if item.LatencyMs >= 3000 {
+				filtered = append(filtered, item)
+			}
+		case "rate-limit":
+			if item.StatusCode == 429 {
 				filtered = append(filtered, item)
 			}
 		default:
@@ -1806,6 +1819,19 @@ func (m model) renderKeyEntry(item domain.APIKey, width int) string {
 	meta := m.styles.navMuted.Render(truncate(fmt.Sprintf("model=%s  provider=%s  priority=%d", defaultText(item.ModelID, "-"), defaultText(item.ProviderID, "-"), item.Priority), width))
 	metrics := m.styles.hint.Render(truncate(fmt.Sprintf("used=%d  errors=%d  updated=%s", item.UsedCount, item.ErrorCount, keyRecentText(item.LastUsedAt)), width))
 	parts := []string{header, meta, metrics}
+	if item.DailyRequestLimit > 0 || item.DailyTokenLimit > 0 {
+		quotaText := ""
+		if item.DailyRequestLimit > 0 {
+			quotaText = fmt.Sprintf("req=%d/%d", item.DailyRequestCount, item.DailyRequestLimit)
+		}
+		if item.DailyTokenLimit > 0 {
+			if quotaText != "" {
+				quotaText += "  "
+			}
+			quotaText += fmt.Sprintf("tok=%d/%d", item.DailyTokenCount, item.DailyTokenLimit)
+		}
+		parts = append(parts, m.styles.hint.Render(quotaText))
+	}
 	if item.CooldownEnd != nil && item.CooldownEnd.After(time.Now()) {
 		parts = append(parts, m.styles.bad.Render("cooldown clears in "+time.Until(*item.CooldownEnd).Round(time.Second).String()))
 	}
