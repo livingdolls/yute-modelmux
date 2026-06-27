@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
+	"strconv"
 	"time"
 
 	"github.com/livingdolls/yute-modelmux/internal/app/service"
@@ -211,6 +213,101 @@ func modelHasActiveKey(keys []domain.APIKey, modelID string) bool {
 		return true
 	}
 	return false
+}
+
+func (s *Server) logsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	query := r.URL.Query()
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	offset, _ := strconv.Atoi(query.Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+
+	modelFilter := query.Get("model_id")
+	keyFilter := query.Get("key_id")
+	providerFilter := query.Get("provider_id")
+	groupFilter := query.Get("group_id")
+	statusCodeFilter, _ := strconv.Atoi(query.Get("status_code"))
+
+	logs := s.rs.Logs()
+	sort.SliceStable(logs, func(i, j int) bool {
+		return logs[i].CreatedAt.After(logs[j].CreatedAt)
+	})
+
+	var filtered []domain.RequestLog
+	for _, log := range logs {
+		if modelFilter != "" && log.ModelID != modelFilter {
+			continue
+		}
+		if keyFilter != "" && log.KeyID != keyFilter {
+			continue
+		}
+		if providerFilter != "" && log.ProviderID != providerFilter {
+			continue
+		}
+		if groupFilter != "" && log.GroupID != groupFilter {
+			continue
+		}
+		if statusCodeFilter > 0 && log.StatusCode != statusCodeFilter {
+			continue
+		}
+		filtered = append(filtered, log)
+	}
+
+	total := len(filtered)
+	if offset > total {
+		offset = total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	page := filtered[offset:end]
+
+	type logItem struct {
+		ID          string `json:"id"`
+		GroupID     string `json:"group_id"`
+		ModelID     string `json:"model_id"`
+		ProviderID  string `json:"provider_id"`
+		KeyID       string `json:"key_id"`
+		StatusCode  int    `json:"status_code"`
+		Error       string `json:"error,omitempty"`
+		LatencyMs   int64  `json:"latency_ms"`
+		TokenInput  int    `json:"token_input"`
+		TokenOutput int    `json:"token_output"`
+		CreatedAt   string `json:"created_at"`
+	}
+
+	items := make([]logItem, len(page))
+	for i, log := range page {
+		createdAt := ""
+		if !log.CreatedAt.IsZero() {
+			createdAt = log.CreatedAt.Format(time.RFC3339)
+		}
+		items[i] = logItem{
+			ID:          log.ID,
+			GroupID:     log.GroupID,
+			ModelID:     log.ModelID,
+			ProviderID:  log.ProviderID,
+			KeyID:       log.KeyID,
+			StatusCode:  log.StatusCode,
+			Error:       log.Error,
+			LatencyMs:   log.LatencyMs,
+			TokenInput:  log.TokenInput,
+			TokenOutput: log.TokenOutput,
+			CreatedAt:   createdAt,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"logs": items, "total": total, "limit": limit, "offset": offset})
 }
 
 func writeJSON(w http.ResponseWriter, code int, payload any) {

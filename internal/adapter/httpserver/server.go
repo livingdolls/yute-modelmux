@@ -25,6 +25,7 @@ func New(rs *service.RouterService, cfg *config.Config) *Server {
 	mux.HandleFunc("/v1/chat/completions", s.chatCompletionsHandler)
 	mux.HandleFunc("/v1/completions", s.completionsHandler)
 	mux.HandleFunc("/metrics", s.metricsHandler)
+	mux.HandleFunc("/logs", s.logsHandler)
 	s.srv = &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:      s.authMiddleware(mux),
