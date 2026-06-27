@@ -489,6 +489,15 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 		return nil, fmt.Errorf("unknown provider %s", model.ProviderID)
 	}
 
+	if apiPath == "/completions" && (provider.Type == domain.ProviderTypeAnthropic || provider.Type == domain.ProviderTypeGemini) {
+		return nil, &ProxyError{
+			HTTPStatus: http.StatusBadRequest,
+			Type:       "modelmux_unsupported",
+			Code:       "unsupported_endpoint",
+			Message:    fmt.Sprintf("provider type %q does not support /v1/completions; use /v1/chat/completions", provider.Type),
+		}
+	}
+
 	retried := map[string]int{}
 	maxRetryPerKey := s.cfg.Retry.MaxRetryPerKey
 	maxTotal := s.cfg.Retry.MaxTotalAttempts
