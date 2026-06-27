@@ -13,6 +13,7 @@ import (
 
 	"github.com/livingdolls/yute-modelmux/internal/app/service"
 	"github.com/livingdolls/yute-modelmux/internal/core/domain"
+	storagepkg "github.com/livingdolls/yute-modelmux/internal/storage"
 )
 
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -393,6 +394,22 @@ func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.M
 			b.WriteString(fmt.Sprintf("modelmux_latency_p95_ms{%s} %d\n", labels, sorted[p95Idx]))
 		}
 	}
+	for _, key := range keys {
+		keyRequests := 0
+		keyErrors := 0
+		for _, log := range logs {
+			if log.KeyID != key.ID {
+				continue
+			}
+			keyRequests++
+			if log.StatusCode >= 400 || log.Error != "" {
+				keyErrors++
+			}
+		}
+		labels := fmt.Sprintf(`model="%s",provider="%s",key="%s"`, key.ModelID, key.ProviderID, key.ID)
+		b.WriteString(fmt.Sprintf("modelmux_requests_total{%s} %d\n", labels, keyRequests))
+		b.WriteString(fmt.Sprintf("modelmux_errors_total{%s} %d\n", labels, keyErrors))
+	}
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	w.WriteHeader(http.StatusOK)
@@ -432,46 +449,20 @@ func (s *Server) logsHandler(w http.ResponseWriter, r *http.Request) {
 		offset = 0
 	}
 
-	modelFilter := query.Get("model_id")
-	keyFilter := query.Get("key_id")
-	providerFilter := query.Get("provider_id")
-	groupFilter := query.Get("group_id")
+	filter := storagepkg.LogFilter{
+		ModelID:    query.Get("model_id"),
+		KeyID:      query.Get("key_id"),
+		ProviderID: query.Get("provider_id"),
+		GroupID:    query.Get("group_id"),
+		Limit:      limit,
+		Offset:     offset,
+	}
 	statusCodeFilter, _ := strconv.Atoi(query.Get("status_code"))
-
-	logs := s.rs.Logs()
-	sort.SliceStable(logs, func(i, j int) bool {
-		return logs[i].CreatedAt.After(logs[j].CreatedAt)
-	})
-
-	var filtered []domain.RequestLog
-	for _, log := range logs {
-		if modelFilter != "" && log.ModelID != modelFilter {
-			continue
-		}
-		if keyFilter != "" && log.KeyID != keyFilter {
-			continue
-		}
-		if providerFilter != "" && log.ProviderID != providerFilter {
-			continue
-		}
-		if groupFilter != "" && log.GroupID != groupFilter {
-			continue
-		}
-		if statusCodeFilter > 0 && log.StatusCode != statusCodeFilter {
-			continue
-		}
-		filtered = append(filtered, log)
+	if statusCodeFilter > 0 {
+		filter.StatusCode = statusCodeFilter
 	}
 
-	total := len(filtered)
-	if offset > total {
-		offset = total
-	}
-	end := offset + limit
-	if end > total {
-		end = total
-	}
-	page := filtered[offset:end]
+	page, total := s.rs.QueryLogs(filter)
 
 	type logItem struct {
 		ID          string `json:"id"`

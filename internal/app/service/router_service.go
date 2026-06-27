@@ -320,6 +320,75 @@ func (s *RouterService) Logs() []domain.RequestLog {
 	return append([]domain.RequestLog(nil), s.logs...)
 }
 
+func (s *RouterService) QueryLogs(filter storage.LogFilter) ([]domain.RequestLog, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.store != nil {
+		records, total, err := s.store.QueryRequestLogs(filter)
+		if err == nil {
+			logs := make([]domain.RequestLog, len(records))
+			for i, r := range records {
+				createdAt := time.Now()
+				if r.CreatedAt != "" {
+					if t, err := time.Parse(time.RFC3339, r.CreatedAt); err == nil {
+						createdAt = t
+					}
+				}
+				logs[i] = domain.RequestLog{
+					ID:          r.ID,
+					GroupID:     r.GroupID,
+					ModelID:     r.ModelID,
+					ProviderID:  r.ProviderID,
+					KeyID:       r.KeyID,
+					StatusCode:  r.StatusCode,
+					Error:       r.Error,
+					LatencyMs:   r.LatencyMs,
+					TokenInput:  r.TokenInput,
+					TokenOutput: r.TokenOutput,
+					CreatedAt:   createdAt,
+				}
+			}
+			return logs, total
+		}
+	}
+
+	var filtered []domain.RequestLog
+	for _, log := range s.logs {
+		if filter.ModelID != "" && log.ModelID != filter.ModelID {
+			continue
+		}
+		if filter.KeyID != "" && log.KeyID != filter.KeyID {
+			continue
+		}
+		if filter.ProviderID != "" && log.ProviderID != filter.ProviderID {
+			continue
+		}
+		if filter.GroupID != "" && log.GroupID != filter.GroupID {
+			continue
+		}
+		if filter.StatusCode > 0 && log.StatusCode != filter.StatusCode {
+			continue
+		}
+		filtered = append(filtered, log)
+	}
+
+	sort.SliceStable(filtered, func(i, j int) bool {
+		return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
+	})
+
+	total := len(filtered)
+	offset := filter.Offset
+	if offset > total {
+		offset = total
+	}
+	end := offset + filter.Limit
+	if end > total {
+		end = total
+	}
+	return filtered[offset:end], total
+}
+
 func (s *RouterService) SelectKey(ctx context.Context, modelID string) (*domain.APIKey, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

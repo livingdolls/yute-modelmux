@@ -41,11 +41,22 @@ type RequestLogRecord struct {
 	CreatedAt   string
 }
 
+type LogFilter struct {
+	ModelID    string
+	KeyID      string
+	ProviderID string
+	GroupID    string
+	StatusCode int
+	Limit      int
+	Offset     int
+}
+
 type Storage interface {
 	SaveKeyRuntime(record KeyRuntimeRecord) error
 	LoadKeyRuntime() ([]KeyRuntimeRecord, error)
 	SaveRequestLog(record RequestLogRecord) error
 	LoadRequestLogs() ([]RequestLogRecord, error)
+	QueryRequestLogs(filter LogFilter) ([]RequestLogRecord, int, error)
 	Close() error
 }
 
@@ -200,6 +211,65 @@ func (s *sqliteStore) SaveRequestLog(record RequestLogRecord) error {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, record.ID, record.GroupID, record.ModelID, record.ProviderID, record.KeyID, record.StatusCode, record.Error, record.LatencyMs, record.TokenInput, record.TokenOutput, record.CreatedAt)
 	return err
+}
+
+func (s *sqliteStore) QueryRequestLogs(filter LogFilter) ([]RequestLogRecord, int, error) {
+	where := "WHERE 1=1"
+	args := []any{}
+	if filter.ModelID != "" {
+		where += " AND model_id = ?"
+		args = append(args, filter.ModelID)
+	}
+	if filter.KeyID != "" {
+		where += " AND key_id = ?"
+		args = append(args, filter.KeyID)
+	}
+	if filter.ProviderID != "" {
+		where += " AND provider_id = ?"
+		args = append(args, filter.ProviderID)
+	}
+	if filter.GroupID != "" {
+		where += " AND group_id = ?"
+		args = append(args, filter.GroupID)
+	}
+	if filter.StatusCode > 0 {
+		where += " AND status_code = ?"
+		args = append(args, filter.StatusCode)
+	}
+
+	var total int
+	countQuery := "SELECT COUNT(*) FROM request_logs " + where
+	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	limit := filter.Limit
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	queryArgs := append(args, limit, offset)
+	query := "SELECT id, group_id, model_id, provider_id, key_id, status_code, error, latency_ms, token_input, token_output, created_at FROM request_logs " + where + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+
+	rows, err := s.db.Query(query, queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var records []RequestLogRecord
+	for rows.Next() {
+		var r RequestLogRecord
+		if err := rows.Scan(&r.ID, &r.GroupID, &r.ModelID, &r.ProviderID, &r.KeyID, &r.StatusCode, &r.Error, &r.LatencyMs, &r.TokenInput, &r.TokenOutput, &r.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		records = append(records, r)
+	}
+	return records, total, rows.Err()
 }
 
 func (s *sqliteStore) LoadRequestLogs() ([]RequestLogRecord, error) {
