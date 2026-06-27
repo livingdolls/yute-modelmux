@@ -74,14 +74,16 @@ type ModelConfig struct {
 }
 
 type KeyConfig struct {
-	ID         string `yaml:"id"`
-	ProviderID string `yaml:"provider_id"`
-	ModelID    string `yaml:"model_id"`
-	Name       string `yaml:"name"`
-	Value      string `yaml:"value"`
-	ValueEnv   string `yaml:"value_env"`
-	Status     string `yaml:"status"`
-	Priority   int    `yaml:"priority"`
+	ID                 string `yaml:"id"`
+	ProviderID         string `yaml:"provider_id"`
+	ModelID            string `yaml:"model_id"`
+	Name               string `yaml:"name"`
+	Value              string `yaml:"value"`
+	ValueEnv           string `yaml:"value_env"`
+	Status             string `yaml:"status"`
+	Priority           int    `yaml:"priority"`
+	DailyRequestLimit  int    `yaml:"daily_request_limit"`
+	DailyTokenLimit    int    `yaml:"daily_token_limit"`
 }
 
 type ModelGroupConfig struct {

@@ -13,18 +13,23 @@ const (
 )
 
 type APIKey struct {
-	ID          string
-	ProviderID  string
-	ModelID     string
-	Name        string
-	Value       string
-	ValueEnv    string
-	Status      APIKeyStatus
-	Priority    int
-	ErrorCount  int
-	UsedCount   int
-	LastUsedAt  *time.Time
-	CooldownEnd *time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID                string
+	ProviderID        string
+	ModelID           string
+	Name              string
+	Value             string
+	ValueEnv          string
+	Status            APIKeyStatus
+	Priority          int
+	ErrorCount        int
+	UsedCount         int
+	LastUsedAt        *time.Time
+	CooldownEnd       *time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	DailyRequestLimit int
+	DailyTokenLimit   int
+	DailyRequestCount int
+	DailyTokenCount   int
+	DailyDate         string
 }

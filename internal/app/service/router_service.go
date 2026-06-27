@@ -187,13 +187,28 @@ func newRouterService(cfg *config.Config, store storage.Storage) *RouterService 
 		if value == "" && k.ValueEnv != "" {
 			value = os.Getenv(k.ValueEnv)
 		}
-		key := domain.APIKey{ID: k.ID, ProviderID: k.ProviderID, ModelID: k.ModelID, Name: k.Name, Value: value, ValueEnv: k.ValueEnv, Status: status, Priority: k.Priority, CreatedAt: now, UpdatedAt: now}
+		key := domain.APIKey{
+			ID:                k.ID,
+			ProviderID:        k.ProviderID,
+			ModelID:           k.ModelID,
+			Name:              k.Name,
+			Value:             value,
+			ValueEnv:          k.ValueEnv,
+			Status:            status,
+			Priority:          k.Priority,
+			DailyRequestLimit: k.DailyRequestLimit,
+			DailyTokenLimit:   k.DailyTokenLimit,
+			CreatedAt:         now, UpdatedAt: now,
+		}
 		if rt, ok := runtimeMap[k.ID]; ok {
 			if rt.Status != "" {
 				key.Status = domain.APIKeyStatus(rt.Status)
 			}
 			key.UsedCount = rt.UsedCount
 			key.ErrorCount = rt.ErrorCount
+			key.DailyRequestCount = rt.DailyRequestCount
+			key.DailyTokenCount = rt.DailyTokenCount
+			key.DailyDate = rt.DailyDate
 			if rt.CooldownEnd != "" {
 				cooldownEnd, err := time.Parse(time.RFC3339, rt.CooldownEnd)
 				if err == nil {
@@ -454,17 +469,23 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 		s.keys[i].UpdatedAt = now
 		s.keys[i].UsedCount++
 		s.keys[i].LastUsedAt = &now
+		s.checkDailyResetLocked(i)
 		log := domain.RequestLog{ID: fmt.Sprintf("log-%d", now.UnixNano()), GroupID: result.GroupID, ModelID: result.ModelID, ProviderID: result.ProviderID, KeyID: keyID, StatusCode: result.StatusCode, Error: result.Error, LatencyMs: result.LatencyMs, CreatedAt: now}
 		if result.Success {
 			s.keys[i].ErrorCount = 0
-			s.keys[i].Status = domain.KeyStatusActive
+			if s.keys[i].Status != domain.KeyStatusLimited {
+				s.keys[i].Status = domain.KeyStatusActive
+			}
 			s.keys[i].CooldownEnd = nil
+			s.applyDailyLimitsLocked(i)
 			s.appendLog(log)
 			s.saveKeyRuntimeLocked(s.keys[i])
 			return nil
 		}
 		s.keys[i].ErrorCount++
-		s.keys[i].Status = domain.KeyStatusActive
+		if s.keys[i].Status != domain.KeyStatusLimited {
+			s.keys[i].Status = domain.KeyStatusActive
+		}
 		if result.StatusCode == http.StatusUnauthorized || result.StatusCode == http.StatusForbidden {
 			s.keys[i].Status = domain.KeyStatusInvalid
 			s.keys[i].CooldownEnd = nil
@@ -493,12 +514,48 @@ func (s *RouterService) saveKeyRuntimeLocked(k domain.APIKey) {
 		cooldownEnd = k.CooldownEnd.Format(time.RFC3339)
 	}
 	_ = s.store.SaveKeyRuntime(storage.KeyRuntimeRecord{
-		KeyID:       k.ID,
-		Status:      string(k.Status),
-		UsedCount:   k.UsedCount,
-		ErrorCount:  k.ErrorCount,
-		CooldownEnd: cooldownEnd,
+		KeyID:             k.ID,
+		Status:            string(k.Status),
+		UsedCount:         k.UsedCount,
+		ErrorCount:        k.ErrorCount,
+		CooldownEnd:       cooldownEnd,
+		DailyRequestCount: k.DailyRequestCount,
+		DailyTokenCount:   k.DailyTokenCount,
+		DailyDate:         k.DailyDate,
+		DailyRequestLimit: k.DailyRequestLimit,
+		DailyTokenLimit:   k.DailyTokenLimit,
 	})
+}
+
+func (s *RouterService) checkDailyResetLocked(idx int) {
+	k := &s.keys[idx]
+	today := time.Now().Format("2006-01-02")
+	if k.DailyDate != today {
+		k.DailyRequestCount = 0
+		k.DailyTokenCount = 0
+		k.DailyDate = today
+		if k.Status == domain.KeyStatusLimited {
+			k.Status = domain.KeyStatusActive
+		}
+	}
+}
+
+func (s *RouterService) applyDailyLimitsLocked(idx int) {
+	k := &s.keys[idx]
+	if k.Status == domain.KeyStatusLimited {
+		return
+	}
+	k.DailyRequestCount++
+	limited := false
+	if k.DailyRequestLimit > 0 && k.DailyRequestCount >= k.DailyRequestLimit {
+		limited = true
+	}
+	if k.DailyTokenLimit > 0 && k.DailyTokenCount >= k.DailyTokenLimit {
+		limited = true
+	}
+	if limited {
+		k.Status = domain.KeyStatusLimited
+	}
 }
 
 func (s *RouterService) FinalizeStreamResult(ctx context.Context, copyErr error) {
@@ -719,7 +776,7 @@ func (s *RouterService) availableKeys(modelID string) []domain.APIKey {
 		if k.ModelID != modelID {
 			continue
 		}
-		if k.Status == domain.KeyStatusDisabled || k.Status == domain.KeyStatusInvalid {
+		if k.Status == domain.KeyStatusDisabled || k.Status == domain.KeyStatusInvalid || k.Status == domain.KeyStatusLimited {
 			continue
 		}
 		if k.Status == domain.KeyStatusCooldown && k.CooldownEnd != nil && k.CooldownEnd.After(now) {
