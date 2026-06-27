@@ -1,11 +1,14 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,6 +16,8 @@ import (
 
 	"github.com/livingdolls/yute-modelmux/internal/config"
 	"github.com/livingdolls/yute-modelmux/internal/core/domain"
+	"github.com/livingdolls/yute-modelmux/internal/secret"
+	"github.com/livingdolls/yute-modelmux/internal/storage"
 	"github.com/livingdolls/yute-modelmux/internal/core/port/inbound"
 )
 
@@ -480,6 +485,153 @@ func TestKeyUnknownKeyReturnsError(t *testing.T) {
 
 	if err := rs.TestKey(context.Background(), "nonexistent-key"); err == nil {
 		t.Fatal("TestKey should fail for unknown key")
+	}
+}
+
+func TestKeyBecomesLimitedOnDailyRequestLimit(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`))
+	}))
+	defer ts.Close()
+
+	cfg := singleKeyRetryConfig(ts.URL + "/v1")
+	cfg.Keys[0].DailyRequestLimit = 3
+	rs, _ := NewRouterService(cfg)
+
+	for i := 0; i < 4; i++ {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/chat/completions", bytes.NewReader([]byte(`{"model":"test-model","messages":[{"role":"user","content":"hi"}]}`)))
+		resp, err := rs.HandleChatCompletion(context.Background(), req)
+		if err != nil {
+			if strings.Contains(err.Error(), "currently limited") {
+				keys := rs.ListKeys()
+				if len(keys) == 1 && keys[0].Status == domain.KeyStatusLimited {
+					return
+				}
+				t.Fatalf("key should be limited but status is %s", keys[0].Status)
+			}
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+	}
+	t.Fatalf("expected key to become limited after %d requests", cfg.Keys[0].DailyRequestLimit)
+}
+
+func TestLimitedKeyNotSelected(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	cfg.Keys = append(cfg.Keys, config.KeyConfig{
+		ID: "key-2", ProviderID: "mimo", ModelID: "mimo-v2.5-pro",
+		Value: "key2", Status: "active", Priority: 2,
+	})
+	rs, _ := NewRouterService(cfg)
+
+	keys := rs.ListKeys()
+	for i := range keys {
+		if keys[i].ID == "key-2" {
+			keys[i].Status = domain.KeyStatusLimited
+			break
+		}
+	}
+
+	key, err := rs.SelectKey(context.Background(), "mimo-v2.5-pro")
+	if err != nil {
+		t.Fatalf("SelectKey should not return error when limited key exists: %v", err)
+	}
+	if key.ID == "key-2" {
+		t.Fatal("SelectKey should not return limited key")
+	}
+	if key.ID != "mimo-key-1" {
+		t.Fatalf("expected mimo-key-1, got %s", key.ID)
+	}
+}
+
+func TestConfigStoragePathTildeExpansion(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		t.Skip("no home directory")
+	}
+	cfg := config.Default()
+	cfg.Storage.Type = "sqlite"
+	cfg.Storage.Path = "~/.local/share/modelmux/modelmux.db"
+
+	store, err := storage.New(expandHomeForTest(cfg.Storage.Path))
+	if err != nil {
+		t.Fatalf("storage.New should succeed with tilde path: %v", err)
+	}
+	store.Close()
+}
+
+func expandHomeForTest(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
+func TestSecretResolutionPriority(t *testing.T) {
+	masterKey := "test-master-key-for-secret-resolution"
+	t.Setenv("MODELMUX_MASTER_KEY", masterKey)
+	t.Setenv("TEST_ENV_VAL", "env-value")
+
+	dir := t.TempDir()
+	storePath := filepath.Join(dir, "secrets.enc")
+	secStore, err := secret.NewStore(storePath)
+	if err != nil {
+		t.Fatalf("failed to create secret store: %v", err)
+	}
+	secStore.Set("test-ref", "secret-value")
+
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	cfg.Keys = []config.KeyConfig{
+		{
+			ID: "key-all-three", ProviderID: "mimo", ModelID: "mimo-v2.5-pro",
+			SecretRef: "test-ref", ValueEnv: "TEST_ENV_VAL", Value: "plain-value",
+			Status: "active", Priority: 1,
+		},
+	}
+
+	rs, err := NewRouterServiceWithSecret(cfg, nil, secStore)
+	if err != nil {
+		t.Fatalf("NewRouterServiceWithSecret failed: %v", err)
+	}
+	keys := rs.ListKeys()
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+	if keys[0].Value != "secret-value" {
+		t.Fatalf("secret_ref should have highest priority, got value=%q", keys[0].Value)
+	}
+}
+
+func TestSecretStoreMissingKeyError(t *testing.T) {
+	masterKey := "test-master-key-missing"
+	t.Setenv("MODELMUX_MASTER_KEY", masterKey)
+
+	dir := t.TempDir()
+	storePath := filepath.Join(dir, "secrets.enc")
+	secStore, err := secret.NewStore(storePath)
+	if err != nil {
+		t.Fatalf("failed to create secret store: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	cfg.Keys = []config.KeyConfig{{
+		ID: "key-only-secret", ProviderID: "mimo", ModelID: "mimo-v2.5-pro",
+		SecretRef: "non-existent-ref",
+		Status: "active", Priority: 1,
+	}}
+
+	_, err = NewRouterServiceWithSecret(cfg, nil, secStore)
+	if err == nil {
+		t.Fatal("expected error for missing secret_ref")
 	}
 }
 
