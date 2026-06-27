@@ -221,6 +221,16 @@ func newRouterService(cfg *config.Config, store storage.Storage, secretStore *se
 			key.DailyRequestCount = rt.DailyRequestCount
 			key.DailyTokenCount = rt.DailyTokenCount
 			key.DailyDate = rt.DailyDate
+			if rt.LastUsedAt != "" {
+				if t, err := time.Parse(time.RFC3339, rt.LastUsedAt); err == nil {
+					key.LastUsedAt = &t
+				}
+			}
+			if rt.UpdatedAt != "" {
+				if t, err := time.Parse(time.RFC3339, rt.UpdatedAt); err == nil {
+					key.UpdatedAt = t
+				}
+			}
 			if rt.CooldownEnd != "" {
 				cooldownEnd, err := time.Parse(time.RFC3339, rt.CooldownEnd)
 				if err == nil {
@@ -229,6 +239,19 @@ func newRouterService(cfg *config.Config, store storage.Storage, secretStore *se
 			}
 		}
 		rs.keys = append(rs.keys, key)
+	}
+
+	todayStr := time.Now().Format("2006-01-02")
+	for i := range rs.keys {
+		if rs.keys[i].DailyDate != todayStr {
+			rs.keys[i].DailyRequestCount = 0
+			rs.keys[i].DailyTokenCount = 0
+			rs.keys[i].DailyDate = todayStr
+			if rs.keys[i].Status == domain.KeyStatusLimited {
+				rs.keys[i].Status = domain.KeyStatusActive
+			}
+			rs.saveKeyRuntimeLocked(rs.keys[i])
+		}
 	}
 
 	if store != nil {
@@ -526,12 +549,19 @@ func (s *RouterService) saveKeyRuntimeLocked(k domain.APIKey) {
 	if k.CooldownEnd != nil {
 		cooldownEnd = k.CooldownEnd.Format(time.RFC3339)
 	}
+	lastUsedAt := ""
+	if k.LastUsedAt != nil {
+		lastUsedAt = k.LastUsedAt.Format(time.RFC3339)
+	}
+	updatedAt := k.UpdatedAt.Format(time.RFC3339)
 	_ = s.store.SaveKeyRuntime(storage.KeyRuntimeRecord{
 		KeyID:             k.ID,
 		Status:            string(k.Status),
 		UsedCount:         k.UsedCount,
 		ErrorCount:        k.ErrorCount,
 		CooldownEnd:       cooldownEnd,
+		LastUsedAt:        lastUsedAt,
+		UpdatedAt:         updatedAt,
 		DailyRequestCount: k.DailyRequestCount,
 		DailyTokenCount:   k.DailyTokenCount,
 		DailyDate:         k.DailyDate,
@@ -784,14 +814,27 @@ func (s *RouterService) availableGroupMembers(group domain.ModelGroup, attempted
 }
 
 func (s *RouterService) availableKeys(modelID string) []domain.APIKey {
+	todayStr := time.Now().Format("2006-01-02")
 	now := time.Now()
 	var out []domain.APIKey
-	for _, k := range s.keys {
+	for i, k := range s.keys {
 		if k.ModelID != modelID {
 			continue
 		}
-		if k.Status == domain.KeyStatusDisabled || k.Status == domain.KeyStatusInvalid || k.Status == domain.KeyStatusLimited {
+		if k.Status == domain.KeyStatusDisabled || k.Status == domain.KeyStatusInvalid {
 			continue
+		}
+		if k.Status == domain.KeyStatusLimited {
+			if k.DailyDate != todayStr {
+				s.keys[i].Status = domain.KeyStatusActive
+				s.keys[i].DailyRequestCount = 0
+				s.keys[i].DailyTokenCount = 0
+				s.keys[i].DailyDate = todayStr
+				s.saveKeyRuntimeLocked(s.keys[i])
+				k = s.keys[i]
+			} else {
+				continue
+			}
 		}
 		if k.Status == domain.KeyStatusCooldown && k.CooldownEnd != nil && k.CooldownEnd.After(now) {
 			continue

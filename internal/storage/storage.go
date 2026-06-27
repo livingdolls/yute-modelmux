@@ -15,6 +15,8 @@ type KeyRuntimeRecord struct {
 	UsedCount         int
 	ErrorCount        int
 	CooldownEnd       string
+	LastUsedAt        string
+	UpdatedAt         string
 	TokenInput        int
 	TokenOutput       int
 	DailyRequestCount int
@@ -129,6 +131,8 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 
+	db.Exec("ALTER TABLE keys_runtime ADD COLUMN last_used_at TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE keys_runtime ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE keys_runtime ADD COLUMN daily_request_count INTEGER NOT NULL DEFAULT 0")
 	db.Exec("ALTER TABLE keys_runtime ADD COLUMN daily_token_count INTEGER NOT NULL DEFAULT 0")
 	db.Exec("ALTER TABLE keys_runtime ADD COLUMN daily_date TEXT NOT NULL DEFAULT ''")
@@ -140,13 +144,15 @@ func migrate(db *sql.DB) error {
 
 func (s *sqliteStore) SaveKeyRuntime(record KeyRuntimeRecord) error {
 	_, err := s.db.Exec(`
-		INSERT INTO keys_runtime (key_id, status, used_count, error_count, cooldown_end, token_input, token_output, daily_request_count, daily_token_count, daily_date, daily_request_limit, daily_token_limit)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO keys_runtime (key_id, status, used_count, error_count, cooldown_end, last_used_at, updated_at, token_input, token_output, daily_request_count, daily_token_count, daily_date, daily_request_limit, daily_token_limit)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(key_id) DO UPDATE SET
 			status = excluded.status,
 			used_count = excluded.used_count,
 			error_count = excluded.error_count,
 			cooldown_end = excluded.cooldown_end,
+			last_used_at = excluded.last_used_at,
+			updated_at = excluded.updated_at,
 			token_input = excluded.token_input,
 			token_output = excluded.token_output,
 			daily_request_count = excluded.daily_request_count,
@@ -154,12 +160,12 @@ func (s *sqliteStore) SaveKeyRuntime(record KeyRuntimeRecord) error {
 			daily_date = excluded.daily_date,
 			daily_request_limit = excluded.daily_request_limit,
 			daily_token_limit = excluded.daily_token_limit
-	`, record.KeyID, record.Status, record.UsedCount, record.ErrorCount, record.CooldownEnd, record.TokenInput, record.TokenOutput, record.DailyRequestCount, record.DailyTokenCount, record.DailyDate, record.DailyRequestLimit, record.DailyTokenLimit)
+	`, record.KeyID, record.Status, record.UsedCount, record.ErrorCount, record.CooldownEnd, record.LastUsedAt, record.UpdatedAt, record.TokenInput, record.TokenOutput, record.DailyRequestCount, record.DailyTokenCount, record.DailyDate, record.DailyRequestLimit, record.DailyTokenLimit)
 	return err
 }
 
 func (s *sqliteStore) LoadKeyRuntime() ([]KeyRuntimeRecord, error) {
-	rows, err := s.db.Query("SELECT key_id, status, used_count, error_count, cooldown_end, token_input, token_output, COALESCE(daily_request_count,0), COALESCE(daily_token_count,0), COALESCE(daily_date,''), COALESCE(daily_request_limit,0), COALESCE(daily_token_limit,0) FROM keys_runtime")
+	rows, err := s.db.Query("SELECT key_id, status, used_count, error_count, cooldown_end, COALESCE(last_used_at,''), COALESCE(updated_at,''), token_input, token_output, COALESCE(daily_request_count,0), COALESCE(daily_token_count,0), COALESCE(daily_date,''), COALESCE(daily_request_limit,0), COALESCE(daily_token_limit,0) FROM keys_runtime")
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +174,7 @@ func (s *sqliteStore) LoadKeyRuntime() ([]KeyRuntimeRecord, error) {
 	var records []KeyRuntimeRecord
 	for rows.Next() {
 		var r KeyRuntimeRecord
-		if err := rows.Scan(&r.KeyID, &r.Status, &r.UsedCount, &r.ErrorCount, &r.CooldownEnd, &r.TokenInput, &r.TokenOutput, &r.DailyRequestCount, &r.DailyTokenCount, &r.DailyDate, &r.DailyRequestLimit, &r.DailyTokenLimit); err != nil {
+		if err := rows.Scan(&r.KeyID, &r.Status, &r.UsedCount, &r.ErrorCount, &r.CooldownEnd, &r.LastUsedAt, &r.UpdatedAt, &r.TokenInput, &r.TokenOutput, &r.DailyRequestCount, &r.DailyTokenCount, &r.DailyDate, &r.DailyRequestLimit, &r.DailyTokenLimit); err != nil {
 			return nil, err
 		}
 		records = append(records, r)

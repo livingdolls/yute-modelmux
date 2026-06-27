@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -726,6 +727,16 @@ func createSecretStore(cfg *config.Config) (*secret.Store, error) {
 	return secret.NewStore(secretPath(cfg))
 }
 
+func expandHome(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
 func createStorage(cfg *config.Config) (storage.Storage, error) {
 	if cfg.Storage.Type != "sqlite" {
 		return nil, nil
@@ -734,7 +745,7 @@ func createStorage(cfg *config.Config) (storage.Storage, error) {
 	if path == "" {
 		path = config.Default().Storage.Path
 	}
-	return storage.New(path)
+	return storage.New(expandHome(path))
 }
 
 func newRouterServiceWithSecret(cfg *config.Config, store storage.Storage, secStore *secret.Store) *service.RouterService {
