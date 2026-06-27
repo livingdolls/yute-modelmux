@@ -32,9 +32,11 @@ func (c *GeminiClient) Forward(ctx context.Context, provider domain.Provider, mo
 
 	baseURL := strings.TrimRight(provider.BaseURL, "/")
 	endpoint := fmt.Sprintf("%s/v1beta/models/%s:%s", baseURL, model.ModelName, geminiAction(isStream))
-	endpoint = endpoint + "?alt=sse&key=" + apiKey.Value
+	if isStream {
+		endpoint = endpoint + "?alt=sse"
+	}
 	if !isStream {
-		endpoint = fmt.Sprintf("%s/v1beta/models/%s:generateContent?key=%s", baseURL, model.ModelName, apiKey.Value)
+		endpoint = fmt.Sprintf("%s/v1beta/models/%s:generateContent", baseURL, model.ModelName)
 	}
 
 	upstreamBody, err := json.Marshal(geminiReq)
@@ -47,6 +49,7 @@ func (c *GeminiClient) Forward(ctx context.Context, provider domain.Provider, mo
 		return nil, err
 	}
 	upstream.Header.Set("Content-Type", "application/json")
+	upstream.Header.Set("x-goog-api-key", apiKey.Value)
 
 	client := newForwardHTTPClient(provider.TimeoutSeconds, isStream)
 	resp, err := client.Do(upstream)
@@ -68,11 +71,12 @@ func (c *GeminiClient) Forward(ctx context.Context, provider domain.Provider, mo
 
 func (c *GeminiClient) TestKey(ctx context.Context, provider domain.Provider, apiKey domain.APIKey) error {
 	baseURL := strings.TrimRight(provider.BaseURL, "/")
-	endpoint := fmt.Sprintf("%s/v1beta/models?key=%s", baseURL, apiKey.Value)
+	endpoint := fmt.Sprintf("%s/v1beta/models", baseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return err
 	}
+	req.Header.Set("x-goog-api-key", apiKey.Value)
 	client := &http.Client{Timeout: time.Duration(provider.TimeoutSeconds) * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {

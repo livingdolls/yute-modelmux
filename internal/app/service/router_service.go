@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -465,6 +466,9 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 		startedAt := time.Now()
 		client := s.clientReg.Get(provider.Type)
 		resp, err := client.Forward(ctx, provider, model, *key, clonedReq, apiPath)
+		if err != nil && key.Value != "" {
+			err = fmt.Errorf("provider error: %s", redactSecret(err.Error(), key.Value))
+		}
 		result := classifyResult(resp, err, s.cfg)
 		result.ModelID = model.ID
 		result.GroupID = groupID
@@ -939,6 +943,13 @@ func classifyResult(resp *http.Response, err error, cfg *config.Config) inbound.
 		result.Error = resp.Status
 	}
 	return result
+}
+
+func redactSecret(text, secret string) string {
+	if secret == "" || len(secret) < 4 {
+		return text
+	}
+	return strings.ReplaceAll(text, secret, "***REDACTED***")
 }
 
 func parseTokenUsage(body []byte) (int, int) {
