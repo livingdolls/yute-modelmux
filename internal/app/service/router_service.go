@@ -462,6 +462,15 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 		result.ProviderID = provider.ID
 		result.LatencyMs = time.Since(startedAt).Milliseconds()
 
+		if result.Success && !isStreamRequest(bodyBytes) && resp != nil {
+			respBodyBytes, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if readErr == nil {
+				result.TokenInput, result.TokenOutput = parseTokenUsage(respBodyBytes)
+				resp.Body = io.NopCloser(bytes.NewReader(respBodyBytes))
+			}
+		}
+
 		if isStreamRequest(bodyBytes) && result.Success {
 			ctx = SetStreamResultContext(ctx, streamResultInfo{
 				KeyID:      key.ID,
@@ -506,14 +515,14 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 		s.keys[i].UsedCount++
 		s.keys[i].LastUsedAt = &now
 		s.checkDailyResetLocked(i)
-		log := domain.RequestLog{ID: fmt.Sprintf("log-%d", now.UnixNano()), GroupID: result.GroupID, ModelID: result.ModelID, ProviderID: result.ProviderID, KeyID: keyID, StatusCode: result.StatusCode, Error: result.Error, LatencyMs: result.LatencyMs, CreatedAt: now}
+		log := domain.RequestLog{ID: fmt.Sprintf("log-%d", now.UnixNano()), GroupID: result.GroupID, ModelID: result.ModelID, ProviderID: result.ProviderID, KeyID: keyID, StatusCode: result.StatusCode, Error: result.Error, LatencyMs: result.LatencyMs, TokenInput: result.TokenInput, TokenOutput: result.TokenOutput, CreatedAt: now}
 		if result.Success {
 			s.keys[i].ErrorCount = 0
 			if s.keys[i].Status != domain.KeyStatusLimited {
 				s.keys[i].Status = domain.KeyStatusActive
 			}
 			s.keys[i].CooldownEnd = nil
-			s.applyDailyLimitsLocked(i)
+			s.applyDailyLimitsLocked(i, result.TokenInput, result.TokenOutput)
 			s.appendLog(log)
 			s.saveKeyRuntimeLocked(s.keys[i])
 			return nil
@@ -583,12 +592,13 @@ func (s *RouterService) checkDailyResetLocked(idx int) {
 	}
 }
 
-func (s *RouterService) applyDailyLimitsLocked(idx int) {
+func (s *RouterService) applyDailyLimitsLocked(idx int, tokenInput, tokenOutput int) {
 	k := &s.keys[idx]
 	if k.Status == domain.KeyStatusLimited {
 		return
 	}
 	k.DailyRequestCount++
+	k.DailyTokenCount += tokenOutput
 	limited := false
 	if k.DailyRequestLimit > 0 && k.DailyRequestCount >= k.DailyRequestLimit {
 		limited = true
@@ -920,6 +930,19 @@ func classifyResult(resp *http.Response, err error, cfg *config.Config) inbound.
 		result.Error = resp.Status
 	}
 	return result
+}
+
+func parseTokenUsage(body []byte) (int, int) {
+	var payload struct {
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return 0, 0
+	}
+	return payload.Usage.PromptTokens, payload.Usage.CompletionTokens
 }
 
 func isUnavailable(err error) bool {

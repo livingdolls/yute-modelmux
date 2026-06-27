@@ -30,4 +30,6 @@ type KeyResult struct {
 	Error           string
 	LatencyMs       int64
 	CooldownSeconds int
+	TokenInput      int
+	TokenOutput     int
 }
