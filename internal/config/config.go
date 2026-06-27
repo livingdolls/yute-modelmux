@@ -173,7 +173,7 @@ func (c *Config) ResolveSecrets() error {
 		return fmt.Errorf("server auth requires environment variable %q which is not set", c.Server.AuthTokenEnv)
 	}
 	for i := range c.Keys {
-		if c.Keys[i].Value != "" || c.Keys[i].ValueEnv == "" {
+		if c.Keys[i].Value != "" || c.Keys[i].SecretRef != "" || c.Keys[i].ValueEnv == "" {
 			continue
 		}
 		if os.Getenv(c.Keys[i].ValueEnv) == "" {

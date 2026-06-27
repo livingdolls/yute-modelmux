@@ -641,7 +641,10 @@ func newRootCommand() *cobra.Command {
 				defer store.Close()
 			}
 
-			secStore, _ := createSecretStore(cfg)
+			secStore, err := createSecretStore(cfg)
+			if err != nil {
+				return err
+			}
 
 			router, rerr := newRouterServiceWithSecret(cfg, store, secStore)
 			if rerr != nil {
@@ -733,6 +736,7 @@ func secretPath(cfg *config.Config) string {
 	if path == "" {
 		path = config.Default().Storage.Path
 	}
+	path = expandHome(path)
 	dir := strings.TrimSuffix(path, "modelmux.db")
 	if dir == path {
 		dir = path + ".d"
