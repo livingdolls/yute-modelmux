@@ -244,8 +244,11 @@ func (s *sqliteStore) QueryRequestLogs(filter LogFilter) ([]RequestLogRecord, in
 	}
 
 	limit := filter.Limit
-	if limit <= 0 || limit > 1000 {
+	if limit <= 0 {
 		limit = 100
+	}
+	if limit > 50000 {
+		limit = 50000
 	}
 	offset := filter.Offset
 	if offset < 0 {
