@@ -18,6 +18,7 @@ import (
 	"github.com/livingdolls/yute-modelmux/internal/config"
 	"github.com/livingdolls/yute-modelmux/internal/core/domain"
 	"github.com/livingdolls/yute-modelmux/internal/core/port/inbound"
+	"github.com/livingdolls/yute-modelmux/internal/storage"
 )
 
 type ctxKey int
@@ -104,6 +105,7 @@ func GroupUnavailableError(groupID string) *ProxyError {
 type RouterService struct {
 	cfg          *config.Config
 	client       *providerclient.OpenAICompatibleClient
+	store        storage.Storage
 	mu           sync.Mutex
 	rrIndex      map[string]int
 	groupRRIndex map[string]int
@@ -115,9 +117,18 @@ type RouterService struct {
 }
 
 func NewRouterService(cfg *config.Config) *RouterService {
+	return newRouterService(cfg, nil)
+}
+
+func NewRouterServiceWithStorage(cfg *config.Config, store storage.Storage) *RouterService {
+	return newRouterService(cfg, store)
+}
+
+func newRouterService(cfg *config.Config, store storage.Storage) *RouterService {
 	rs := &RouterService{
 		cfg:          cfg,
 		client:       providerclient.New(),
+		store:        store,
 		rrIndex:      map[string]int{},
 		groupRRIndex: map[string]int{},
 	}
@@ -156,6 +167,17 @@ func NewRouterService(cfg *config.Config) *RouterService {
 		rs.groups = append(rs.groups, group)
 	}
 	now := time.Now()
+
+	runtimeMap := map[string]storage.KeyRuntimeRecord{}
+	if store != nil {
+		records, err := store.LoadKeyRuntime()
+		if err == nil {
+			for _, r := range records {
+				runtimeMap[r.KeyID] = r
+			}
+		}
+	}
+
 	for _, k := range cfg.Keys {
 		status := domain.APIKeyStatus(k.Status)
 		if status == "" {
@@ -165,7 +187,21 @@ func NewRouterService(cfg *config.Config) *RouterService {
 		if value == "" && k.ValueEnv != "" {
 			value = os.Getenv(k.ValueEnv)
 		}
-		rs.keys = append(rs.keys, domain.APIKey{ID: k.ID, ProviderID: k.ProviderID, ModelID: k.ModelID, Name: k.Name, Value: value, ValueEnv: k.ValueEnv, Status: status, Priority: k.Priority, CreatedAt: now, UpdatedAt: now})
+		key := domain.APIKey{ID: k.ID, ProviderID: k.ProviderID, ModelID: k.ModelID, Name: k.Name, Value: value, ValueEnv: k.ValueEnv, Status: status, Priority: k.Priority, CreatedAt: now, UpdatedAt: now}
+		if rt, ok := runtimeMap[k.ID]; ok {
+			if rt.Status != "" {
+				key.Status = domain.APIKeyStatus(rt.Status)
+			}
+			key.UsedCount = rt.UsedCount
+			key.ErrorCount = rt.ErrorCount
+			if rt.CooldownEnd != "" {
+				cooldownEnd, err := time.Parse(time.RFC3339, rt.CooldownEnd)
+				if err == nil {
+					key.CooldownEnd = &cooldownEnd
+				}
+			}
+		}
+		rs.keys = append(rs.keys, key)
 	}
 	return rs
 }
@@ -396,6 +432,7 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 			s.keys[i].Status = domain.KeyStatusActive
 			s.keys[i].CooldownEnd = nil
 			s.appendLog(log)
+			s.saveKeyRuntimeLocked(s.keys[i])
 			return nil
 		}
 		s.keys[i].ErrorCount++
@@ -404,6 +441,7 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 			s.keys[i].Status = domain.KeyStatusInvalid
 			s.keys[i].CooldownEnd = nil
 			s.appendLog(log)
+			s.saveKeyRuntimeLocked(s.keys[i])
 			return nil
 		}
 		if result.CooldownSeconds > 0 {
@@ -412,9 +450,27 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 			s.keys[i].CooldownEnd = &until
 		}
 		s.appendLog(log)
+		s.saveKeyRuntimeLocked(s.keys[i])
 		return nil
 	}
 	return fmt.Errorf("key %s not found", keyID)
+}
+
+func (s *RouterService) saveKeyRuntimeLocked(k domain.APIKey) {
+	if s.store == nil {
+		return
+	}
+	cooldownEnd := ""
+	if k.CooldownEnd != nil {
+		cooldownEnd = k.CooldownEnd.Format(time.RFC3339)
+	}
+	_ = s.store.SaveKeyRuntime(storage.KeyRuntimeRecord{
+		KeyID:       k.ID,
+		Status:      string(k.Status),
+		UsedCount:   k.UsedCount,
+		ErrorCount:  k.ErrorCount,
+		CooldownEnd: cooldownEnd,
+	})
 }
 
 func (s *RouterService) FinalizeStreamResult(ctx context.Context, copyErr error) {
@@ -635,6 +691,7 @@ func (s *RouterService) clearKeyCooldown(keyID string) {
 		if s.keys[i].ID == keyID {
 			s.keys[i].Status = domain.KeyStatusActive
 			s.keys[i].CooldownEnd = nil
+			s.saveKeyRuntimeLocked(s.keys[i])
 			return
 		}
 	}
