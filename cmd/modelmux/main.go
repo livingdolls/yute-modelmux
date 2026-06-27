@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -375,6 +374,8 @@ func newRootCommand() *cobra.Command {
 
 	var jsonOutput bool
 	var logLimit int
+	var logModelID, logProviderID, logKeyID, logGroupID string
+	var logStatusCode int
 	logsCmd := &cobra.Command{
 		Use:   "logs",
 		Short: "Show recent request logs",
@@ -396,14 +397,19 @@ func newRootCommand() *cobra.Command {
 			if rerr != nil {
 				return rerr
 			}
-			logs := router.Logs()
-			sort.SliceStable(logs, func(i, j int) bool {
-				return logs[i].CreatedAt.After(logs[j].CreatedAt)
-			})
 
-			if logLimit > 0 && logLimit < len(logs) {
-				logs = logs[:logLimit]
+			filter := storage.LogFilter{
+				ModelID:    logModelID,
+				ProviderID: logProviderID,
+				KeyID:      logKeyID,
+				GroupID:    logGroupID,
+				StatusCode: logStatusCode,
+				Limit:      logLimit,
 			}
+			if filter.Limit <= 0 {
+				filter.Limit = 20
+			}
+			logs, _ := router.QueryLogs(filter)
 
 			if jsonOutput {
 				type logItem struct {
@@ -464,6 +470,11 @@ func newRootCommand() *cobra.Command {
 	}
 	logsCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	logsCmd.Flags().IntVar(&logLimit, "limit", 20, "Limit number of logs")
+	logsCmd.Flags().StringVar(&logModelID, "model-id", "", "Filter by model ID")
+	logsCmd.Flags().StringVar(&logProviderID, "provider-id", "", "Filter by provider ID")
+	logsCmd.Flags().StringVar(&logKeyID, "key-id", "", "Filter by key ID")
+	logsCmd.Flags().StringVar(&logGroupID, "group-id", "", "Filter by group ID")
+	logsCmd.Flags().IntVar(&logStatusCode, "status-code", 0, "Filter by status code")
 	rootCmd.AddCommand(logsCmd)
 
 	var readOnlyJSON bool
