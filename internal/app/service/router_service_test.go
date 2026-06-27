@@ -635,6 +635,39 @@ func TestSecretStoreMissingKeyError(t *testing.T) {
 	}
 }
 
+func TestDailyTokenLimitCountsTotalTokens(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":90,"completion_tokens":10}}`))
+	}))
+	defer ts.Close()
+
+	cfg := singleKeyRetryConfig(ts.URL + "/v1")
+	cfg.Keys[0].DailyTokenLimit = 100
+	rs, _ := NewRouterService(cfg)
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/chat/completions", bytes.NewReader([]byte(`{"model":"test-model","messages":[{"role":"user","content":"hi"}]}`)))
+	resp, err := rs.HandleChatCompletion(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first request should not error with 100-token limit and 100-token usage: %v", err)
+	}
+	if resp != nil {
+		resp.Body.Close()
+	}
+
+	req2, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/chat/completions", bytes.NewReader([]byte(`{"model":"test-model","messages":[{"role":"user","content":"hi"}]}`)))
+	resp2, err := rs.HandleChatCompletion(context.Background(), req2)
+	if err == nil {
+		if resp2 != nil {
+			resp2.Body.Close()
+		}
+		t.Fatal("second request should fail because total tokens (100) >= limit (100)")
+	}
+	if !strings.Contains(err.Error(), "currently limited") {
+		t.Fatalf("expected limited error, got: %v", err)
+	}
+}
+
 func groupRoutingConfig(baseURL string) *config.Config {
 	return &config.Config{
 		App:      config.AppConfig{Name: "modelmux", LogLevel: "info"},

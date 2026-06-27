@@ -682,7 +682,7 @@ func (s *RouterService) applyDailyLimitsLocked(idx int, tokenInput, tokenOutput 
 		return
 	}
 	k.DailyRequestCount++
-	k.DailyTokenCount += tokenOutput
+	k.DailyTokenCount += tokenInput + tokenOutput
 	limited := false
 	if k.DailyRequestLimit > 0 && k.DailyRequestCount >= k.DailyRequestLimit {
 		limited = true
