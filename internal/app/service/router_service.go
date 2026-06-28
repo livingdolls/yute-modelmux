@@ -578,14 +578,16 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 			Message:    fmt.Sprintf("model %s has reached its concurrency limit", model.ID),
 		}
 	}
-	if modelIdx >= 0 && !isStreamRequest(bodyBytes) {
+	if modelIdx >= 0 {
 		s.models[modelIdx].ConcurrentCount++
 		s.models[modelIdx].MinuteRequestCount++
-		defer func() {
-			s.mu.Lock()
-			s.models[modelIdx].ConcurrentCount--
-			s.mu.Unlock()
-		}()
+		if !isStreamRequest(bodyBytes) {
+			defer func() {
+				s.mu.Lock()
+				s.models[modelIdx].ConcurrentCount--
+				s.mu.Unlock()
+			}()
+		}
 	}
 	s.mu.Unlock()
 
@@ -669,13 +671,6 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 		}
 
 		if isStreamRequest(bodyBytes) && result.Success {
-			s.mu.Lock()
-			if modelIdx >= 0 {
-				s.models[modelIdx].ConcurrentCount++
-				s.models[modelIdx].MinuteRequestCount++
-			}
-			s.mu.Unlock()
-
 			ctx = SetStreamResultContext(ctx, streamResultInfo{
 				KeyID:      key.ID,
 				ModelID:    model.ID,

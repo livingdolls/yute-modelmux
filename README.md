@@ -229,7 +229,7 @@ ModelMux enforces limits at three levels, applied in order:
 | **Model RPM** | `models[].requests_per_minute` | Global per-model |
 | **Model Concurrency** | `models[].max_concurrent_requests` | Simultaneous requests |
 | **Key RPM** | `keys[].requests_per_minute` | Per-key |
-| **Key Tokens/min** | `keys[].tokens_per_minute` | Per-key output tokens |
+| **Key Tokens/min** | `keys[].tokens_per_minute` | Per-key total tokens (input + output) |
 | **Key Concurrency** | `keys[].max_concurrent_requests` | Per-key simultaneous |
 | **Daily Quota** | `keys[].daily_request_limit`, `daily_token_limit` | Per-key daily |
 
@@ -266,7 +266,7 @@ storage:
 
 When enabled, the following data is persisted:
 
-- **Key runtime state** — status, usage counts, cooldown timers, daily quotas, per-minute counters
+- **Key runtime state** — status, usage counts, cooldown timers, daily quotas
 - **Request logs** — full history with model, key, status code, latency, token counts
 - **Log queries** — `modelmux logs` CLI and `/logs` HTTP endpoint pull from this store
 

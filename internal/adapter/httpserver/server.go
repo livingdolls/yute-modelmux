@@ -27,14 +27,16 @@ func generateRequestID() string {
 }
 
 type Server struct {
-	rs         *service.RouterService
-	rsMu       sync.RWMutex
-	cfg        *config.Config
-	cfgMu      sync.RWMutex
-	configPath string
-	store      storage.Storage
-	mux        *http.ServeMux
-	srv        *http.Server
+	rs           *service.RouterService
+	rsMu         sync.RWMutex
+	cfg          *config.Config
+	cfgMu        sync.RWMutex
+	configPath   string
+	store        storage.Storage
+	retiredStores []storage.Storage
+	retiredMu    sync.Mutex
+	mux          *http.ServeMux
+	srv          *http.Server
 }
 
 func New(rs *service.RouterService, cfg *config.Config) *Server {
@@ -153,10 +155,9 @@ func (s *Server) adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 	s.cfgMu.Unlock()
 
 	if oldStore != nil {
-		go func(store storage.Storage) {
-			time.Sleep(10 * time.Second)
-			store.Close()
-		}(oldStore)
+		s.retiredMu.Lock()
+		s.retiredStores = append(s.retiredStores, oldStore)
+		s.retiredMu.Unlock()
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "reloaded"})
@@ -349,11 +350,23 @@ func (s *Server) Run(ctx context.Context) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return s.srv.Shutdown(shutdownCtx)
+		shutdownErr := s.srv.Shutdown(shutdownCtx)
+		s.closeRetired()
+		return shutdownErr
 	case err := <-errCh:
 		if err == http.ErrServerClosed {
+			s.closeRetired()
 			return nil
 		}
 		return err
 	}
+}
+
+func (s *Server) closeRetired() {
+	s.retiredMu.Lock()
+	defer s.retiredMu.Unlock()
+	for _, store := range s.retiredStores {
+		store.Close()
+	}
+	s.retiredStores = nil
 }
