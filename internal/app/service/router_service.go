@@ -1261,6 +1261,9 @@ func defaultCapabilitiesForType(providerType domain.ProviderType, override *conf
 	switch providerType {
 	case domain.ProviderTypeAnthropic, domain.ProviderTypeGemini:
 		caps.Completions = false
+	case domain.ProviderTypeOpenAICompatible, domain.ProviderTypeCustom:
+		caps.Tools = true
+		caps.JSONMode = true
 	}
 	if override == nil {
 		return caps
