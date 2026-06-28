@@ -153,7 +153,10 @@ func (s *Server) adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 	s.cfgMu.Unlock()
 
 	if oldStore != nil {
-		oldStore.Close()
+		go func(store storage.Storage) {
+			time.Sleep(10 * time.Second)
+			store.Close()
+		}(oldStore)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "reloaded"})
