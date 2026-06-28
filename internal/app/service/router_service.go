@@ -154,7 +154,7 @@ func newRouterService(cfg *config.Config, store storage.Storage, secretStore *se
 		})
 	}
 	for _, m := range cfg.Models {
-		rs.models = append(rs.models, domain.Model{ID: m.ID, ProviderID: m.ProviderID, ModelName: m.ModelName, Strategy: domain.RotationStrategy(m.Strategy), Enabled: m.Enabled})
+		rs.models = append(rs.models, domain.Model{ID: m.ID, ProviderID: m.ProviderID, ModelName: m.ModelName, Strategy: domain.RotationStrategy(m.Strategy), Enabled: m.Enabled, RequestsPerMinute: m.RequestsPerMinute, MaxConcurrentRequests: m.MaxConcurrentRequests})
 	}
 	for _, g := range cfg.ModelGroups {
 		strategy := domain.GroupStrategy(g.Strategy)
@@ -211,17 +211,20 @@ func newRouterService(cfg *config.Config, store storage.Storage, secretStore *se
 			return nil, fmt.Errorf("key %s: secret_ref %q not found in secret store", k.ID, k.SecretRef)
 		}
 		key := domain.APIKey{
-			ID:                k.ID,
-			ProviderID:        k.ProviderID,
-			ModelID:           k.ModelID,
-			Name:              k.Name,
-			Value:             value,
-			ValueEnv:          k.ValueEnv,
-			Status:            status,
-			Priority:          k.Priority,
-			DailyRequestLimit: k.DailyRequestLimit,
-			DailyTokenLimit:   k.DailyTokenLimit,
-			CreatedAt:         now, UpdatedAt: now,
+			ID:                    k.ID,
+			ProviderID:            k.ProviderID,
+			ModelID:               k.ModelID,
+			Name:                  k.Name,
+			Value:                 value,
+			ValueEnv:              k.ValueEnv,
+			Status:                status,
+			Priority:              k.Priority,
+			DailyRequestLimit:     k.DailyRequestLimit,
+			DailyTokenLimit:       k.DailyTokenLimit,
+			RequestsPerMinute:     k.RequestsPerMinute,
+			TokensPerMinute:       k.TokensPerMinute,
+			MaxConcurrentRequests: k.MaxConcurrentRequests,
+			CreatedAt:             now, UpdatedAt: now,
 		}
 		if rt, ok := runtimeMap[k.ID]; ok {
 			if rt.Status != "" {
@@ -432,12 +435,12 @@ func (s *RouterService) SelectKey(ctx context.Context, modelID string) (*domain.
 		return nil, ErrNoAvailableKey
 	}
 
+	var selected domain.APIKey
 	switch model.Strategy {
 	case domain.StrategyRoundRobin:
 		idx := s.rrIndex[modelID] % len(keys)
 		s.rrIndex[modelID] = (idx + 1) % len(keys)
-		k := keys[idx]
-		return &k, nil
+		selected = keys[idx]
 	case domain.StrategyLeastError:
 		sort.SliceStable(keys, func(i, j int) bool {
 			if keys[i].ErrorCount != keys[j].ErrorCount {
@@ -448,13 +451,21 @@ func (s *RouterService) SelectKey(ctx context.Context, modelID string) (*domain.
 			}
 			return keys[i].Priority < keys[j].Priority
 		})
-		k := keys[0]
-		return &k, nil
+		selected = keys[0]
 	default:
 		sort.SliceStable(keys, func(i, j int) bool { return keys[i].Priority < keys[j].Priority })
-		k := keys[0]
-		return &k, nil
+		selected = keys[0]
 	}
+
+	for i := range s.keys {
+		if s.keys[i].ID == selected.ID {
+			s.acquireKeySlotLocked(i)
+			break
+		}
+	}
+
+	k := selected
+	return &k, nil
 }
 
 func (s *RouterService) HandleChatCompletion(ctx context.Context, req *http.Request) (*http.Response, error) {
@@ -526,6 +537,29 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 			Code:       "unsupported_endpoint",
 			Message:    fmt.Sprintf("provider type %q does not support /v1/completions; use /v1/chat/completions", provider.Type),
 		}
+	}
+
+	s.mu.Lock()
+	modelIdx := s.modelIndexByID(model.ID)
+	if modelIdx >= 0 && s.models[modelIdx].MaxConcurrentRequests > 0 && s.models[modelIdx].ConcurrentCount >= s.models[modelIdx].MaxConcurrentRequests {
+		s.mu.Unlock()
+		return nil, &ProxyError{
+			HTTPStatus: http.StatusTooManyRequests,
+			Type:       "modelmux_rate_limited",
+			Code:       "model_busy",
+			Message:    fmt.Sprintf("model %s has reached its concurrency limit", model.ID),
+		}
+	}
+	if modelIdx >= 0 {
+		s.models[modelIdx].ConcurrentCount++
+	}
+	s.mu.Unlock()
+	if modelIdx >= 0 {
+		defer func() {
+			s.mu.Lock()
+			s.releaseModelSlotLocked(modelIdx)
+			s.mu.Unlock()
+		}()
 	}
 
 	retried := map[string]int{}
@@ -636,11 +670,13 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 		if s.keys[i].ID != keyID {
 			continue
 		}
+		s.releaseKeySlotLocked(i)
 		now := time.Now()
 		s.keys[i].UpdatedAt = now
 		s.keys[i].UsedCount++
 		s.keys[i].LastUsedAt = &now
 		s.checkDailyResetLocked(i)
+		s.recordKeyPerMinuteUsageLocked(i, result.TokenInput+result.TokenOutput)
 		log := domain.RequestLog{ID: fmt.Sprintf("log-%d", now.UnixNano()), GroupID: result.GroupID, ModelID: result.ModelID, ProviderID: result.ProviderID, KeyID: keyID, StatusCode: result.StatusCode, Error: result.Error, LatencyMs: result.LatencyMs, TokenInput: result.TokenInput, TokenOutput: result.TokenOutput, CreatedAt: now}
 		if result.Success {
 			s.keys[i].ErrorCount = 0
@@ -762,6 +798,17 @@ func (s *RouterService) FinalizeStreamResult(ctx context.Context, copyErr error)
 	if tracker, ok := ctx.Value(ctxKeyTokenTracker).(*providerclient.StreamUsage); ok {
 		result.TokenInput, result.TokenOutput = tracker.Tokens()
 	}
+
+	s.mu.Lock()
+	for i := range s.keys {
+		if s.keys[i].ID == info.KeyID {
+			s.releaseKeySlotLocked(i)
+			s.recordKeyPerMinuteUsageLocked(i, result.TokenInput+result.TokenOutput)
+			break
+		}
+	}
+	s.mu.Unlock()
+
 	_ = s.MarkKeyResult(ctx, info.KeyID, result)
 }
 
@@ -982,9 +1029,79 @@ func (s *RouterService) availableKeys(modelID string) []domain.APIKey {
 		if k.Status == domain.KeyStatusCooldown && k.CooldownEnd != nil && k.CooldownEnd.After(now) {
 			continue
 		}
+		if s.isKeyPerMinuteLimited(i) || s.isKeyConcurrencyLimited(i) {
+			continue
+		}
 		out = append(out, k)
 	}
 	return out
+}
+
+func (s *RouterService) isKeyPerMinuteLimited(i int) bool {
+	k := &s.keys[i]
+	if k.RequestsPerMinute <= 0 && k.TokensPerMinute <= 0 {
+		return false
+	}
+	now := time.Now()
+	windowStart := k.MinuteWindowStart
+	if windowStart.IsZero() || now.Sub(windowStart) >= time.Minute {
+		k.MinuteWindowStart = now.Truncate(time.Minute)
+		k.MinuteRequestCount = 0
+		k.MinuteTokenCount = 0
+		s.saveKeyRuntimeLocked(*k)
+		return false
+	}
+	if k.RequestsPerMinute > 0 && k.MinuteRequestCount >= k.RequestsPerMinute {
+		return true
+	}
+	if k.TokensPerMinute > 0 && k.MinuteTokenCount >= k.TokensPerMinute {
+		return true
+	}
+	return false
+}
+
+func (s *RouterService) isKeyConcurrencyLimited(i int) bool {
+	k := &s.keys[i]
+	if k.MaxConcurrentRequests <= 0 {
+		return false
+	}
+	return k.ConcurrentCount >= k.MaxConcurrentRequests
+}
+
+func (s *RouterService) acquireKeySlotLocked(i int) bool {
+	k := &s.keys[i]
+	if k.MaxConcurrentRequests > 0 && k.ConcurrentCount >= k.MaxConcurrentRequests {
+		return false
+	}
+	k.ConcurrentCount++
+	s.saveKeyRuntimeLocked(*k)
+	return true
+}
+
+func (s *RouterService) releaseKeySlotLocked(i int) {
+	k := &s.keys[i]
+	if k.ConcurrentCount > 0 {
+		k.ConcurrentCount--
+	}
+	s.saveKeyRuntimeLocked(*k)
+}
+
+func (s *RouterService) recordKeyPerMinuteUsageLocked(i int, tokens int) {
+	k := &s.keys[i]
+	if k.RequestsPerMinute <= 0 && k.TokensPerMinute <= 0 {
+		return
+	}
+	now := time.Now()
+	if k.MinuteWindowStart.IsZero() || now.Sub(k.MinuteWindowStart) >= time.Minute {
+		k.MinuteWindowStart = now.Truncate(time.Minute)
+		k.MinuteRequestCount = 0
+		k.MinuteTokenCount = 0
+	}
+	k.MinuteRequestCount++
+	if tokens > 0 {
+		k.MinuteTokenCount += tokens
+	}
+	s.saveKeyRuntimeLocked(*k)
 }
 
 func (s *RouterService) clearKeyCooldown(keyID string) {
@@ -1091,4 +1208,29 @@ func isUnavailable(err error) bool {
 		return false
 	}
 	return proxyErr.Code == "all_keys_limited" || proxyErr.Code == "all_group_models_unavailable"
+}
+
+func (s *RouterService) modelIndexByID(id string) int {
+	for i, m := range s.models {
+		if m.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func (s *RouterService) acquireModelSlotLocked(i int) bool {
+	m := &s.models[i]
+	if m.MaxConcurrentRequests > 0 && m.ConcurrentCount >= m.MaxConcurrentRequests {
+		return false
+	}
+	m.ConcurrentCount++
+	return true
+}
+
+func (s *RouterService) releaseModelSlotLocked(i int) {
+	m := &s.models[i]
+	if m.ConcurrentCount > 0 {
+		m.ConcurrentCount--
+	}
 }

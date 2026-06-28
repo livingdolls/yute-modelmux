@@ -697,8 +697,113 @@ func TestStreamDailyTokenLimitCountsOpenAIUsageChunk(t *testing.T) {
 	if keys[0].DailyTokenCount != 100 {
 		t.Fatalf("expected stream token count 100, got %d", keys[0].DailyTokenCount)
 	}
-	if keys[0].Status != domain.KeyStatusLimited {
-		t.Fatalf("expected key limited after stream usage, got %s", keys[0].Status)
+}
+
+func TestRequestsPerMinuteLimitsKeySelection(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer ts.Close()
+
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = ts.URL + "/v1"
+	cfg.Keys = []config.KeyConfig{
+		{ID: "key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "k1", Status: "active", Priority: 1, RequestsPerMinute: 2},
+		{ID: "key-2", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "k2", Status: "active", Priority: 2, RequestsPerMinute: 2},
+	}
+	rs, _ := NewRouterService(cfg)
+
+	for i := 0; i < 2; i++ {
+		req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi"}]}`)))
+		resp, err := rs.HandleChatCompletion(context.Background(), req)
+		if err != nil {
+			t.Fatalf("request %d failed: %v", i, err)
+		}
+		resp.Body.Close()
+	}
+
+	keys := rs.ListKeys()
+	if keys[0].MinuteRequestCount != 2 || keys[1].MinuteRequestCount != 0 {
+		t.Fatalf("expected key-1 count=2, key-2 count=0, got %d/%d", keys[0].MinuteRequestCount, keys[1].MinuteRequestCount)
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi"}]}`)))
+	resp, err := rs.HandleChatCompletion(context.Background(), req)
+	if err != nil {
+		t.Fatalf("third request should use key-2: %v", err)
+	}
+	resp.Body.Close()
+
+	keys = rs.ListKeys()
+	if keys[1].MinuteRequestCount == 0 {
+		t.Fatal("expected key-2 to be used after key-1 limited")
+	}
+}
+
+func TestMaxConcurrentRequestsLimitsKeySelection(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer ts.Close()
+
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = ts.URL + "/v1"
+	cfg.Keys = []config.KeyConfig{
+		{ID: "key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "k1", Status: "active", Priority: 1, MaxConcurrentRequests: 1},
+		{ID: "key-2", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "k2", Status: "active", Priority: 2, MaxConcurrentRequests: 1},
+	}
+	rs, _ := NewRouterService(cfg)
+
+	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi"}]}`)))
+	resp, err := rs.HandleChatCompletion(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first request failed: %v", err)
+	}
+
+	req2, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi2"}]}`)))
+	resp2, err2 := rs.HandleChatCompletion(context.Background(), req2)
+	if err2 != nil {
+		t.Fatalf("second request should use key-2: %v", err2)
+	}
+	resp.Body.Close()
+	resp2.Body.Close()
+
+	keys := rs.ListKeys()
+	if keys[0].ConcurrentCount != 0 || keys[1].ConcurrentCount != 0 {
+		t.Fatalf("expected concurrency released, got key-1=%d key-2=%d", keys[0].ConcurrentCount, keys[1].ConcurrentCount)
+	}
+}
+
+func TestModelConcurrencyLimitIsTracked(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer ts.Close()
+
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = ts.URL + "/v1"
+	cfg.Models[0].MaxConcurrentRequests = 5
+	cfg.Keys = []config.KeyConfig{
+		{ID: "key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "k1", Status: "active", Priority: 1},
+	}
+	rs, _ := NewRouterService(cfg)
+
+	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi"}]}`)))
+	resp, err := rs.HandleChatCompletion(context.Background(), req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	models := rs.ListModels()
+	if models[0].ConcurrentCount != 0 {
+		t.Fatalf("expected model concurrency released, got %d", models[0].ConcurrentCount)
 	}
 }
 

@@ -9,9 +9,12 @@ const (
 )
 
 type Model struct {
-	ID         string
-	ProviderID string
-	ModelName  string
-	Strategy   RotationStrategy
-	Enabled    bool
+	ID                    string
+	ProviderID            string
+	ModelName             string
+	Strategy              RotationStrategy
+	Enabled               bool
+	RequestsPerMinute     int
+	MaxConcurrentRequests int
+	ConcurrentCount       int
 }

@@ -65,25 +65,30 @@ type ProviderConfig struct {
 }
 
 type ModelConfig struct {
-	ID         string `yaml:"id"`
-	ProviderID string `yaml:"provider_id"`
-	ModelName  string `yaml:"model_name"`
-	Strategy   string `yaml:"strategy"`
-	Enabled    bool   `yaml:"enabled"`
+	ID                    string `yaml:"id"`
+	ProviderID            string `yaml:"provider_id"`
+	ModelName             string `yaml:"model_name"`
+	Strategy              string `yaml:"strategy"`
+	Enabled               bool   `yaml:"enabled"`
+	RequestsPerMinute     int    `yaml:"requests_per_minute"`
+	MaxConcurrentRequests int    `yaml:"max_concurrent_requests"`
 }
 
 type KeyConfig struct {
-	ID                 string `yaml:"id"`
-	ProviderID         string `yaml:"provider_id"`
-	ModelID            string `yaml:"model_id"`
-	Name               string `yaml:"name"`
-	Value              string `yaml:"value"`
-	ValueEnv           string `yaml:"value_env"`
-	SecretRef          string `yaml:"secret_ref"`
-	Status             string `yaml:"status"`
-	Priority           int    `yaml:"priority"`
-	DailyRequestLimit  int    `yaml:"daily_request_limit"`
-	DailyTokenLimit    int    `yaml:"daily_token_limit"`
+	ID                    string `yaml:"id"`
+	ProviderID            string `yaml:"provider_id"`
+	ModelID               string `yaml:"model_id"`
+	Name                  string `yaml:"name"`
+	Value                 string `yaml:"value"`
+	ValueEnv              string `yaml:"value_env"`
+	SecretRef             string `yaml:"secret_ref"`
+	Status                string `yaml:"status"`
+	Priority              int    `yaml:"priority"`
+	DailyRequestLimit     int    `yaml:"daily_request_limit"`
+	DailyTokenLimit       int    `yaml:"daily_token_limit"`
+	RequestsPerMinute     int    `yaml:"requests_per_minute"`
+	TokensPerMinute       int    `yaml:"tokens_per_minute"`
+	MaxConcurrentRequests int    `yaml:"max_concurrent_requests"`
 }
 
 type ModelGroupConfig struct {
