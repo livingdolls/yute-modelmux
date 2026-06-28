@@ -2,7 +2,9 @@ package provider
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"sync"
 
 	"github.com/livingdolls/yute-modelmux/internal/core/domain"
 )
@@ -10,6 +12,56 @@ import (
 type ProviderClient interface {
 	Forward(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey, req *http.Request, apiPath string) (*http.Response, error)
 	TestKey(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey) error
+}
+
+type StreamUsage struct {
+	mu           sync.Mutex
+	promptTokens     int
+	completionTokens int
+}
+
+func (u *StreamUsage) Add(prompt, completion int) {
+	if u == nil {
+		return
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.promptTokens = prompt
+	u.completionTokens = completion
+}
+
+func (u *StreamUsage) Tokens() (int, int) {
+	if u == nil {
+		return 0, 0
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.promptTokens, u.completionTokens
+}
+
+type StreamUsageTracker interface {
+	StreamUsage() *StreamUsage
+}
+
+type trackedReadCloser struct {
+	io   io.ReadCloser
+	usage *StreamUsage
+}
+
+func (t *trackedReadCloser) Read(p []byte) (int, error) {
+	return t.io.Read(p)
+}
+
+func (t *trackedReadCloser) Close() error {
+	return t.io.Close()
+}
+
+func (t *trackedReadCloser) StreamUsage() *StreamUsage {
+	return t.usage
+}
+
+func newTrackedReadCloser(r io.ReadCloser, u *StreamUsage) io.ReadCloser {
+	return &trackedReadCloser{io: r, usage: u}
 }
 
 type ClientRegistry struct {

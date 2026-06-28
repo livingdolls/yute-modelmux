@@ -58,11 +58,11 @@ func (c *AnthropicClient) Forward(ctx context.Context, provider domain.Provider,
 		return convertAnthropicResponse(resp, model.ID)
 	}
 
-	reader := convertAnthropicStream(resp, model.ID)
+	reader, usage := convertAnthropicStream(resp, model.ID)
 	return &http.Response{
 		StatusCode: resp.StatusCode,
 		Header:     resp.Header,
-		Body:       reader,
+		Body:       newTrackedReadCloser(reader, usage),
 	}, nil
 }
 
@@ -260,14 +260,15 @@ func convertAnthropicResponse(resp *http.Response, modelID string) (*http.Respon
 	}, nil
 }
 
-func convertAnthropicStream(resp *http.Response, modelID string) io.ReadCloser {
+func convertAnthropicStream(resp *http.Response, modelID string) (io.ReadCloser, *StreamUsage) {
 	pr, pw := io.Pipe()
+	usage := &StreamUsage{}
 	go func() {
 		defer pw.Close()
 		defer resp.Body.Close()
 
 		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 64*1024), 64*1024)
+		scanner.Buffer(make([]byte, 256*1024), 256*1024)
 		created := int(time.Now().Unix())
 		contentBuf := strings.Builder{}
 		openAIID := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
@@ -323,6 +324,9 @@ func convertAnthropicStream(resp *http.Response, modelID string) io.ReadCloser {
 				}
 			case "message_delta":
 			case "message_stop":
+				if event.Usage != nil {
+					usage.Add(event.Usage.InputTokens, event.Usage.OutputTokens)
+				}
 				delta = map[string]any{}
 			}
 
@@ -360,5 +364,5 @@ func convertAnthropicStream(resp *http.Response, modelID string) io.ReadCloser {
 		_, _ = pw.Write([]byte("data: " + string(jsonChunk) + "\n\n"))
 		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
 	}()
-	return pr
+	return pr, usage
 }

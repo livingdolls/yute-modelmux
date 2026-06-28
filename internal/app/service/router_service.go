@@ -27,6 +27,7 @@ type ctxKey int
 
 const (
 	ctxKeyStreamResult ctxKey = iota
+	ctxKeyTokenTracker
 )
 
 type streamResultInfo struct {
@@ -601,6 +602,11 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 				Error:      result.Error,
 				StartedAt:  startedAt,
 			})
+			if resp != nil && resp.Body != nil {
+				if tracker, ok := resp.Body.(providerclient.StreamUsageTracker); ok {
+					ctx = context.WithValue(ctx, ctxKeyTokenTracker, tracker.StreamUsage())
+				}
+			}
 			*req = *req.WithContext(ctx)
 			return resp, nil
 		}
@@ -746,12 +752,15 @@ func (s *RouterService) FinalizeStreamResult(ctx context.Context, copyErr error)
 		ProviderID: info.ProviderID,
 		StatusCode: info.StatusCode,
 	}
-	if !info.StartedAt.IsZero() {
-		result.LatencyMs = time.Since(info.StartedAt).Milliseconds()
-	}
 	if copyErr != nil {
 		result.Error = "stream copy error: " + copyErr.Error()
 		result.ShouldRotateKey = true
+	}
+	if !info.StartedAt.IsZero() {
+		result.LatencyMs = time.Since(info.StartedAt).Milliseconds()
+	}
+	if tracker, ok := ctx.Value(ctxKeyTokenTracker).(*providerclient.StreamUsage); ok {
+		result.TokenInput, result.TokenOutput = tracker.Tokens()
 	}
 	_ = s.MarkKeyResult(ctx, info.KeyID, result)
 }
