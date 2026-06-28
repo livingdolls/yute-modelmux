@@ -270,6 +270,9 @@ func (s *Store) RotateKey(newMasterKey string) error {
 }
 
 func VerifyFile(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return fmt.Errorf("secret store file does not exist: %s", path)
+	}
 	store, err := NewStore(path)
 	if err != nil {
 		return err
