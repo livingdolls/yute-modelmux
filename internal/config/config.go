@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -183,44 +182,68 @@ func (c *Config) ResolveSecrets() error {
 	return nil
 }
 
+type ValidationErrors []string
+
+func (ve ValidationErrors) Error() string {
+	return strings.Join(ve, "; ")
+}
+
+func (ve ValidationErrors) Errors() []string {
+	return ve
+}
+
 func (c *Config) Validate() error {
+	errs := c.collectValidationErrors()
+	if len(errs) == 0 {
+		return nil
+	}
+	return errs
+}
+
+func (c *Config) ValidateAll() ValidationErrors {
+	return c.collectValidationErrors()
+}
+
+func (c *Config) collectValidationErrors() ValidationErrors {
+	var errs ValidationErrors
 	if c.Server.Host == "" {
-		return errors.New("server.host is required")
+		errs = append(errs, "server.host is required")
 	}
 	if c.Server.Port <= 0 {
-		return errors.New("server.port must be greater than zero")
+		errs = append(errs, "server.port must be greater than zero")
 	}
 	if c.Server.RequireAuth && c.Server.AuthTokenEnv == "" {
-		return errors.New("server.auth_token_env is required when server.require_auth is true")
+		errs = append(errs, "server.auth_token_env is required when server.require_auth is true")
 	}
 	providerIDs := map[string]struct{}{}
 	for _, p := range c.Providers {
 		if p.ID == "" {
-			return errors.New("provider.id is required")
+			errs = append(errs, "provider.id is required")
+			continue
 		}
 		if _, exists := providerIDs[p.ID]; exists {
-			return fmt.Errorf("duplicate provider id %s", p.ID)
+			errs = append(errs, "duplicate provider id "+p.ID)
 		}
 		providerIDs[p.ID] = struct{}{}
 		if p.Enabled {
 			if p.BaseURL == "" {
-				return fmt.Errorf("provider %s base_url is required", p.ID)
+				errs = append(errs, "provider "+p.ID+" base_url is required")
 			}
-			if !strings.HasPrefix(p.BaseURL, "http://") && !strings.HasPrefix(p.BaseURL, "https://") {
-				return fmt.Errorf("provider %s base_url must start with http:// or https://", p.ID)
+			if p.BaseURL != "" && !strings.HasPrefix(p.BaseURL, "http://") && !strings.HasPrefix(p.BaseURL, "https://") {
+				errs = append(errs, "provider "+p.ID+" base_url must start with http:// or https://")
 			}
 			validTypes := map[string]bool{"openai-compatible": true, "anthropic": true, "gemini": true, "custom": true}
 			if p.Type != "" && !validTypes[p.Type] {
-				return fmt.Errorf("provider %s type %q is not valid; must be one of: openai-compatible, anthropic, gemini, custom", p.ID, p.Type)
+				errs = append(errs, "provider "+p.ID+" type "+p.Type+" is not valid; must be one of: openai-compatible, anthropic, gemini, custom")
 			}
 			if p.AuthType != "" && p.AuthType != "bearer" && p.AuthType != "header" {
-				return fmt.Errorf("provider %s auth_type must be bearer or header", p.ID)
+				errs = append(errs, "provider "+p.ID+" auth_type must be bearer or header")
 			}
 			if p.AuthType == "header" && p.AuthHeaderName == "" {
-				return fmt.Errorf("provider %s auth_header_name is required when auth_type is header", p.ID)
+				errs = append(errs, "provider "+p.ID+" auth_header_name is required when auth_type is header")
 			}
 			if p.TimeoutSeconds <= 0 || p.TimeoutSeconds > 3600 {
-				return fmt.Errorf("provider %s timeout_seconds must be between 1 and 3600", p.ID)
+				errs = append(errs, "provider "+p.ID+" timeout_seconds must be between 1 and 3600")
 			}
 		}
 	}
@@ -228,86 +251,90 @@ func (c *Config) Validate() error {
 	modelByProviderID := map[string]string{}
 	for _, m := range c.Models {
 		if m.ID == "" {
-			return errors.New("model.id is required")
+			errs = append(errs, "model.id is required")
+			continue
 		}
 		if _, exists := modelIDs[m.ID]; exists {
-			return fmt.Errorf("duplicate model id %s", m.ID)
-		}
-		if _, ok := providerIDs[m.ProviderID]; !ok {
-			return fmt.Errorf("model %s references unknown provider %s", m.ID, m.ProviderID)
+			errs = append(errs, "duplicate model id "+m.ID)
 		}
 		modelIDs[m.ID] = struct{}{}
 		modelByProviderID[m.ID] = m.ProviderID
+		if _, ok := providerIDs[m.ProviderID]; !ok && m.ProviderID != "" {
+			errs = append(errs, "model "+m.ID+" references unknown provider "+m.ProviderID)
+		}
 		if m.Enabled {
 			if m.ModelName == "" {
-				return fmt.Errorf("model %s model_name is required", m.ID)
+				errs = append(errs, "model "+m.ID+" model_name is required")
 			}
 			validStrategies := map[string]bool{"failover": true, "round_robin": true, "least_error": true}
 			if m.Strategy != "" && !validStrategies[m.Strategy] {
-				return fmt.Errorf("model %s strategy %q is not valid; must be one of: failover, round_robin, least_error", m.ID, m.Strategy)
+				errs = append(errs, "model "+m.ID+" strategy "+m.Strategy+" is not valid; must be one of: failover, round_robin, least_error")
 			}
 		}
 	}
 	groupIDs := map[string]struct{}{}
 	for _, g := range c.ModelGroups {
 		if g.ID == "" {
-			return errors.New("model_group.id is required")
+			errs = append(errs, "model_group.id is required")
+			continue
 		}
 		if _, exists := groupIDs[g.ID]; exists {
-			return fmt.Errorf("duplicate model group id %s", g.ID)
+			errs = append(errs, "duplicate model group id "+g.ID)
 		}
 		if _, exists := modelIDs[g.ID]; exists {
-			return fmt.Errorf("model group id %s conflicts with model id", g.ID)
+			errs = append(errs, "model group id "+g.ID+" conflicts with model id")
 		}
+		groupIDs[g.ID] = struct{}{}
 		if g.Enabled {
 			if g.Name == "" {
-				return fmt.Errorf("model group %s name is required", g.ID)
+				errs = append(errs, "model group "+g.ID+" name is required")
 			}
 			validStrategies := map[string]bool{"failover": true, "round_robin": true, "weighted": true}
 			if g.Strategy != "" && !validStrategies[g.Strategy] {
-				return fmt.Errorf("model group %s strategy %q is not valid; must be one of: failover, round_robin, weighted", g.ID, g.Strategy)
+				errs = append(errs, "model group "+g.ID+" strategy "+g.Strategy+" is not valid; must be one of: failover, round_robin, weighted")
 			}
 		}
 		if len(g.Members) == 0 {
 			if g.Enabled {
-				return fmt.Errorf("enabled model group %s must have at least one member", g.ID)
+				errs = append(errs, "enabled model group "+g.ID+" must have at least one member")
 			}
-			groupIDs[g.ID] = struct{}{}
 			continue
 		}
 		for _, member := range g.Members {
 			if member.ModelID == "" {
-				return fmt.Errorf("model group %s has member without model_id", g.ID)
+				errs = append(errs, "model group "+g.ID+" has member without model_id")
 			}
-			if _, ok := modelIDs[member.ModelID]; !ok {
-				return fmt.Errorf("model group %s references unknown model %s", g.ID, member.ModelID)
+			if _, ok := modelIDs[member.ModelID]; !ok && member.ModelID != "" {
+				errs = append(errs, "model group "+g.ID+" references unknown model "+member.ModelID)
 			}
 		}
-		groupIDs[g.ID] = struct{}{}
 	}
 	keyIDs := map[string]struct{}{}
 	for _, k := range c.Keys {
 		if k.ID == "" {
-			return errors.New("key.id is required")
+			errs = append(errs, "key.id is required")
+			continue
 		}
 		if _, exists := keyIDs[k.ID]; exists {
-			return fmt.Errorf("duplicate key id %s", k.ID)
+			errs = append(errs, "duplicate key id "+k.ID)
 		}
 		keyIDs[k.ID] = struct{}{}
-		if _, ok := providerIDs[k.ProviderID]; !ok {
-			return fmt.Errorf("key %s references unknown provider %s", k.ID, k.ProviderID)
+		if _, ok := providerIDs[k.ProviderID]; !ok && k.ProviderID != "" {
+			errs = append(errs, "key "+k.ID+" references unknown provider "+k.ProviderID)
 		}
-		if _, ok := modelIDs[k.ModelID]; !ok {
-			return fmt.Errorf("key %s references unknown model %s", k.ID, k.ModelID)
+		if _, ok := modelIDs[k.ModelID]; !ok && k.ModelID != "" {
+			errs = append(errs, "key "+k.ID+" references unknown model "+k.ModelID)
 		}
-		if modelProviderID := modelByProviderID[k.ModelID]; modelProviderID != k.ProviderID {
-			return fmt.Errorf("key %s provider %s does not match model %s provider %s", k.ID, k.ProviderID, k.ModelID, modelProviderID)
+		if k.ProviderID != "" && k.ModelID != "" {
+			if modelProviderID := modelByProviderID[k.ModelID]; modelProviderID != k.ProviderID {
+				errs = append(errs, "key "+k.ID+" provider "+k.ProviderID+" does not match model "+k.ModelID+" provider "+modelProviderID)
+			}
 		}
 		if k.Value == "" && k.ValueEnv == "" && k.SecretRef == "" {
-			return fmt.Errorf("key %s has no value; set keys[].value or keys[].value_env or keys[].secret_ref in config", k.ID)
+			errs = append(errs, "key "+k.ID+" has no value; set keys[].value or keys[].value_env or keys[].secret_ref in config")
 		}
 	}
-	return nil
+	return errs
 }
 
 func (c *Config) AuthToken() string {

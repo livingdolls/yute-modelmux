@@ -18,6 +18,7 @@ import (
 	"github.com/livingdolls/yute-modelmux/internal/secret"
 	"github.com/livingdolls/yute-modelmux/internal/storage"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 func main() {
@@ -48,6 +49,82 @@ func newRootCommand() *cobra.Command {
 			return nil
 		},
 	})
+
+	var validateJSON bool
+	var validateCheckProvider bool
+	configValidateCmd := &cobra.Command{
+		Use:   "validate",
+		Short: "Validate config file for correctness",
+		Long: `Validate the configuration file for syntax, referential integrity, and
+environment variable availability. Displays all errors found.
+
+Exit code is non-zero if any validation errors are found.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			data, err := os.ReadFile(configPath)
+			if err != nil {
+				return fmt.Errorf("cannot read config file: %w", err)
+			}
+			var cfg config.Config
+			if err := yaml.Unmarshal(data, &cfg); err != nil {
+				return fmt.Errorf("invalid YAML: %w", err)
+			}
+
+			var allErrs []string
+			resolveErrs := cfg.ResolveSecrets()
+			if resolveErrs != nil {
+				allErrs = append(allErrs, resolveErrs.Error())
+			}
+			valErrs := cfg.ValidateAll()
+			allErrs = append(allErrs, valErrs...)
+
+			if validateCheckProvider {
+				for _, p := range cfg.Providers {
+					if !p.Enabled || p.BaseURL == "" || p.ID == "" {
+						continue
+					}
+					client := &http.Client{Timeout: 10 * time.Second}
+					resp, err := client.Get(strings.TrimRight(p.BaseURL, "/") + "/health")
+					if err != nil {
+						allErrs = append(allErrs, fmt.Sprintf("provider %s unreachable: %s", p.ID, err))
+					} else {
+						resp.Body.Close()
+						if resp.StatusCode >= 500 {
+							allErrs = append(allErrs, fmt.Sprintf("provider %s returned %d", p.ID, resp.StatusCode))
+						}
+					}
+				}
+			}
+
+		if len(allErrs) == 0 {
+			if validateJSON {
+				b, _ := json.MarshalIndent(map[string]any{"valid": true, "errors": []string{}}, "", "  ")
+				fmt.Fprintln(cmd.OutOrStdout(), string(b))
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "config is valid")
+			}
+			return nil
+		}
+
+		if validateJSON {
+			type jsonOutput struct {
+				Valid  bool     `json:"valid"`
+				Errors []string `json:"errors"`
+			}
+			out := jsonOutput{Valid: false, Errors: allErrs}
+			b, _ := json.MarshalIndent(out, "", "  ")
+			fmt.Fprintln(cmd.OutOrStdout(), string(b))
+		} else {
+			fmt.Fprintln(cmd.ErrOrStderr(), "config has", len(allErrs), "error(s):")
+			for _, e := range allErrs {
+				fmt.Fprintln(cmd.ErrOrStderr(), "  -", e)
+			}
+		}
+		return fmt.Errorf("config validation failed with %d error(s)", len(allErrs))
+		},
+	}
+	configValidateCmd.Flags().BoolVar(&validateJSON, "json", false, "output as JSON")
+	configValidateCmd.Flags().BoolVar(&validateCheckProvider, "check-provider", false, "also check provider reachability")
+	configCmd.AddCommand(configValidateCmd)
 	rootCmd.AddCommand(configCmd)
 
 	var keyTestID string

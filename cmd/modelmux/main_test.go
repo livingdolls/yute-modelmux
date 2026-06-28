@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/livingdolls/yute-modelmux/internal/config"
+	"gopkg.in/yaml.v3"
 )
 
 func setupTestConfig(t *testing.T, baseURL string) string {
@@ -109,5 +112,87 @@ func TestKeyTestCLIRequiresIDFlag(t *testing.T) {
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error for missing --id flag")
+	}
+}
+
+func TestConfigValidateValid(t *testing.T) {
+	configPath := setupTestConfig(t, "https://api.example.com/v1")
+
+	cmd := newRootCommand()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--config", configPath, "config", "validate"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("expected valid config, got error: %v\nstderr: %s", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "valid") {
+		t.Fatalf("expected 'valid' in stdout, got: %s", stdout.String())
+	}
+}
+
+func TestConfigValidateJSON(t *testing.T) {
+	configPath := setupTestConfig(t, "https://api.example.com/v1")
+
+	cmd := newRootCommand()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--config", configPath, "config", "validate", "--json"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("expected valid config, got error: %v\nstderr: %s", err, stderr.String())
+	}
+	out := strings.TrimSpace(stdout.String())
+	if !strings.Contains(out, `"valid"`) || !strings.Contains(out, `true`) {
+		t.Fatalf("expected valid in json output, got: %s", out)
+	}
+}
+
+func TestConfigValidateInvalid(t *testing.T) {
+	cfg := config.Default()
+	cfg.Server.Host = ""
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "badconfig.yaml")
+	data, _ := yaml.Marshal(cfg)
+	os.WriteFile(configPath, data, 0o600)
+
+	cmd := newRootCommand()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--config", configPath, "config", "validate"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid config")
+	}
+	stderrOut := stderr.String()
+	if !strings.Contains(stderrOut, "error") && !strings.Contains(stderrOut, "error(s)") {
+		t.Fatalf("expected error output on stderr, got: %s", stderrOut)
+	}
+}
+
+func TestConfigValidateBadYAML(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "badyaml.yaml")
+	os.WriteFile(configPath, []byte("{ this is not valid yaml!!"), 0o600)
+
+	cmd := newRootCommand()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--config", configPath, "config", "validate"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid YAML")
+	}
+	if !strings.Contains(err.Error(), "YAML") {
+		t.Fatalf("expected YAML error, got: %v", err)
 	}
 }
