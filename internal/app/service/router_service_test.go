@@ -926,3 +926,33 @@ func TestCapabilityDefaultBlocksCompletionsForAnthropic(t *testing.T) {
 		t.Fatal("expected anthropic default to block completions")
 	}
 }
+
+func TestLeastUsedStrategyPicksLowestDailyCount(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer ts.Close()
+
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = ts.URL + "/v1"
+	cfg.Models[0].Strategy = "least_used"
+	cfg.Keys = []config.KeyConfig{
+		{ID: "ka", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "a", Status: "active", Priority: 1},
+		{ID: "kb", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "b", Status: "active", Priority: 2},
+		{ID: "kc", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "c", Status: "active", Priority: 3},
+	}
+	rs, _ := NewRouterService(cfg)
+
+	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi"}]}`)))
+	resp, _ := rs.HandleChatCompletion(context.Background(), req)
+	if resp != nil {
+		resp.Body.Close()
+	}
+
+	keys := rs.ListKeys()
+	if keys[0].DailyRequestCount != 1 {
+		t.Fatalf("expected key ka (lowest priority) to be picked first, got counts: %d/%d/%d", keys[0].DailyRequestCount, keys[1].DailyRequestCount, keys[2].DailyRequestCount)
+	}
+}

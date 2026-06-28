@@ -465,6 +465,14 @@ func (s *RouterService) SelectKey(ctx context.Context, modelID string) (*domain.
 			return keys[i].Priority < keys[j].Priority
 		})
 		selected = keys[0]
+	case domain.StrategyLeastUsed:
+		sort.SliceStable(keys, func(i, j int) bool {
+			if keys[i].DailyRequestCount != keys[j].DailyRequestCount {
+				return keys[i].DailyRequestCount < keys[j].DailyRequestCount
+			}
+			return keys[i].Priority < keys[j].Priority
+		})
+		selected = keys[0]
 	default:
 		sort.SliceStable(keys, func(i, j int) bool { return keys[i].Priority < keys[j].Priority })
 		selected = keys[0]

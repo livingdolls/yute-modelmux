@@ -6,6 +6,7 @@ const (
 	StrategyFailover   RotationStrategy = "failover"
 	StrategyRoundRobin RotationStrategy = "round_robin"
 	StrategyLeastError RotationStrategy = "least_error"
+	StrategyLeastUsed  RotationStrategy = "least_used"
 )
 
 type Model struct {

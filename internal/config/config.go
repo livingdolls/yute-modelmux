@@ -289,9 +289,9 @@ func (c *Config) collectValidationErrors() ValidationErrors {
 			if m.ModelName == "" {
 				errs = append(errs, "model "+m.ID+" model_name is required")
 			}
-			validStrategies := map[string]bool{"failover": true, "round_robin": true, "least_error": true}
+			validStrategies := map[string]bool{"failover": true, "round_robin": true, "least_error": true, "least_used": true}
 			if m.Strategy != "" && !validStrategies[m.Strategy] {
-				errs = append(errs, "model "+m.ID+" strategy "+m.Strategy+" is not valid; must be one of: failover, round_robin, least_error")
+				errs = append(errs, "model "+m.ID+" strategy "+m.Strategy+" is not valid; must be one of: failover, round_robin, least_error, least_used")
 			}
 		}
 	}
