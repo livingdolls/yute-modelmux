@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/livingdolls/yute-modelmux/internal/adapter/httpserver"
@@ -18,6 +19,7 @@ import (
 	"github.com/livingdolls/yute-modelmux/internal/secret"
 	"github.com/livingdolls/yute-modelmux/internal/storage"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
@@ -377,6 +379,8 @@ Exit code is non-zero if any validation errors are found.`,
 	secretSetCmd := &cobra.Command{
 		Use:   "set",
 		Short: "Store an API key value in the encrypted secret store",
+		Long: `Store a secret value. If --value is not provided, you will be prompted
+interactively with hidden input (safer than shell history).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(configPath)
 			if err != nil {
@@ -387,7 +391,20 @@ Exit code is non-zero if any validation errors are found.`,
 			if err != nil {
 				return err
 			}
-			if err := s.Set(secretRef, secretValue); err != nil {
+			val := secretValue
+			if val == "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Enter value for %s: ", secretRef)
+				input, err := readPassword()
+				if err != nil {
+					return fmt.Errorf("failed to read input: %w", err)
+				}
+				val = strings.TrimSpace(input)
+				if val == "" {
+					return fmt.Errorf("secret value cannot be empty")
+				}
+				fmt.Fprintln(cmd.OutOrStdout())
+			}
+			if err := s.Set(secretRef, val); err != nil {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "stored secret", secretRef)
@@ -395,9 +412,8 @@ Exit code is non-zero if any validation errors are found.`,
 		},
 	}
 	secretSetCmd.Flags().StringVar(&secretRef, "ref", "", "secret reference name (used as keys[].secret_ref)")
-	secretSetCmd.Flags().StringVar(&secretValue, "value", "", "API key value to store")
+	secretSetCmd.Flags().StringVar(&secretValue, "value", "", "API key value to store (omit for hidden prompt)")
 	secretSetCmd.MarkFlagRequired("ref")
-	secretSetCmd.MarkFlagRequired("value")
 	secretCmd.AddCommand(secretSetCmd)
 
 	secretListCmd := &cobra.Command{
@@ -447,6 +463,115 @@ Exit code is non-zero if any validation errors are found.`,
 	secretDeleteCmd.Flags().StringVar(&secretDeleteRef, "ref", "", "secret reference to delete")
 	secretDeleteCmd.MarkFlagRequired("ref")
 	secretCmd.AddCommand(secretDeleteCmd)
+
+	secretVerifyCmd := &cobra.Command{
+		Use:   "verify",
+		Short: "Verify the secret store file can be decrypted",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return err
+			}
+			storePath := secretPath(cfg)
+			if err := secret.VerifyFile(storePath); err != nil {
+				return fmt.Errorf("secret store verification failed: %w", err)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "secret store is valid")
+			return nil
+		},
+	}
+	secretCmd.AddCommand(secretVerifyCmd)
+
+	var secretExportOutput string
+	secretExportCmd := &cobra.Command{
+		Use:   "export",
+		Short: "Export encrypted secret store data (for backup)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return err
+			}
+			storePath := secretPath(cfg)
+			s, err := secret.NewStore(storePath)
+			if err != nil {
+				return err
+			}
+			data, err := s.ExportData()
+			if err != nil {
+				return err
+			}
+			if secretExportOutput != "" {
+				return os.WriteFile(secretExportOutput, data, 0o600)
+			}
+			_, err = cmd.OutOrStdout().Write(data)
+			return err
+		},
+	}
+	secretExportCmd.Flags().StringVar(&secretExportOutput, "output", "", "output file path (default: stdout)")
+	secretCmd.AddCommand(secretExportCmd)
+
+	var secretImportPath string
+	secretImportCmd := &cobra.Command{
+		Use:   "import",
+		Short: "Import encrypted secret store data from backup",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return err
+			}
+			storePath := secretPath(cfg)
+			data, err := io.ReadAll(cmd.InOrStdin())
+			if err != nil {
+				return err
+			}
+			if secretImportPath != "" {
+				data, err = os.ReadFile(secretImportPath)
+				if err != nil {
+					return err
+				}
+			}
+			if len(data) == 0 {
+				return fmt.Errorf("no data to import")
+			}
+			if err := secret.ImportData(storePath, data); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "imported secret store")
+			return nil
+		},
+	}
+	secretImportCmd.Flags().StringVar(&secretImportPath, "input", "", "input file path (default: stdin)")
+	secretCmd.AddCommand(secretImportCmd)
+
+	secretRotateCmd := &cobra.Command{
+		Use:   "rotate-master-key",
+		Short: "Rotate the master encryption key",
+		Long: `Re-encrypt the secret store with a new master key.
+Set MODELMUX_MASTER_KEY to the current key and MODELMUX_NEW_MASTER_KEY
+to the new key before running this command.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			newKey := os.Getenv("MODELMUX_NEW_MASTER_KEY")
+			if newKey == "" {
+				return fmt.Errorf("MODELMUX_NEW_MASTER_KEY environment variable is not set")
+			}
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return err
+			}
+			storePath := secretPath(cfg)
+			s, err := secret.NewStore(storePath)
+			if err != nil {
+				return err
+			}
+			if err := s.RotateKey(newKey); err != nil {
+				return fmt.Errorf("key rotation failed: %w", err)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "master key rotated successfully")
+			return nil
+		},
+	}
+	secretCmd.AddCommand(secretRotateCmd)
+
 	rootCmd.AddCommand(secretCmd)
 
 	var jsonOutput bool
@@ -870,4 +995,13 @@ func newRouterServiceWithSecret(cfg *config.Config, store storage.Storage, secSt
 		return service.NewRouterServiceWithSecret(cfg, store, secStore)
 	}
 	return service.NewRouterService(cfg)
+}
+
+func readPassword() (string, error) {
+	fd := int(syscall.Stdin)
+	bytePassword, err := term.ReadPassword(fd)
+	if err != nil {
+		return "", err
+	}
+	return string(bytePassword), nil
 }

@@ -137,3 +137,89 @@ func (s *Store) encryptLegacy(plaintext []byte) ([]byte, error) {
 	encoded := base64.StdEncoding.EncodeToString(ciphertext)
 	return []byte(encoded), nil
 }
+
+func TestRotateMasterKey(t *testing.T) {
+	dir := t.TempDir()
+	storePath := filepath.Join(dir, "secrets.enc")
+
+	t.Setenv("MODELMUX_MASTER_KEY", "old-master-key-abcdef")
+	store, err := NewStore(storePath)
+	if err != nil {
+		t.Fatalf("create store failed: %v", err)
+	}
+	if err := store.Set("k1", "v1"); err != nil {
+		t.Fatalf("set failed: %v", err)
+	}
+	if err := store.Set("k2", "v2"); err != nil {
+		t.Fatalf("set failed: %v", err)
+	}
+
+	if err := store.RotateKey("new-master-key-123456"); err != nil {
+		t.Fatalf("rotate failed: %v", err)
+	}
+
+	t.Setenv("MODELMUX_MASTER_KEY", "new-master-key-123456")
+	store2, err := NewStore(storePath)
+	if err != nil {
+		t.Fatalf("reopen with new key failed: %v", err)
+	}
+	if v, _ := store2.Get("k1"); v != "v1" {
+		t.Fatalf("expected v1, got %q", v)
+	}
+	if v, _ := store2.Get("k2"); v != "v2" {
+		t.Fatalf("expected v2, got %q", v)
+	}
+
+	t.Setenv("MODELMUX_MASTER_KEY", "old-master-key-abcdef")
+	_, err = NewStore(storePath)
+	if err == nil {
+		t.Fatal("old master key should not work after rotation")
+	}
+}
+
+func TestExportImport(t *testing.T) {
+	dir := t.TempDir()
+	storePath := filepath.Join(dir, "secrets.enc")
+
+	t.Setenv("MODELMUX_MASTER_KEY", "export-test-key-xyz")
+	store, err := NewStore(storePath)
+	if err != nil {
+		t.Fatalf("create store failed: %v", err)
+	}
+	store.Set("original", "data")
+
+	data, err := store.ExportData()
+	if err != nil {
+		t.Fatalf("export failed: %v", err)
+	}
+
+	importPath := filepath.Join(dir, "imported.enc")
+	if err := ImportData(importPath, data); err != nil {
+		t.Fatalf("import failed: %v", err)
+	}
+
+	store2, err := NewStore(importPath)
+	if err != nil {
+		t.Fatalf("open imported failed: %v", err)
+	}
+	if v, _ := store2.Get("original"); v != "data" {
+		t.Fatalf("imported data mismatch: got %q", v)
+	}
+}
+
+func TestVerifyFile(t *testing.T) {
+	dir := t.TempDir()
+	storePath := filepath.Join(dir, "secrets.enc")
+
+	t.Setenv("MODELMUX_MASTER_KEY", "verify-test-key")
+	store, _ := NewStore(storePath)
+	store.Set("x", "y")
+
+	if err := VerifyFile(storePath); err != nil {
+		t.Fatalf("verify should pass: %v", err)
+	}
+
+	if err := VerifyFile("/nonexistent/path/secrets.enc"); err == nil {
+		t.Fatal("verify should fail for missing file")
+	}
+}

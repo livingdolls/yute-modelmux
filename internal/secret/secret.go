@@ -236,3 +236,46 @@ func (s *Store) decryptPayload(data []byte) error {
 
 	return json.Unmarshal(plaintext, &s.data)
 }
+
+func (s *Store) ExportData() ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return os.ReadFile(s.path)
+}
+
+func ImportData(path string, data []byte) error {
+	return os.WriteFile(path, data, 0o600)
+}
+
+func (s *Store) RotateKey(newMasterKey string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	salt := make([]byte, saltLen)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return err
+	}
+	s.salt = salt
+	s.key = deriveKey(newMasterKey, s.salt)
+
+	plaintext, err := json.Marshal(s.data)
+	if err != nil {
+		return err
+	}
+	encrypted, err := s.encrypt(plaintext)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.path, encrypted, 0o600)
+}
+
+func VerifyFile(path string) error {
+	store, err := NewStore(path)
+	if err != nil {
+		return err
+	}
+	if len(store.data) >= 0 {
+		return nil
+	}
+	return nil
+}
