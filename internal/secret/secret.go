@@ -6,20 +6,34 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+
+	"golang.org/x/crypto/argon2"
+)
+
+const (
+	saltLen        = 16
+	argonTime      = 3
+	argonMemory    = 64 * 1024
+	argonThreads   = 4
+	argonKeyLen    = 32
+	v2Prefix       = "v2:"
 )
 
 type Store struct {
-	path  string
-	key   []byte
-	mu    sync.RWMutex
-	data  map[string]string
+	path string
+	key  []byte
+	salt []byte
+	mu   sync.RWMutex
+	data map[string]string
 }
 
 func NewStore(path string) (*Store, error) {
@@ -28,12 +42,8 @@ func NewStore(path string) (*Store, error) {
 		return nil, errors.New("MODELMUX_MASTER_KEY environment variable is not set")
 	}
 
-	hash := sha256.Sum256([]byte(masterKey))
-	key := hash[:]
-
 	s := &Store{
 		path: path,
-		key:  key,
 		data: map[string]string{},
 	}
 
@@ -43,12 +53,27 @@ func NewStore(path string) (*Store, error) {
 
 	data, err := os.ReadFile(path)
 	if err == nil {
-		if err := s.decrypt(data); err != nil {
+		if err := s.decryptFile(data, masterKey); err != nil {
 			return nil, fmt.Errorf("failed to decrypt secret store: %w", err)
 		}
+		return s, nil
 	}
 
+	salt := make([]byte, saltLen)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return nil, err
+	}
+	s.salt = salt
+	s.key = deriveKey(masterKey, s.salt)
 	return s, nil
+}
+
+func deriveKey(masterKey string, salt []byte) []byte {
+	if salt == nil || len(salt) == 0 {
+		h := sha256.Sum256([]byte(masterKey))
+		return h[:]
+	}
+	return argon2.IDKey([]byte(masterKey), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
 }
 
 func (s *Store) Get(ref string) (string, error) {
@@ -122,10 +147,67 @@ func (s *Store) encrypt(plaintext []byte) ([]byte, error) {
 
 	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
 	encoded := base64.StdEncoding.EncodeToString(ciphertext)
-	return []byte(encoded), nil
+
+	if s.salt == nil || len(s.salt) == 0 {
+		return []byte(encoded), nil
+	}
+	return []byte(v2Prefix + hex.EncodeToString(s.salt) + ":" + encoded), nil
 }
 
-func (s *Store) decrypt(data []byte) error {
+func (s *Store) decryptFile(data []byte, masterKey string) error {
+	content := strings.TrimSpace(string(data))
+	if strings.HasPrefix(content, v2Prefix) {
+		rest := strings.TrimPrefix(content, v2Prefix)
+		parts := strings.SplitN(rest, ":", 2)
+		if len(parts) != 2 {
+			return errors.New("invalid v2 secret store format")
+		}
+		salt, err := hex.DecodeString(parts[0])
+		if err != nil || len(salt) != saltLen {
+			return errors.New("invalid salt in v2 secret store")
+		}
+		s.salt = salt
+		s.key = deriveKey(masterKey, s.salt)
+		return s.decryptPayload([]byte(parts[1]))
+	}
+
+	legacyKey := deriveKey(masterKey, nil)
+	key := legacyKey
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return err
+	}
+	decoded, err := base64.StdEncoding.DecodeString(content)
+	if err != nil {
+		return err
+	}
+	nonceSize := gcm.NonceSize()
+	if len(decoded) < nonceSize {
+		return errors.New("ciphertext too short")
+	}
+	nonce, ciphertext := decoded[:nonceSize], decoded[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(plaintext, &s.data); err != nil {
+		return err
+	}
+
+	salt := make([]byte, saltLen)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return err
+	}
+	s.salt = salt
+	s.key = deriveKey(masterKey, s.salt)
+	return nil
+}
+
+func (s *Store) decryptPayload(data []byte) error {
 	decoded, err := base64.StdEncoding.DecodeString(string(data))
 	if err != nil {
 		return err
