@@ -369,4 +369,9 @@ func (s *Server) closeRetired() {
 		store.Close()
 	}
 	s.retiredStores = nil
+	s.rsMu.RLock()
+	if s.store != nil {
+		s.store.Close()
+	}
+	s.rsMu.RUnlock()
 }

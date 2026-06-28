@@ -581,15 +581,25 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 	if modelIdx >= 0 {
 		s.models[modelIdx].ConcurrentCount++
 		s.models[modelIdx].MinuteRequestCount++
-		if !isStreamRequest(bodyBytes) {
-			defer func() {
+	}
+	s.mu.Unlock()
+
+	modelReleased := false
+	if modelIdx >= 0 && !isStreamRequest(bodyBytes) {
+		defer func() {
+			s.mu.Lock()
+			s.models[modelIdx].ConcurrentCount--
+			s.mu.Unlock()
+		}()
+	} else if modelIdx >= 0 {
+		defer func() {
+			if !modelReleased {
 				s.mu.Lock()
 				s.models[modelIdx].ConcurrentCount--
 				s.mu.Unlock()
-			}()
-		}
+			}
+		}()
 	}
-	s.mu.Unlock()
 
 	retried := map[string]int{}
 	maxRetryPerKey := s.cfg.Retry.MaxRetryPerKey
@@ -671,6 +681,7 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 		}
 
 		if isStreamRequest(bodyBytes) && result.Success {
+			modelReleased = true
 			ctx = SetStreamResultContext(ctx, streamResultInfo{
 				KeyID:      key.ID,
 				ModelID:    model.ID,
