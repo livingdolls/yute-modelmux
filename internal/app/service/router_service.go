@@ -48,6 +48,7 @@ type streamResultInfo struct {
 	StatusCode int
 	Error      string
 	StartedAt  time.Time
+	ModelIdx   int
 }
 
 func SetStreamResultContext(ctx context.Context, info streamResultInfo) context.Context {
@@ -477,14 +478,6 @@ func (s *RouterService) SelectKey(ctx context.Context, modelID string) (*domain.
 		sort.SliceStable(keys, func(i, j int) bool { return keys[i].Priority < keys[j].Priority })
 		selected = keys[0]
 	}
-
-	for i := range s.keys {
-		if s.keys[i].ID == selected.ID {
-			s.acquireKeySlotLocked(i)
-			break
-		}
-	}
-
 	k := selected
 	return &k, nil
 }
@@ -570,7 +563,7 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 		s.models[modelIdx].ConcurrentCount++
 	}
 	s.mu.Unlock()
-	if modelIdx >= 0 {
+	if modelIdx >= 0 && !isStreamRequest(bodyBytes) {
 		defer func() {
 			s.mu.Lock()
 			s.releaseModelSlotLocked(modelIdx)
@@ -620,6 +613,15 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 			}
 		}
 
+		s.mu.Lock()
+		for i := range s.keys {
+			if s.keys[i].ID == key.ID {
+				s.acquireKeySlotLocked(i)
+				break
+			}
+		}
+		s.mu.Unlock()
+
 		clonedReq := cloneRequestWithBody(req, bodyBytes)
 		startedAt := time.Now()
 		client := s.clientReg.Get(provider.Type)
@@ -651,6 +653,7 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 				StatusCode: result.StatusCode,
 				Error:      result.Error,
 				StartedAt:  startedAt,
+				ModelIdx:   modelIdx,
 			})
 			if resp != nil && resp.Body != nil {
 				if tracker, ok := resp.Body.(providerclient.StreamUsageTracker); ok {
@@ -819,9 +822,11 @@ func (s *RouterService) FinalizeStreamResult(ctx context.Context, copyErr error)
 	for i := range s.keys {
 		if s.keys[i].ID == info.KeyID {
 			s.releaseKeySlotLocked(i)
-			s.recordKeyPerMinuteUsageLocked(i, result.TokenInput+result.TokenOutput)
 			break
 		}
+	}
+	if info.ModelIdx >= 0 {
+		s.releaseModelSlotLocked(info.ModelIdx)
 	}
 	s.mu.Unlock()
 
