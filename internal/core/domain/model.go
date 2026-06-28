@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 type RotationStrategy string
 
 const (
@@ -18,6 +20,8 @@ type Model struct {
 	RequestsPerMinute     int
 	MaxConcurrentRequests int
 	ConcurrentCount       int
+	MinuteWindowStart     time.Time
+	MinuteRequestCount    int
 	Capabilities          Capabilities
 }
 

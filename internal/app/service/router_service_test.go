@@ -956,3 +956,39 @@ func TestLeastUsedStrategyPicksLowestDailyCount(t *testing.T) {
 		t.Fatalf("expected key ka (lowest priority) to be picked first, got counts: %d/%d/%d", keys[0].DailyRequestCount, keys[1].DailyRequestCount, keys[2].DailyRequestCount)
 	}
 }
+
+func TestModelRequestsPerMinuteBlocksRequests(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer ts.Close()
+
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = ts.URL + "/v1"
+	cfg.Models[0].RequestsPerMinute = 1
+	cfg.Keys = []config.KeyConfig{
+		{ID: "k1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "v1", Status: "active", Priority: 1},
+		{ID: "k2", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "v2", Status: "active", Priority: 2},
+	}
+	rs, _ := NewRouterService(cfg)
+
+	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi"}]}`)))
+	resp, err := rs.HandleChatCompletion(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	req2, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi2"}]}`)))
+	_, err2 := rs.HandleChatCompletion(context.Background(), req2)
+	if err2 == nil {
+		t.Fatal("expected 429 for model rpm limit")
+	}
+
+	models := rs.ListModels()
+	if models[0].MinuteRequestCount != 1 {
+		t.Fatalf("expected 1 rpm count, got %d", models[0].MinuteRequestCount)
+	}
+}

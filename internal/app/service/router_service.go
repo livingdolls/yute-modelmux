@@ -550,6 +550,25 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 
 	s.mu.Lock()
 	modelIdx := s.modelIndexByID(model.ID)
+	if modelIdx >= 0 {
+		if s.models[modelIdx].RequestsPerMinute > 0 {
+			now := time.Now()
+			m := &s.models[modelIdx]
+			if m.MinuteWindowStart.IsZero() || now.Sub(m.MinuteWindowStart) >= time.Minute {
+				m.MinuteWindowStart = now.Truncate(time.Minute)
+				m.MinuteRequestCount = 0
+			}
+			if m.MinuteRequestCount >= m.RequestsPerMinute {
+				s.mu.Unlock()
+				return nil, &ProxyError{
+					HTTPStatus: http.StatusTooManyRequests,
+					Type:       "modelmux_rate_limited",
+					Code:       "model_rpm_exceeded",
+					Message:    fmt.Sprintf("model %s has exceeded its requests per minute limit", model.ID),
+				}
+			}
+		}
+	}
 	if modelIdx >= 0 && s.models[modelIdx].MaxConcurrentRequests > 0 && s.models[modelIdx].ConcurrentCount >= s.models[modelIdx].MaxConcurrentRequests {
 		s.mu.Unlock()
 		return nil, &ProxyError{
@@ -566,9 +585,12 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 	if modelIdx >= 0 && !isStreamRequest(bodyBytes) {
 		defer func() {
 			s.mu.Lock()
-			s.releaseModelSlotLocked(modelIdx)
+			s.models[modelIdx].MinuteRequestCount++
+			s.models[modelIdx].ConcurrentCount--
 			s.mu.Unlock()
 		}()
+	} else if modelIdx >= 0 {
+		s.models[modelIdx].MinuteRequestCount++
 	}
 
 	retried := map[string]int{}
