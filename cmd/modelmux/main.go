@@ -734,12 +734,17 @@ Exit code is non-zero if any validation errors are found.`,
 				return err
 			}
 
-			router, rerr := newRouterServiceWithSecret(cfg, store, secStore)
-			if rerr != nil {
-				return rerr
-			}
-			srv := httpserver.New(router, cfg)
-			return srv.Run(cmd.Context())
+		router, rerr := newRouterServiceWithSecret(cfg, store, secStore)
+		if rerr != nil {
+			return rerr
+		}
+		srv := httpserver.New(router, cfg)
+
+		healthChecker := service.NewHealthChecker(router, cfg.HealthCheck)
+		healthChecker.Start(cmd.Context())
+		defer healthChecker.Stop()
+
+		return srv.Run(cmd.Context())
 		},
 	})
 

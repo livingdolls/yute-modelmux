@@ -15,6 +15,7 @@ type Config struct {
 	Storage     StorageConfig      `yaml:"storage"`
 	Cooldown    CooldownConfig     `yaml:"cooldown"`
 	Retry       RetryConfig        `yaml:"retry"`
+	HealthCheck HealthCheckConfig  `yaml:"health_check"`
 	Providers   []ProviderConfig   `yaml:"providers"`
 	Models      []ModelConfig      `yaml:"models"`
 	ModelGroups []ModelGroupConfig `yaml:"model_groups"`
@@ -51,6 +52,12 @@ type RetryConfig struct {
 	MaxRetryPerKey      int   `yaml:"max_retry_per_key"`
 	MaxTotalAttempts    int   `yaml:"max_total_attempts"`
 	BackoffMilliseconds []int `yaml:"backoff_milliseconds"`
+}
+
+type HealthCheckConfig struct {
+	Enabled         bool `yaml:"enabled"`
+	IntervalSeconds int  `yaml:"interval_seconds"`
+	TimeoutSeconds  int  `yaml:"timeout_seconds"`
 }
 
 type ProviderConfig struct {
@@ -129,6 +136,7 @@ func Default() *Config {
 		Storage:     StorageConfig{Type: "", Path: defaultStoragePath()},
 		Cooldown:    CooldownConfig{RateLimitSeconds: 300, ServerErrorSeconds: 60, TimeoutSeconds: 60},
 		Retry:       RetryConfig{MaxRetryPerKey: 1, MaxTotalAttempts: 5, BackoffMilliseconds: []int{300, 700, 1500}},
+		HealthCheck: HealthCheckConfig{Enabled: false, IntervalSeconds: 300, TimeoutSeconds: 15},
 		Providers:   []ProviderConfig{{ID: "mimo", Name: "Xiaomi MiMo", Type: "openai-compatible", BaseURL: "https://api.example.com/v1", AuthType: "bearer", TimeoutSeconds: 120, Enabled: true}},
 		Models:      []ModelConfig{{ID: "mimo-v2.5-pro", ProviderID: "mimo", ModelName: "mimo-v2.5-pro", Strategy: "failover", Enabled: true}},
 		ModelGroups: []ModelGroupConfig{{ID: "high-price", Name: "High Price Models", Strategy: "failover", Enabled: true, Members: []ModelGroupMemberConfig{{ModelID: "mimo-v2.5-pro", Priority: 1, Weight: 1, Enabled: true}}}},
