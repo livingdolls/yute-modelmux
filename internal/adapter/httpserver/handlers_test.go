@@ -444,3 +444,39 @@ func TestAdminReloadUpdatesRouter(t *testing.T) {
 func NewTestRouterService(cfg *config.Config) (*service.RouterService, error) {
 	return service.NewRouterService(cfg)
 }
+
+func TestAdminBlockedFromNonLocalWhenAuthOff(t *testing.T) {
+	cfg := config.Default()
+	cfg.Server.RequireAuth = false
+	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	cfg.Keys[0].Value = "test-key"
+	rs, _ := NewTestRouterService(cfg)
+	s := New(rs, cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
+	req.RemoteAddr = "192.168.1.100:12345"
+	w := httptest.NewRecorder()
+	s.authMiddleware(s.mux).ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-local admin access, got %d", w.Code)
+	}
+}
+
+func TestAdminAllowedFromLocalWhenAuthOff(t *testing.T) {
+	cfg := config.Default()
+	cfg.Server.RequireAuth = false
+	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	cfg.Keys[0].Value = "test-key"
+	rs, _ := NewTestRouterService(cfg)
+	s := New(rs, cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	w := httptest.NewRecorder()
+	s.authMiddleware(s.mux).ServeHTTP(w, req)
+
+	if w.Code == http.StatusForbidden {
+		t.Fatal("expected admin access from local to be allowed")
+	}
+}

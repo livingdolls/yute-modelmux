@@ -25,8 +25,9 @@ func (s *Server) modelsHandler(w http.ResponseWriter, r *http.Request) {
 		ID     string `json:"id"`
 		Object string `json:"object"`
 	}
-	models := s.rs.ListModels()
-	groups := s.rs.ListModelGroups()
+	rs := s.loadRouterService()
+	models := rs.ListModels()
+	groups := rs.ListModelGroups()
 	items := make([]modelItem, 0, len(models)+len(groups))
 	for _, m := range models {
 		if !m.Enabled {
@@ -48,12 +49,13 @@ func (s *Server) completionsHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	maxBytes := int64(s.cfg.Server.MaxRequestBodyMB) * 1024 * 1024
+	maxBytes := int64(s.loadConfig().Server.MaxRequestBodyMB) * 1024 * 1024
 	if maxBytes <= 0 {
 		maxBytes = 10 * 1024 * 1024
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
-	resp, err := s.rs.HandleCompletion(r.Context(), r)
+	rs := s.loadRouterService()
+	resp, err := rs.HandleCompletion(r.Context(), r)
 	if err != nil {
 		writeProxyError(w, err)
 		return
@@ -66,10 +68,10 @@ func (s *Server) completionsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	if err := copyWithFlush(w, resp.Body); err != nil {
-		s.rs.FinalizeStreamResult(r.Context(), err)
+		rs.FinalizeStreamResult(r.Context(), err)
 		return
 	}
-	s.rs.FinalizeStreamResult(r.Context(), nil)
+	rs.FinalizeStreamResult(r.Context(), nil)
 }
 
 func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
@@ -77,12 +79,13 @@ func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	maxBytes := int64(s.cfg.Server.MaxRequestBodyMB) * 1024 * 1024
+	maxBytes := int64(s.loadConfig().Server.MaxRequestBodyMB) * 1024 * 1024
 	if maxBytes <= 0 {
 		maxBytes = 10 * 1024 * 1024
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
-	resp, err := s.rs.HandleChatCompletion(r.Context(), r)
+	rs := s.loadRouterService()
+	resp, err := rs.HandleChatCompletion(r.Context(), r)
 	if err != nil {
 		writeProxyError(w, err)
 		return
@@ -95,10 +98,10 @@ func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	w.WriteHeader(resp.StatusCode)
 	if err := copyWithFlush(w, resp.Body); err != nil {
-		s.rs.FinalizeStreamResult(r.Context(), err)
+		rs.FinalizeStreamResult(r.Context(), err)
 		return
 	}
-	s.rs.FinalizeStreamResult(r.Context(), nil)
+	rs.FinalizeStreamResult(r.Context(), nil)
 }
 
 func copyWithFlush(dst io.Writer, src io.Reader) error {
@@ -137,11 +140,12 @@ type metricSnapshot struct {
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 	format := r.URL.Query().Get("format")
 
-	keys := s.rs.ListKeys()
-	logs := s.rs.LogsForMetrics()
-	models := s.rs.ListModels()
-	providers := s.rs.ListProviders()
-	groups := s.rs.ListModelGroups()
+	rs := s.loadRouterService()
+	keys := rs.ListKeys()
+	logs := rs.LogsForMetrics()
+	models := rs.ListModels()
+	providers := rs.ListProviders()
+	groups := rs.ListModelGroups()
 
 	modelMetrics := map[string]*metricSnapshot{}
 	for _, model := range models {
@@ -532,7 +536,7 @@ func (s *Server) logsHandler(w http.ResponseWriter, r *http.Request) {
 		filter.StatusCode = statusCodeFilter
 	}
 
-	page, total := s.rs.QueryLogs(filter)
+	page, total := s.loadRouterService().QueryLogs(filter)
 
 	type logItem struct {
 		ID          string `json:"id"`
@@ -589,11 +593,16 @@ func writeProxyError(w http.ResponseWriter, err error) {
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.cfg.Server.RequireAuth {
+		cfg := s.loadConfig()
+		if !cfg.Server.RequireAuth {
+			if strings.HasPrefix(r.URL.Path, "/admin/") && !isLocalAddr(r.RemoteAddr) {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "admin endpoints require auth or local bind"})
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
-		expected := s.cfg.AuthToken()
+		expected := cfg.AuthToken()
 		if expected == "" {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "server auth token is not configured"})
 			return

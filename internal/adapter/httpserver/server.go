@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -28,7 +30,9 @@ type Server struct {
 	rs         *service.RouterService
 	rsMu       sync.RWMutex
 	cfg        *config.Config
+	cfgMu      sync.RWMutex
 	configPath string
+	store      storage.Storage
 	mux        *http.ServeMux
 	srv        *http.Server
 }
@@ -64,6 +68,34 @@ func (s *Server) loadRouterService() *service.RouterService {
 	return s.rs
 }
 
+func (s *Server) loadConfig() *config.Config {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return s.cfg
+}
+
+func expandHome(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
+func resolveSecretPath(cfg *config.Config) string {
+	dbPath := cfg.Storage.Path
+	if dbPath == "" {
+		dbPath = config.Default().Storage.Path
+	}
+	dbPath = expandHome(dbPath)
+	dir := strings.TrimSuffix(dbPath, "modelmux.db")
+	if dir == dbPath {
+		dir = dbPath + ".d"
+	}
+	return dir + "secrets.enc"
+}
+
 func (s *Server) adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 	path := s.configPath
 	if path == "" {
@@ -75,45 +107,54 @@ func (s *Server) adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var store storage.Storage
+	var newStore storage.Storage
 	if cfg.Storage.Type == "sqlite" {
 		storePath := cfg.Storage.Path
 		if storePath == "" {
 			storePath = config.Default().Storage.Path
 		}
-		if strings.HasPrefix(storePath, "~/") {
-			if home, e := os.UserHomeDir(); e == nil {
-				storePath = home + storePath[1:]
-			}
-		}
-		s, err := storage.New(storePath)
+		storePath = expandHome(storePath)
+		newStore, err = storage.New(storePath)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to open storage: " + err.Error()})
 			return
 		}
-		defer s.Close()
-		store = s
 	}
 
 	var secStore *secret.Store
 	if os.Getenv("MODELMUX_MASTER_KEY") != "" {
-		secStore, err = secret.NewStore(secretPath(cfg.Storage.Path))
+		secStore, err = secret.NewStore(resolveSecretPath(cfg))
 		if err != nil {
+			if newStore != nil {
+				newStore.Close()
+			}
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to open secret store: " + err.Error()})
 			return
 		}
 	}
 
-	newRS, err := service.NewRouterServiceWithSecret(cfg, store, secStore)
+	newRS, err := service.NewRouterServiceWithSecret(cfg, newStore, secStore)
 	if err != nil {
+		if newStore != nil {
+			newStore.Close()
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to create router: " + err.Error()})
 		return
 	}
 
 	s.rsMu.Lock()
+	oldStore := s.store
 	s.rs = newRS
+	s.store = newStore
 	s.rsMu.Unlock()
+
+	s.cfgMu.Lock()
 	s.cfg = cfg
+	s.cfgMu.Unlock()
+
+	if oldStore != nil {
+		oldStore.Close()
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "reloaded"})
 }
@@ -149,6 +190,8 @@ func (s *Server) adminEnableKeyHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to save config: " + err.Error()})
 		return
 	}
+	rs := s.loadRouterService()
+	rs.SetKeyStatus(id, "active")
 	writeJSON(w, http.StatusOK, map[string]any{"status": "enabled", "id": id})
 }
 
@@ -183,6 +226,8 @@ func (s *Server) adminDisableKeyHandler(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to save config: " + err.Error()})
 		return
 	}
+	rs := s.loadRouterService()
+	rs.SetKeyStatus(id, "disabled")
 	writeJSON(w, http.StatusOK, map[string]any{"status": "disabled", "id": id})
 }
 
@@ -259,12 +304,16 @@ func (s *Server) adminStatusHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func secretPath(dbPath string) string {
-	dir := strings.TrimSuffix(dbPath, "modelmux.db")
-	if dir == dbPath {
-		dir = dbPath + ".d"
+func isLocalAddr(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
 	}
-	return dir + "secrets.enc"
+	switch host {
+	case "127.0.0.1", "::1", "localhost":
+		return true
+	}
+	return false
 }
 
 func (s *Server) requestIDMiddleware(next http.Handler) http.Handler {

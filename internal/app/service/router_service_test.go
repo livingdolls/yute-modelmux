@@ -992,3 +992,43 @@ func TestModelRequestsPerMinuteBlocksRequests(t *testing.T) {
 		t.Fatalf("expected 1 rpm count, got %d", models[0].MinuteRequestCount)
 	}
 }
+
+func TestKeyConcurrencyAcquireChecked(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer ts.Close()
+
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = ts.URL + "/v1"
+	cfg.Keys = []config.KeyConfig{
+		{ID: "k1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "v1", Status: "active", Priority: 1, MaxConcurrentRequests: 1},
+		{ID: "k2", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "v2", Status: "active", Priority: 2, MaxConcurrentRequests: 1},
+	}
+	rs, _ := NewRouterService(cfg)
+
+	key, err := rs.SelectKey(context.Background(), "mimo-v2.5-pro")
+	if err != nil {
+		t.Fatalf("SelectKey failed: %v", err)
+	}
+
+	rs.mu.Lock()
+	for i := range rs.keys {
+		if rs.keys[i].ID == key.ID {
+			rs.acquireKeySlotLocked(i)
+			break
+		}
+	}
+	rs.mu.Unlock()
+
+	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi"}]}`)))
+	resp, err := rs.HandleChatCompletion(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected fallback to k2, got error: %v", err)
+	}
+	if resp != nil {
+		resp.Body.Close()
+	}
+}

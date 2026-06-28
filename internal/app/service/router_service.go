@@ -636,13 +636,19 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 		}
 
 		s.mu.Lock()
+		slotAcquired := false
 		for i := range s.keys {
 			if s.keys[i].ID == key.ID {
-				s.acquireKeySlotLocked(i)
+				if s.acquireKeySlotLocked(i) {
+					slotAcquired = true
+				}
 				break
 			}
 		}
 		s.mu.Unlock()
+		if !slotAcquired {
+			continue
+		}
 
 		clonedReq := cloneRequestWithBody(req, bodyBytes)
 		startedAt := time.Now()
@@ -841,12 +847,6 @@ func (s *RouterService) FinalizeStreamResult(ctx context.Context, copyErr error)
 	}
 
 	s.mu.Lock()
-	for i := range s.keys {
-		if s.keys[i].ID == info.KeyID {
-			s.releaseKeySlotLocked(i)
-			break
-		}
-	}
 	if info.ModelIdx >= 0 {
 		s.releaseModelSlotLocked(info.ModelIdx)
 	}
@@ -886,6 +886,21 @@ func (s *RouterService) TestKey(ctx context.Context, keyID string) error {
 
 	client := s.clientReg.Get(provider.Type)
 	return client.TestKey(ctx, provider, model, key)
+}
+
+func (s *RouterService) SetKeyStatus(keyID string, status string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.keys {
+		if s.keys[i].ID == keyID {
+			s.keys[i].Status = domain.APIKeyStatus(status)
+			if status == "active" {
+				s.keys[i].CooldownEnd = nil
+			}
+			s.saveKeyRuntimeLocked(s.keys[i])
+			return
+		}
+	}
 }
 
 func (s *RouterService) appendLog(log domain.RequestLog) {
