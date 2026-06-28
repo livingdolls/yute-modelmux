@@ -28,7 +28,17 @@ type ctxKey int
 const (
 	ctxKeyStreamResult ctxKey = iota
 	ctxKeyTokenTracker
+	ctxKeyRequestID
 )
+
+func SetRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, ctxKeyRequestID, id)
+}
+
+func GetRequestID(ctx context.Context) string {
+	id, _ := ctx.Value(ctxKeyRequestID).(string)
+	return id
+}
 
 type streamResultInfo struct {
 	KeyID      string
@@ -677,7 +687,7 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 		s.keys[i].LastUsedAt = &now
 		s.checkDailyResetLocked(i)
 		s.recordKeyPerMinuteUsageLocked(i, result.TokenInput+result.TokenOutput)
-		log := domain.RequestLog{ID: fmt.Sprintf("log-%d", now.UnixNano()), GroupID: result.GroupID, ModelID: result.ModelID, ProviderID: result.ProviderID, KeyID: keyID, StatusCode: result.StatusCode, Error: result.Error, LatencyMs: result.LatencyMs, TokenInput: result.TokenInput, TokenOutput: result.TokenOutput, CreatedAt: now}
+		log := domain.RequestLog{ID: fmt.Sprintf("log-%d", now.UnixNano()), RequestID: GetRequestID(ctx), GroupID: result.GroupID, ModelID: result.ModelID, ProviderID: result.ProviderID, KeyID: keyID, StatusCode: result.StatusCode, Error: result.Error, LatencyMs: result.LatencyMs, TokenInput: result.TokenInput, TokenOutput: result.TokenOutput, CreatedAt: now}
 		if result.Success {
 			s.keys[i].ErrorCount = 0
 			if s.keys[i].Status != domain.KeyStatusLimited {

@@ -381,6 +381,20 @@ func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.M
 		b.WriteString(fmt.Sprintf("modelmux_errors_total{%s} %d\n", labels, ms.errors))
 		b.WriteString(fmt.Sprintf("modelmux_rate_limits_total{%s} %d\n", labels, ms.rateLimits))
 
+		buckets := []struct {
+			le    float64
+			label string
+		}{
+			{50, "0.05"},
+			{100, "0.1"},
+			{250, "0.25"},
+			{500, "0.5"},
+			{1000, "1"},
+			{2500, "2.5"},
+			{5000, "5"},
+			{10000, "10"},
+			{30000, "30"},
+		}
 		if len(ms.latencies) > 0 {
 			sorted := make([]int64, len(ms.latencies))
 			copy(sorted, ms.latencies)
@@ -396,6 +410,41 @@ func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.M
 			}
 			b.WriteString(fmt.Sprintf("modelmux_latency_avg_ms{%s} %.0f\n", labels, avg))
 			b.WriteString(fmt.Sprintf("modelmux_latency_p95_ms{%s} %d\n", labels, sorted[p95Idx]))
+
+			b.WriteString(fmt.Sprintf("# TYPE modelmux_latency_ms histogram\n"))
+			b.WriteString(fmt.Sprintf("# HELP modelmux_latency_ms Request latency in milliseconds\n"))
+			for _, bucket := range buckets {
+				count := 0
+				for _, l := range sorted {
+					if float64(l) <= bucket.le {
+						count++
+					}
+				}
+				b.WriteString(fmt.Sprintf("modelmux_latency_ms_bucket{%s,le=\"%s\"} %d\n", labels, bucket.label, count))
+			}
+			b.WriteString(fmt.Sprintf("modelmux_latency_ms_bucket{%s,le=\"+Inf\"} %d\n", labels, len(sorted)))
+			b.WriteString(fmt.Sprintf("modelmux_latency_ms_sum{%s} %.0f\n", labels, float64(total)))
+			b.WriteString(fmt.Sprintf("modelmux_latency_ms_count{%s} %d\n", labels, len(sorted)))
+		}
+
+		statusClasses := map[string]int{"2xx": 0, "4xx": 0, "5xx": 0}
+		for _, log := range logs {
+			if log.ModelID != model.ID {
+				continue
+			}
+			switch {
+			case log.StatusCode >= 200 && log.StatusCode < 300:
+				statusClasses["2xx"]++
+			case log.StatusCode >= 400 && log.StatusCode < 500:
+				statusClasses["4xx"]++
+			case log.StatusCode >= 500:
+				statusClasses["5xx"]++
+			}
+		}
+		for class, count := range statusClasses {
+			if count > 0 {
+				b.WriteString(fmt.Sprintf("modelmux_status_total{%s,status_class=\"%s\"} %d\n", labels, class, count))
+			}
 		}
 	}
 	for _, key := range keys {
