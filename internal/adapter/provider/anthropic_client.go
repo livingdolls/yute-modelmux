@@ -118,13 +118,13 @@ type anthropicRequest struct {
 
 func convertToAnthropicRequest(body []byte, modelName string) (*anthropicRequest, bool, error) {
 	var openAIReq struct {
-		Model       string  `json:"model"`
-		Messages    []any   `json:"messages"`
-		Stream      bool    `json:"stream"`
-		MaxTokens   int     `json:"max_tokens"`
+		Model       string   `json:"model"`
+		Messages    []any    `json:"messages"`
+		Stream      bool     `json:"stream"`
+		MaxTokens   int      `json:"max_tokens"`
 		Temperature *float64 `json:"temperature"`
 		TopP        *float64 `json:"top_p"`
-		Stop        any     `json:"stop"`
+		Stop        any      `json:"stop"`
 	}
 	if err := json.Unmarshal(body, &openAIReq); err != nil {
 		return nil, false, fmt.Errorf("invalid request body: %w", err)
@@ -264,7 +264,6 @@ func convertAnthropicStream(resp *http.Response, modelID string) (io.ReadCloser,
 	pr, pw := io.Pipe()
 	usage := &StreamUsage{}
 	go func() {
-		defer pw.Close()
 		defer resp.Body.Close()
 
 		scanner := bufio.NewScanner(resp.Body)
@@ -287,9 +286,9 @@ func convertAnthropicStream(resp *http.Response, modelID string) (io.ReadCloser,
 				Type    string `json:"type"`
 				Index   int    `json:"index"`
 				Content *struct {
-					Type         string `json:"type"`
-					Text         string `json:"text"`
-					PartialJSON  string `json:"partial_json"`
+					Type        string `json:"type"`
+					Text        string `json:"text"`
+					PartialJSON string `json:"partial_json"`
 				} `json:"content_block"`
 				Delta *struct {
 					Type     string `json:"type"`
@@ -303,6 +302,9 @@ func convertAnthropicStream(resp *http.Response, modelID string) (io.ReadCloser,
 			}
 			if err := json.Unmarshal([]byte(data), &event); err != nil {
 				continue
+			}
+			if event.Usage != nil {
+				usage.Add(event.Usage.InputTokens, event.Usage.OutputTokens)
 			}
 
 			var delta map[string]any
@@ -324,9 +326,6 @@ func convertAnthropicStream(resp *http.Response, modelID string) (io.ReadCloser,
 				}
 			case "message_delta":
 			case "message_stop":
-				if event.Usage != nil {
-					usage.Add(event.Usage.InputTokens, event.Usage.OutputTokens)
-				}
 				delta = map[string]any{}
 			}
 
@@ -350,6 +349,7 @@ func convertAnthropicStream(resp *http.Response, modelID string) (io.ReadCloser,
 		}
 
 		if err := scanner.Err(); err != nil {
+			_ = pw.CloseWithError(err)
 			return
 		}
 
@@ -367,6 +367,7 @@ func convertAnthropicStream(resp *http.Response, modelID string) (io.ReadCloser,
 		jsonChunk, _ := json.Marshal(finishChunk)
 		_, _ = pw.Write([]byte("data: " + string(jsonChunk) + "\n\n"))
 		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
+		_ = pw.Close()
 	}()
 	return pr, usage
 }

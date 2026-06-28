@@ -121,3 +121,36 @@ func TestForwardChatCompletionStreamDoesNotUseWholeBodyTimeout(t *testing.T) {
 		t.Fatalf("expected complete stream body, got %q", string(body))
 	}
 }
+
+func TestConvertAnthropicStreamTracksUsageFromMessageDelta(t *testing.T) {
+	body := "data: {\"type\":\"message_delta\",\"usage\":{\"input_tokens\":7,\"output_tokens\":11}}\n\n" +
+		"data: {\"type\":\"message_stop\"}\n\n"
+	reader, usage := convertAnthropicStream(&http.Response{Body: io.NopCloser(strings.NewReader(body))}, "claude-test")
+	if _, err := io.ReadAll(reader); err != nil {
+		t.Fatalf("read anthropic stream failed: %v", err)
+	}
+	prompt, completion := usage.Tokens()
+	if prompt != 7 || completion != 11 {
+		t.Fatalf("expected usage 7/11, got %d/%d", prompt, completion)
+	}
+}
+
+func TestConvertGeminiStreamTracksUsageMetadata(t *testing.T) {
+	body := "data: {\"usageMetadata\":{\"promptTokenCount\":12,\"candidatesTokenCount\":4}}\n\n"
+	reader, usage := convertGeminiStream(&http.Response{Body: io.NopCloser(strings.NewReader(body))}, "gemini-test")
+	if _, err := io.ReadAll(reader); err != nil {
+		t.Fatalf("read gemini stream failed: %v", err)
+	}
+	prompt, completion := usage.Tokens()
+	if prompt != 12 || completion != 4 {
+		t.Fatalf("expected usage 12/4, got %d/%d", prompt, completion)
+	}
+}
+
+func TestConvertGeminiStreamPropagatesScannerError(t *testing.T) {
+	body := "data: " + strings.Repeat("x", 300*1024) + "\n\n"
+	reader, _ := convertGeminiStream(&http.Response{Body: io.NopCloser(strings.NewReader(body))}, "gemini-test")
+	if _, err := io.ReadAll(reader); err == nil {
+		t.Fatal("expected scanner error to propagate through pipe")
+	}
+}

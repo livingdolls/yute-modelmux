@@ -65,11 +65,11 @@ func (c *GeminiClient) Forward(ctx context.Context, provider domain.Provider, mo
 		return convertGeminiResponse(resp, model.ID)
 	}
 
-	reader := convertGeminiStream(resp, model.ID)
+	reader, usage := convertGeminiStream(resp, model.ID)
 	return &http.Response{
 		StatusCode: resp.StatusCode,
 		Header:     resp.Header,
-		Body:       reader,
+		Body:       newTrackedReadCloser(reader, usage),
 	}, nil
 }
 
@@ -101,8 +101,8 @@ func geminiAction(stream bool) string {
 }
 
 type geminiContent struct {
-	Role  string        `json:"role,omitempty"`
-	Parts []geminiPart  `json:"parts"`
+	Role  string       `json:"role,omitempty"`
+	Parts []geminiPart `json:"parts"`
 }
 
 type geminiPart struct {
@@ -110,9 +110,9 @@ type geminiPart struct {
 }
 
 type geminiRequest struct {
-	Contents          []geminiContent    `json:"contents"`
-	SystemInstruction *geminiContent     `json:"system_instruction,omitempty"`
-	GenerationConfig  *geminiGenConfig   `json:"generation_config,omitempty"`
+	Contents          []geminiContent  `json:"contents"`
+	SystemInstruction *geminiContent   `json:"system_instruction,omitempty"`
+	GenerationConfig  *geminiGenConfig `json:"generation_config,omitempty"`
 }
 
 type geminiGenConfig struct {
@@ -124,13 +124,13 @@ type geminiGenConfig struct {
 
 func convertToGeminiRequest(body []byte, modelName string) (*geminiRequest, bool, error) {
 	var openAIReq struct {
-		Model       string  `json:"model"`
-		Messages    []any   `json:"messages"`
-		Stream      bool    `json:"stream"`
-		MaxTokens   int     `json:"max_tokens"`
+		Model       string   `json:"model"`
+		Messages    []any    `json:"messages"`
+		Stream      bool     `json:"stream"`
+		MaxTokens   int      `json:"max_tokens"`
 		Temperature *float64 `json:"temperature"`
 		TopP        *float64 `json:"top_p"`
-		Stop        any     `json:"stop"`
+		Stop        any      `json:"stop"`
 	}
 	if err := json.Unmarshal(body, &openAIReq); err != nil {
 		return nil, false, fmt.Errorf("invalid request body: %w", err)
@@ -290,10 +290,10 @@ func convertGeminiResponse(resp *http.Response, modelID string) (*http.Response,
 	}, nil
 }
 
-func convertGeminiStream(resp *http.Response, modelID string) io.ReadCloser {
+func convertGeminiStream(resp *http.Response, modelID string) (io.ReadCloser, *StreamUsage) {
 	pr, pw := io.Pipe()
+	usage := &StreamUsage{}
 	go func() {
-		defer pw.Close()
 		defer resp.Body.Close()
 
 		scanner := bufio.NewScanner(resp.Body)
@@ -318,9 +318,16 @@ func convertGeminiStream(resp *http.Response, modelID string) io.ReadCloser {
 					} `json:"content"`
 					FinishReason string `json:"finishReason"`
 				} `json:"candidates"`
+				UsageMetadata *struct {
+					PromptTokenCount     int `json:"promptTokenCount"`
+					CandidatesTokenCount int `json:"candidatesTokenCount"`
+				} `json:"usageMetadata"`
 			}
 			if err := json.Unmarshal([]byte(line), &event); err != nil {
 				continue
+			}
+			if event.UsageMetadata != nil {
+				usage.Add(event.UsageMetadata.PromptTokenCount, event.UsageMetadata.CandidatesTokenCount)
 			}
 
 			if len(event.Candidates) == 0 {
@@ -365,9 +372,11 @@ func convertGeminiStream(resp *http.Response, modelID string) io.ReadCloser {
 			_, _ = pw.Write([]byte("data: " + string(jsonChunk) + "\n\n"))
 		}
 		if err := scanner.Err(); err != nil {
+			_ = pw.CloseWithError(err)
 			return
 		}
 		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
+		_ = pw.Close()
 	}()
-	return pr
+	return pr, usage
 }

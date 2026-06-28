@@ -87,10 +87,18 @@ func TestLegacyV1Decrypt(t *testing.T) {
 		t.Fatalf("got %q, want old-value", v)
 	}
 
+	data, err := os.ReadFile(storePath)
+	if err != nil {
+		t.Fatalf("read after opening legacy store failed: %v", err)
+	}
+	if !strings.HasPrefix(string(data), v2Prefix) {
+		t.Fatal("legacy store should be migrated to v2 format when opened")
+	}
+
 	if err := store.Set("new-key", "new-value"); err != nil {
 		t.Fatalf("set after migration failed: %v", err)
 	}
-	data, err := os.ReadFile(storePath)
+	data, err = os.ReadFile(storePath)
 	if err != nil {
 		t.Fatalf("read after migration failed: %v", err)
 	}

@@ -20,12 +20,12 @@ import (
 )
 
 const (
-	saltLen        = 16
-	argonTime      = 3
-	argonMemory    = 64 * 1024
-	argonThreads   = 4
-	argonKeyLen    = 32
-	v2Prefix       = "v2:"
+	saltLen      = 16
+	argonTime    = 3
+	argonMemory  = 64 * 1024
+	argonThreads = 4
+	argonKeyLen  = 32
+	v2Prefix     = "v2:"
 )
 
 type Store struct {
@@ -204,7 +204,7 @@ func (s *Store) decryptFile(data []byte, masterKey string) error {
 	}
 	s.salt = salt
 	s.key = deriveKey(masterKey, s.salt)
-	return nil
+	return s.save()
 }
 
 func (s *Store) decryptPayload(data []byte) error {

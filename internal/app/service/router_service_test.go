@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,9 +17,9 @@ import (
 
 	"github.com/livingdolls/yute-modelmux/internal/config"
 	"github.com/livingdolls/yute-modelmux/internal/core/domain"
+	"github.com/livingdolls/yute-modelmux/internal/core/port/inbound"
 	"github.com/livingdolls/yute-modelmux/internal/secret"
 	"github.com/livingdolls/yute-modelmux/internal/storage"
-	"github.com/livingdolls/yute-modelmux/internal/core/port/inbound"
 )
 
 func TestSelectKeyPrefersLowestPriority(t *testing.T) {
@@ -626,7 +627,7 @@ func TestSecretStoreMissingKeyError(t *testing.T) {
 	cfg.Keys = []config.KeyConfig{{
 		ID: "key-only-secret", ProviderID: "mimo", ModelID: "mimo-v2.5-pro",
 		SecretRef: "non-existent-ref",
-		Status: "active", Priority: 1,
+		Status:    "active", Priority: 1,
 	}}
 
 	_, err = NewRouterServiceWithSecret(cfg, nil, secStore)
@@ -665,6 +666,39 @@ func TestDailyTokenLimitCountsTotalTokens(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "currently limited") {
 		t.Fatalf("expected limited error, got: %v", err)
+	}
+}
+
+func TestStreamDailyTokenLimitCountsOpenAIUsageChunk(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[],\"usage\":{\"prompt_tokens\":90,\"completion_tokens\":10}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer ts.Close()
+
+	cfg := singleKeyRetryConfig(ts.URL + "/v1")
+	cfg.Keys[0].DailyTokenLimit = 100
+	rs, _ := NewRouterService(cfg)
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/chat/completions", bytes.NewReader([]byte(`{"model":"test-model","messages":[{"role":"user","content":"hi"}],"stream":true}`)))
+	resp, err := rs.HandleChatCompletion(req.Context(), req)
+	if err != nil {
+		t.Fatalf("stream request should succeed: %v", err)
+	}
+	if _, err := io.ReadAll(resp.Body); err != nil {
+		t.Fatalf("read stream failed: %v", err)
+	}
+	resp.Body.Close()
+	rs.FinalizeStreamResult(req.Context(), nil)
+
+	keys := rs.ListKeys()
+	if keys[0].DailyTokenCount != 100 {
+		t.Fatalf("expected stream token count 100, got %d", keys[0].DailyTokenCount)
+	}
+	if keys[0].Status != domain.KeyStatusLimited {
+		t.Fatalf("expected key limited after stream usage, got %s", keys[0].Status)
 	}
 }
 

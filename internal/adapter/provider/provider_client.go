@@ -1,10 +1,13 @@
 package provider
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/livingdolls/yute-modelmux/internal/core/domain"
@@ -16,7 +19,7 @@ type ProviderClient interface {
 }
 
 type StreamUsage struct {
-	mu           sync.Mutex
+	mu               sync.Mutex
 	promptTokens     int
 	completionTokens int
 }
@@ -45,16 +48,34 @@ type StreamUsageTracker interface {
 }
 
 type trackedReadCloser struct {
-	io   io.ReadCloser
-	usage *StreamUsage
+	io      io.ReadCloser
+	usage   *StreamUsage
+	onRead  func([]byte)
+	onClose func()
 }
 
 func (t *trackedReadCloser) Read(p []byte) (int, error) {
-	return t.io.Read(p)
+	n, err := t.io.Read(p)
+	if n > 0 && t.onRead != nil {
+		t.onRead(p[:n])
+	}
+	if err == io.EOF {
+		t.flush()
+	}
+	return n, err
 }
 
 func (t *trackedReadCloser) Close() error {
+	t.flush()
 	return t.io.Close()
+}
+
+func (t *trackedReadCloser) flush() {
+	if t.onClose == nil {
+		return
+	}
+	t.onClose()
+	t.onClose = nil
 }
 
 func (t *trackedReadCloser) StreamUsage() *StreamUsage {
@@ -63,6 +84,72 @@ func (t *trackedReadCloser) StreamUsage() *StreamUsage {
 
 func newTrackedReadCloser(r io.ReadCloser, u *StreamUsage) io.ReadCloser {
 	return &trackedReadCloser{io: r, usage: u}
+}
+
+func newOpenAIStreamUsageReadCloser(r io.ReadCloser) io.ReadCloser {
+	usage := &StreamUsage{}
+	parser := &streamUsageParser{usage: usage}
+	return &trackedReadCloser{io: r, usage: usage, onRead: parser.Feed, onClose: parser.Flush}
+}
+
+type streamUsageParser struct {
+	usage *StreamUsage
+	line  []byte
+}
+
+func (p *streamUsageParser) Feed(data []byte) {
+	for len(data) > 0 {
+		idx := bytes.IndexByte(data, '\n')
+		if idx < 0 {
+			p.line = append(p.line, data...)
+			return
+		}
+		p.line = append(p.line, data[:idx]...)
+		p.processLine(p.line)
+		p.line = p.line[:0]
+		data = data[idx+1:]
+	}
+}
+
+func (p *streamUsageParser) Flush() {
+	if len(p.line) == 0 {
+		return
+	}
+	p.processLine(p.line)
+	p.line = p.line[:0]
+}
+
+func (p *streamUsageParser) processLine(line []byte) {
+	line = bytes.TrimRight(line, "\r")
+	text := strings.TrimSpace(string(line))
+	if !strings.HasPrefix(text, "data:") {
+		return
+	}
+	payload := strings.TrimSpace(strings.TrimPrefix(text, "data:"))
+	if payload == "" || payload == "[DONE]" {
+		return
+	}
+
+	var event struct {
+		Usage *struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
+		UsageMetadata *struct {
+			PromptTokenCount     int `json:"promptTokenCount"`
+			CandidatesTokenCount int `json:"candidatesTokenCount"`
+		} `json:"usageMetadata"`
+	}
+	if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		return
+	}
+	if event.Usage != nil {
+		p.usage.Add(event.Usage.PromptTokens, event.Usage.CompletionTokens)
+		return
+	}
+	if event.UsageMetadata != nil {
+		p.usage.Add(event.UsageMetadata.PromptTokenCount, event.UsageMetadata.CandidatesTokenCount)
+	}
 }
 
 type unsupportedProviderClient struct{}

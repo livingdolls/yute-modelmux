@@ -57,8 +57,14 @@ func (c *OpenAICompatibleClient) forwardRequest(ctx context.Context, provider do
 		upstream.Header.Set("X-ModelMux-Model", model.ID)
 	}
 
-	client := newForwardHTTPClient(provider.TimeoutSeconds, isStreamRequest(bodyBytes))
-	return client.Do(upstream)
+	isStream := isStreamRequest(bodyBytes)
+	client := newForwardHTTPClient(provider.TimeoutSeconds, isStream)
+	resp, err := client.Do(upstream)
+	if err != nil || resp == nil || !isStream || resp.Body == nil {
+		return resp, err
+	}
+	resp.Body = newOpenAIStreamUsageReadCloser(resp.Body)
+	return resp, nil
 }
 
 func (c *OpenAICompatibleClient) TestKey(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey) error {
