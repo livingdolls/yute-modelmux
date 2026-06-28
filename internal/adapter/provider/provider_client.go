@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -64,6 +65,16 @@ func newTrackedReadCloser(r io.ReadCloser, u *StreamUsage) io.ReadCloser {
 	return &trackedReadCloser{io: r, usage: u}
 }
 
+type unsupportedProviderClient struct{}
+
+func (c *unsupportedProviderClient) Forward(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey, req *http.Request, apiPath string) (*http.Response, error) {
+	return nil, fmt.Errorf("unsupported provider type %q for provider %s", provider.Type, provider.ID)
+}
+
+func (c *unsupportedProviderClient) TestKey(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey) error {
+	return fmt.Errorf("unsupported provider type %q for provider %s", provider.Type, provider.ID)
+}
+
 type ClientRegistry struct {
 	clients map[domain.ProviderType]ProviderClient
 }
@@ -83,7 +94,7 @@ func (r *ClientRegistry) Get(pt domain.ProviderType) ProviderClient {
 	if c, ok := r.clients[pt]; ok {
 		return c
 	}
-	return r.clients[domain.ProviderTypeOpenAICompatible]
+	return &unsupportedProviderClient{}
 }
 
 func (r *ClientRegistry) Register(pt domain.ProviderType, client ProviderClient) {

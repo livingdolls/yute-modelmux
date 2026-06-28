@@ -197,3 +197,78 @@ func TestResolveSecretsAllowsConfiguredAuthTokenEnv(t *testing.T) {
 		t.Fatalf("resolve secrets failed: %v", err)
 	}
 }
+
+func TestValidateRejectsInvalidProviderType(t *testing.T) {
+	cfg := Default()
+	cfg.Providers[0].Type = "unknown-type"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid provider type error")
+	}
+}
+
+func TestValidateRejectsMissingBaseURL(t *testing.T) {
+	cfg := Default()
+	cfg.Providers[0].BaseURL = ""
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected missing base_url error")
+	}
+}
+
+func TestValidateRejectsBadBaseURLScheme(t *testing.T) {
+	cfg := Default()
+	cfg.Providers[0].BaseURL = "ftp://example.com/v1"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected bad base_url scheme error")
+	}
+}
+
+func TestValidateRejectsInvalidAuthType(t *testing.T) {
+	cfg := Default()
+	cfg.Providers[0].AuthType = "oauth2"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid auth_type error")
+	}
+}
+
+func TestValidateRejectsHeaderAuthWithoutHeaderName(t *testing.T) {
+	cfg := Default()
+	cfg.Providers[0].AuthType = "header"
+	cfg.Providers[0].AuthHeaderName = ""
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected missing auth_header_name error")
+	}
+}
+
+func TestValidateRejectsTimeoutOutOfRange(t *testing.T) {
+	cfg := Default()
+	cfg.Providers[0].TimeoutSeconds = 9999
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected timeout out of range error")
+	}
+}
+
+func TestValidateRejectsInvalidModelStrategy(t *testing.T) {
+	cfg := Default()
+	cfg.Models[0].Strategy = "random"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid model strategy error")
+	}
+}
+
+func TestValidateRejectsInvalidGroupStrategy(t *testing.T) {
+	cfg := Default()
+	cfg.ModelGroups[0].Strategy = "random"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid group strategy error")
+	}
+}
+
+func TestValidateAllowsDisabledProviderWithoutFullValidation(t *testing.T) {
+	cfg := Default()
+	cfg.Providers[0].Enabled = false
+	cfg.Providers[0].BaseURL = ""
+	cfg.Providers[0].TimeoutSeconds = 0
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("disabled provider should skip strict validation: %v", err)
+	}
+}

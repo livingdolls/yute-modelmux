@@ -202,6 +202,27 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("duplicate provider id %s", p.ID)
 		}
 		providerIDs[p.ID] = struct{}{}
+		if p.Enabled {
+			if p.BaseURL == "" {
+				return fmt.Errorf("provider %s base_url is required", p.ID)
+			}
+			if !strings.HasPrefix(p.BaseURL, "http://") && !strings.HasPrefix(p.BaseURL, "https://") {
+				return fmt.Errorf("provider %s base_url must start with http:// or https://", p.ID)
+			}
+			validTypes := map[string]bool{"openai-compatible": true, "anthropic": true, "gemini": true, "custom": true}
+			if p.Type != "" && !validTypes[p.Type] {
+				return fmt.Errorf("provider %s type %q is not valid; must be one of: openai-compatible, anthropic, gemini, custom", p.ID, p.Type)
+			}
+			if p.AuthType != "" && p.AuthType != "bearer" && p.AuthType != "header" {
+				return fmt.Errorf("provider %s auth_type must be bearer or header", p.ID)
+			}
+			if p.AuthType == "header" && p.AuthHeaderName == "" {
+				return fmt.Errorf("provider %s auth_header_name is required when auth_type is header", p.ID)
+			}
+			if p.TimeoutSeconds <= 0 || p.TimeoutSeconds > 3600 {
+				return fmt.Errorf("provider %s timeout_seconds must be between 1 and 3600", p.ID)
+			}
+		}
 	}
 	modelIDs := map[string]struct{}{}
 	modelByProviderID := map[string]string{}
@@ -217,6 +238,15 @@ func (c *Config) Validate() error {
 		}
 		modelIDs[m.ID] = struct{}{}
 		modelByProviderID[m.ID] = m.ProviderID
+		if m.Enabled {
+			if m.ModelName == "" {
+				return fmt.Errorf("model %s model_name is required", m.ID)
+			}
+			validStrategies := map[string]bool{"failover": true, "round_robin": true, "least_error": true}
+			if m.Strategy != "" && !validStrategies[m.Strategy] {
+				return fmt.Errorf("model %s strategy %q is not valid; must be one of: failover, round_robin, least_error", m.ID, m.Strategy)
+			}
+		}
 	}
 	groupIDs := map[string]struct{}{}
 	for _, g := range c.ModelGroups {
@@ -228,6 +258,15 @@ func (c *Config) Validate() error {
 		}
 		if _, exists := modelIDs[g.ID]; exists {
 			return fmt.Errorf("model group id %s conflicts with model id", g.ID)
+		}
+		if g.Enabled {
+			if g.Name == "" {
+				return fmt.Errorf("model group %s name is required", g.ID)
+			}
+			validStrategies := map[string]bool{"failover": true, "round_robin": true, "weighted": true}
+			if g.Strategy != "" && !validStrategies[g.Strategy] {
+				return fmt.Errorf("model group %s strategy %q is not valid; must be one of: failover, round_robin, weighted", g.ID, g.Strategy)
+			}
 		}
 		if len(g.Members) == 0 {
 			if g.Enabled {
