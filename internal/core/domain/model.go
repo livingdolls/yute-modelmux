@@ -17,4 +17,14 @@ type Model struct {
 	RequestsPerMinute     int
 	MaxConcurrentRequests int
 	ConcurrentCount       int
+	Capabilities          Capabilities
+}
+
+type Capabilities struct {
+	Chat        bool
+	Completions bool
+	Streaming   bool
+	Tools       bool
+	Vision      bool
+	JSONMode    bool
 }

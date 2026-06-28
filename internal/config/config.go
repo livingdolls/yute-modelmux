@@ -72,13 +72,23 @@ type ProviderConfig struct {
 }
 
 type ModelConfig struct {
-	ID                    string `yaml:"id"`
-	ProviderID            string `yaml:"provider_id"`
-	ModelName             string `yaml:"model_name"`
-	Strategy              string `yaml:"strategy"`
-	Enabled               bool   `yaml:"enabled"`
-	RequestsPerMinute     int    `yaml:"requests_per_minute"`
-	MaxConcurrentRequests int    `yaml:"max_concurrent_requests"`
+	ID                    string                `yaml:"id"`
+	ProviderID            string                `yaml:"provider_id"`
+	ModelName             string                `yaml:"model_name"`
+	Strategy              string                `yaml:"strategy"`
+	Enabled               bool                  `yaml:"enabled"`
+	RequestsPerMinute     int                   `yaml:"requests_per_minute"`
+	MaxConcurrentRequests int                   `yaml:"max_concurrent_requests"`
+	Capabilities          *ModelCapabilityConfig `yaml:"capabilities,omitempty"`
+}
+
+type ModelCapabilityConfig struct {
+	Chat        *bool `yaml:"chat,omitempty"`
+	Completions *bool `yaml:"completions,omitempty"`
+	Streaming   *bool `yaml:"streaming,omitempty"`
+	Tools       *bool `yaml:"tools,omitempty"`
+	Vision      *bool `yaml:"vision,omitempty"`
+	JSONMode    *bool `yaml:"json_mode,omitempty"`
 }
 
 type KeyConfig struct {

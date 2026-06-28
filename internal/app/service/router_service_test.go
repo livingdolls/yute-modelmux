@@ -832,3 +832,97 @@ func groupRoutingConfig(baseURL string) *config.Config {
 		},
 	}
 }
+
+func TestCapabilityBlocksCompletionsForChatOnly(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	cfg.Models[0].Capabilities = &config.ModelCapabilityConfig{}
+	f := false
+	cfg.Models[0].Capabilities.Completions = &f
+	cfg.Keys[0].Value = "test-key"
+	rs, _ := NewRouterService(cfg)
+
+	req, _ := http.NewRequest(http.MethodPost, "/v1/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","prompt":"hello"}`)))
+	_, err := rs.HandleCompletion(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected capability error for completions on chat-only model")
+	}
+}
+
+func TestCapabilityBlocksToolCalling(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	cfg.Models[0].Capabilities = &config.ModelCapabilityConfig{}
+	f := false
+	cfg.Models[0].Capabilities.Tools = &f
+	cfg.Keys[0].Value = "test-key"
+	rs, _ := NewRouterService(cfg)
+
+	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"test"}}]}`)))
+	_, err := rs.HandleChatCompletion(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected capability error for tools on non-tools model")
+	}
+}
+
+func TestCapabilityBlocksStreaming(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	cfg.Models[0].Capabilities = &config.ModelCapabilityConfig{}
+	f := false
+	cfg.Models[0].Capabilities.Streaming = &f
+	cfg.Keys[0].Value = "test-key"
+	rs, _ := NewRouterService(cfg)
+
+	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi"}],"stream":true}`)))
+	_, err := rs.HandleChatCompletion(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected capability error for streaming on non-streaming model")
+	}
+}
+
+func TestCapabilityDefaultAllowsBasicForOpenAI(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	cfg.Providers[0].Type = "openai-compatible"
+	cfg.Keys[0].Value = "test-key"
+	rs, _ := NewRouterService(cfg)
+
+	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi"}],"stream":true}`)))
+	_, err := rs.HandleChatCompletion(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected openai default to allow chat+stream: %v", err)
+	}
+}
+
+func TestCapabilityOverrideAllowsTools(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	cfg.Models[0].Capabilities = &config.ModelCapabilityConfig{}
+	ft := true
+	cfg.Models[0].Capabilities.Tools = &ft
+	cfg.Keys[0].Value = "test-key"
+	rs, _ := NewRouterService(cfg)
+
+	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"test"}}]}`)))
+	_, err := rs.HandleChatCompletion(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected tools override to allow tools: %v", err)
+	}
+}
+
+func TestCapabilityDefaultBlocksCompletionsForAnthropic(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = "https://api.anthropic.com"
+	cfg.Providers[0].Type = "anthropic"
+	cfg.Keys[0].Value = "test-key"
+	f := false
+	cfg.Models[0].Capabilities = &config.ModelCapabilityConfig{Streaming: &f}
+	rs, _ := NewRouterService(cfg)
+
+	req, _ := http.NewRequest(http.MethodPost, "/v1/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","prompt":"hello"}`)))
+	_, err := rs.HandleCompletion(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected anthropic default to block completions")
+	}
+}

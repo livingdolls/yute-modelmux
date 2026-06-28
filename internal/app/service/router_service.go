@@ -151,7 +151,9 @@ func newRouterService(cfg *config.Config, store storage.Storage, secretStore *se
 		rrIndex:     map[string]int{},
 		groupRRIndex: map[string]int{},
 	}
+	providerTypes := map[string]domain.ProviderType{}
 	for _, p := range cfg.Providers {
+		providerTypes[p.ID] = domain.ProviderType(p.Type)
 		rs.providers = append(rs.providers, domain.Provider{
 			ID:             p.ID,
 			Name:           p.Name,
@@ -164,7 +166,8 @@ func newRouterService(cfg *config.Config, store storage.Storage, secretStore *se
 		})
 	}
 	for _, m := range cfg.Models {
-		rs.models = append(rs.models, domain.Model{ID: m.ID, ProviderID: m.ProviderID, ModelName: m.ModelName, Strategy: domain.RotationStrategy(m.Strategy), Enabled: m.Enabled, RequestsPerMinute: m.RequestsPerMinute, MaxConcurrentRequests: m.MaxConcurrentRequests})
+		caps := defaultCapabilitiesForType(providerTypes[m.ProviderID], m.Capabilities)
+		rs.models = append(rs.models, domain.Model{ID: m.ID, ProviderID: m.ProviderID, ModelName: m.ModelName, Strategy: domain.RotationStrategy(m.Strategy), Enabled: m.Enabled, RequestsPerMinute: m.RequestsPerMinute, MaxConcurrentRequests: m.MaxConcurrentRequests, Capabilities: caps})
 	}
 	for _, g := range cfg.ModelGroups {
 		strategy := domain.GroupStrategy(g.Strategy)
@@ -540,13 +543,8 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 		return nil, fmt.Errorf("unknown provider %s", model.ProviderID)
 	}
 
-	if apiPath == "/completions" && (provider.Type == domain.ProviderTypeAnthropic || provider.Type == domain.ProviderTypeGemini) {
-		return nil, &ProxyError{
-			HTTPStatus: http.StatusBadRequest,
-			Type:       "modelmux_unsupported",
-			Code:       "unsupported_endpoint",
-			Message:    fmt.Sprintf("provider type %q does not support /v1/completions; use /v1/chat/completions", provider.Type),
-		}
+	if err := s.checkModelCapability(model, apiPath, bodyBytes); err != nil {
+		return nil, err
 	}
 
 	s.mu.Lock()
@@ -1243,4 +1241,127 @@ func (s *RouterService) releaseModelSlotLocked(i int) {
 	if m.ConcurrentCount > 0 {
 		m.ConcurrentCount--
 	}
+}
+
+func defaultCapabilitiesForType(providerType domain.ProviderType, override *config.ModelCapabilityConfig) domain.Capabilities {
+	caps := domain.Capabilities{Chat: true, Completions: true, Streaming: true, Tools: false, Vision: false, JSONMode: false}
+	switch providerType {
+	case domain.ProviderTypeAnthropic, domain.ProviderTypeGemini:
+		caps.Completions = false
+	}
+	if override == nil {
+		return caps
+	}
+	if override.Chat != nil {
+		caps.Chat = *override.Chat
+	}
+	if override.Completions != nil {
+		caps.Completions = *override.Completions
+	}
+	if override.Streaming != nil {
+		caps.Streaming = *override.Streaming
+	}
+	if override.Tools != nil {
+		caps.Tools = *override.Tools
+	}
+	if override.Vision != nil {
+		caps.Vision = *override.Vision
+	}
+	if override.JSONMode != nil {
+		caps.JSONMode = *override.JSONMode
+	}
+	return caps
+}
+
+func (s *RouterService) checkModelCapability(model domain.Model, apiPath string, bodyBytes []byte) error {
+	if apiPath == "/completions" && !model.Capabilities.Completions {
+		return &ProxyError{
+			HTTPStatus: http.StatusBadRequest,
+			Type:       "modelmux_unsupported",
+			Code:       "capability_completions",
+			Message:    fmt.Sprintf("model %s does not support /v1/completions", model.ID),
+		}
+	}
+	if apiPath == "/chat/completions" && !model.Capabilities.Chat {
+		return &ProxyError{
+			HTTPStatus: http.StatusBadRequest,
+			Type:       "modelmux_unsupported",
+			Code:       "capability_chat",
+			Message:    fmt.Sprintf("model %s does not support /v1/chat/completions", model.ID),
+		}
+	}
+	if !model.Capabilities.Streaming && isStreamRequest(bodyBytes) {
+		return &ProxyError{
+			HTTPStatus: http.StatusBadRequest,
+			Type:       "modelmux_unsupported",
+			Code:       "capability_streaming",
+			Message:    fmt.Sprintf("model %s does not support streaming", model.ID),
+		}
+	}
+	if !model.Capabilities.Tools && hasToolsField(bodyBytes) {
+		return &ProxyError{
+			HTTPStatus: http.StatusBadRequest,
+			Type:       "modelmux_unsupported",
+			Code:       "capability_tools",
+			Message:    fmt.Sprintf("model %s does not support tools", model.ID),
+		}
+	}
+	if !model.Capabilities.Vision && hasImageContent(bodyBytes) {
+		return &ProxyError{
+			HTTPStatus: http.StatusBadRequest,
+			Type:       "modelmux_unsupported",
+			Code:       "capability_vision",
+			Message:    fmt.Sprintf("model %s does not support vision/image input", model.ID),
+		}
+	}
+	if !model.Capabilities.JSONMode && hasJSONMode(bodyBytes) {
+		return &ProxyError{
+			HTTPStatus: http.StatusBadRequest,
+			Type:       "modelmux_unsupported",
+			Code:       "capability_json_mode",
+			Message:    fmt.Sprintf("model %s does not support json_mode", model.ID),
+		}
+	}
+	return nil
+}
+
+func hasToolsField(body []byte) bool {
+	var payload struct {
+		Tools      []any `json:"tools"`
+		ToolChoice any   `json:"tool_choice"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false
+	}
+	return len(payload.Tools) > 0 || payload.ToolChoice != nil
+}
+
+func hasImageContent(body []byte) bool {
+	var payload struct {
+		Messages []struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false
+	}
+	for _, msg := range payload.Messages {
+		s := string(msg.Content)
+		if strings.Contains(s, `"image_url"`) || strings.Contains(s, `"type":"image"`) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasJSONMode(body []byte) bool {
+	var payload struct {
+		ResponseFormat *struct {
+			Type string `json:"type"`
+		} `json:"response_format"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false
+	}
+	return payload.ResponseFormat != nil && strings.ToLower(payload.ResponseFormat.Type) == "json_object"
 }
