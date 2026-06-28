@@ -50,6 +50,10 @@ server:
   require_auth: false           # set true + auth_token_env for network exposure
   max_request_body_mb: 10
 
+storage:
+  type: sqlite                  # optional: persist state across restarts
+  path: ~/.local/share/modelmux/modelmux.db
+
 providers:
   - id: openai
     name: OpenAI
@@ -250,7 +254,25 @@ Limits use in-memory rolling windows (minute granularity). Counters reset on res
 
 Every proxied request gets a unique `X-ModelMux-Request-ID` response header. Structured JSON logging via `log/slog` records method, path, remote address, and latency.
 
-### Health Monitoring
+## Storage
+
+ModelMux uses in-memory state by default. Add SQLite for persistence across restarts:
+
+```yaml
+storage:
+  type: sqlite
+  path: ~/.local/share/modelmux/modelmux.db   # default, optional
+```
+
+When enabled, the following data is persisted:
+
+- **Key runtime state** — status, usage counts, cooldown timers, daily quotas, per-minute counters
+- **Request logs** — full history with model, key, status code, latency, token counts
+- **Log queries** — `modelmux logs` CLI and `/logs` HTTP endpoint pull from this store
+
+If `storage.type` is empty or omitted, runtime state resets on restart and logs are kept in-memory (last 200 entries). SQLite uses WAL mode and auto-migrates on startup.
+
+### Health Check
 
 When `health_check.enabled: true`, a background goroutine periodically tests each active key. Auth failures (401/403) mark keys as invalid; transient errors (429, 5xx, network) trigger cooldown. Recovered keys are automatically re-enabled.
 
