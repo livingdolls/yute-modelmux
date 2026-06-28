@@ -508,7 +508,7 @@ func newConfigForm(section configSection, index int, m *model) configFormState {
 		if m != nil && index >= 0 {
 			item = m.cfg.Keys[index]
 		}
-		form.items = []formField{{"ID", item.ID, false}, {"Provider ID", item.ProviderID, false}, {"Model ID", item.ModelID, false}, {"Name", item.Name, false}, {"Value", item.Value, true}, {"Value Env", item.ValueEnv, false}, {"Status", defaultText(item.Status, "active"), false}, {"Priority", fmt.Sprint(defaultInt(item.Priority, 1)), false}}
+		form.items = []formField{{"ID", item.ID, false}, {"Provider ID", item.ProviderID, false}, {"Model ID", item.ModelID, false}, {"Name", item.Name, false}, {"Value", item.Value, true}, {"Value Env", item.ValueEnv, false}, {"Secret Ref", item.SecretRef, false}, {"Status", defaultText(item.Status, "active"), false}, {"Priority", fmt.Sprint(defaultInt(item.Priority, 1)), false}, {"Req Limit/Day", fmt.Sprint(item.DailyRequestLimit), false}, {"Token Limit/Day", fmt.Sprint(item.DailyTokenLimit), false}}
 	default:
 		form.title = suffix + " Provider"
 		item := config.ProviderConfig{Type: "openai-compatible", AuthType: "bearer", TimeoutSeconds: 120, Enabled: true}
@@ -543,12 +543,20 @@ func (m *model) applyConfigForm() {
 			m.editor.sectionSelected[int(m.editor.section)] = m.editor.selected
 		}
 	case configSectionKeys:
-		priority, err := strconv.Atoi(defaultText(values[7], "1"))
+		priority, err := strconv.Atoi(defaultText(values[8], "1"))
 		if err != nil || priority <= 0 {
 			m.editor.message = "priority must be a positive number"
 			return
 		}
-		item := config.KeyConfig{ID: values[0], ProviderID: values[1], ModelID: values[2], Name: values[3], Value: values[4], ValueEnv: values[5], Status: defaultText(values[6], "active"), Priority: priority}
+		dailyReqLimit, _ := strconv.Atoi(defaultText(values[9], "0"))
+		dailyTokenLimit, _ := strconv.Atoi(defaultText(values[10], "0"))
+		if dailyReqLimit < 0 {
+			dailyReqLimit = 0
+		}
+		if dailyTokenLimit < 0 {
+			dailyTokenLimit = 0
+		}
+		item := config.KeyConfig{ID: values[0], ProviderID: values[1], ModelID: values[2], Name: values[3], Value: values[4], ValueEnv: values[5], SecretRef: values[6], Status: defaultText(values[7], "active"), Priority: priority, DailyRequestLimit: dailyReqLimit, DailyTokenLimit: dailyTokenLimit}
 		if form.index >= 0 {
 			m.cfg.Keys[form.index] = item
 		} else {

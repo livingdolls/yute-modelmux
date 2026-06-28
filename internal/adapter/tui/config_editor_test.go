@@ -27,6 +27,37 @@ func TestDeleteModelRemovesKeysAndGroupMembers(t *testing.T) {
 	}
 }
 
+func TestEditKeyPreservesSecretRefAndDailyLimits(t *testing.T) {
+	cfg := config.Default()
+	cfg.Keys = []config.KeyConfig{
+		{ID: "key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Name: "Test Key", Value: "sk-abc", ValueEnv: "", SecretRef: "secret://store/key1", Status: "active", Priority: 5, DailyRequestLimit: 100, DailyTokenLimit: 50000},
+	}
+
+	m := model{cfg: cfg}
+	m.editor.section = configSectionKeys
+	m.editor.selected = 0
+	m.editor.mode = editorModeForm
+	m.editor.form = newConfigForm(m.editor.section, 0, &m)
+	m.applyConfigForm()
+
+	edited := m.cfg.Keys[0]
+	if edited.SecretRef != "secret://store/key1" {
+		t.Fatalf("expected secret_ref to be preserved, got %q", edited.SecretRef)
+	}
+	if edited.DailyRequestLimit != 100 {
+		t.Fatalf("expected daily_request_limit 100, got %d", edited.DailyRequestLimit)
+	}
+	if edited.DailyTokenLimit != 50000 {
+		t.Fatalf("expected daily_token_limit 50000, got %d", edited.DailyTokenLimit)
+	}
+	if edited.Priority != 5 {
+		t.Fatalf("expected priority 5, got %d", edited.Priority)
+	}
+	if edited.ID != "key-1" {
+		t.Fatalf("expected id key-1, got %q", edited.ID)
+	}
+}
+
 func TestDeleteProviderDisablesEmptyGroup(t *testing.T) {
 	cfg := config.Default()
 	m := model{cfg: cfg, editor: configEditorState{section: configSectionProviders, selected: 0, confirm: deleteConfirmState{kind: configSectionProviders, index: 0}}}
