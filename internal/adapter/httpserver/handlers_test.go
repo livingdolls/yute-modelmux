@@ -1,9 +1,11 @@
 package httpserver
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -319,4 +321,126 @@ func TestChatSSEDeliversChunksBeforeStreamEnds(t *testing.T) {
 		t.Fatalf("expected all SSE chunks in body, got: %s", fullBody)
 	}
 	t.Logf("full stream body received (%d bytes)", len(fullBody))
+}
+
+func TestAdminStatusReturnsSummary(t *testing.T) {
+	cfg := config.Default()
+	cfg.Server.RequireAuth = false
+	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	cfg.Keys[0].Value = "test-key"
+	rs, _ := NewTestRouterService(cfg)
+	s := New(rs, cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["models"] == nil {
+		t.Fatal("expected models in status")
+	}
+}
+
+func TestAdminEnableKeySavesConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	cfg := config.Default()
+	cfg.Server.RequireAuth = false
+	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	cfg.Keys = []config.KeyConfig{
+		{ID: "key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "k1", Status: "disabled", Priority: 1},
+	}
+	config.Save(cfgPath, cfg)
+
+	rs, _ := NewTestRouterService(cfg)
+	s := New(rs, cfg)
+	s.SetConfigPath(cfgPath)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/keys/key-1/enable", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	reloaded, _ := config.Load(cfgPath)
+	if reloaded.Keys[0].Status != "active" {
+		t.Fatalf("expected active, got %s", reloaded.Keys[0].Status)
+	}
+}
+
+func TestAdminDisableKeySavesConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	cfg := config.Default()
+	cfg.Server.RequireAuth = false
+	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	cfg.Keys = []config.KeyConfig{
+		{ID: "key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "k1", Status: "active", Priority: 1},
+	}
+	config.Save(cfgPath, cfg)
+
+	rs, _ := NewTestRouterService(cfg)
+	s := New(rs, cfg)
+	s.SetConfigPath(cfgPath)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/keys/key-1/disable", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	reloaded, _ := config.Load(cfgPath)
+	if reloaded.Keys[0].Status != "disabled" {
+		t.Fatalf("expected disabled, got %s", reloaded.Keys[0].Status)
+	}
+}
+
+func TestAdminKeyNotFound(t *testing.T) {
+	cfg := config.Default()
+	cfg.Server.RequireAuth = false
+	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	rs, _ := NewTestRouterService(cfg)
+	s := New(rs, cfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/keys/nonexistent/enable", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestAdminReloadUpdatesRouter(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	cfg := config.Default()
+	cfg.Server.RequireAuth = false
+	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	cfg.Keys = []config.KeyConfig{
+		{ID: "key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "k1", Status: "active", Priority: 1},
+	}
+	config.Save(cfgPath, cfg)
+
+	rs, _ := NewTestRouterService(cfg)
+	s := New(rs, cfg)
+	s.SetConfigPath(cfgPath)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/reload", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func NewTestRouterService(cfg *config.Config) (*service.RouterService, error) {
+	return service.NewRouterService(cfg)
 }
