@@ -376,7 +376,7 @@ func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.M
 		if ms == nil {
 			continue
 		}
-		labels := fmt.Sprintf(`model="%s",provider="%s"`, model.ID, provider)
+		labels := fmt.Sprintf(`model="%s",provider="%s"`, escapeLabelValue(model.ID), escapeLabelValue(provider))
 		b.WriteString(fmt.Sprintf("modelmux_requests_total{%s} %d\n", labels, ms.requests))
 		b.WriteString(fmt.Sprintf("modelmux_errors_total{%s} %d\n", labels, ms.errors))
 		b.WriteString(fmt.Sprintf("modelmux_rate_limits_total{%s} %d\n", labels, ms.rateLimits))
@@ -410,7 +410,7 @@ func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.M
 				keyErrors++
 			}
 		}
-		labels := fmt.Sprintf(`model="%s",provider="%s",key="%s"`, key.ModelID, key.ProviderID, key.ID)
+		labels := fmt.Sprintf(`model="%s",provider="%s",key="%s"`, escapeLabelValue(key.ModelID), escapeLabelValue(key.ProviderID), escapeLabelValue(key.ID))
 		b.WriteString(fmt.Sprintf("modelmux_requests_total{%s} %d\n", labels, keyRequests))
 		b.WriteString(fmt.Sprintf("modelmux_errors_total{%s} %d\n", labels, keyErrors))
 	}
@@ -427,7 +427,7 @@ func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.M
 				groupErrors++
 			}
 		}
-		labels := fmt.Sprintf(`group="%s"`, group.ID)
+		labels := fmt.Sprintf(`group="%s"`, escapeLabelValue(group.ID))
 		b.WriteString(fmt.Sprintf("modelmux_requests_total{%s} %d\n", labels, groupRequests))
 		b.WriteString(fmt.Sprintf("modelmux_errors_total{%s} %d\n", labels, groupErrors))
 	}
@@ -555,4 +555,21 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func escapeLabelValue(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\n':
+			b.WriteString(`\n`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
