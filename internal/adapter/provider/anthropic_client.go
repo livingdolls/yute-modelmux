@@ -349,6 +349,10 @@ func convertAnthropicStream(resp *http.Response, modelID string) (io.ReadCloser,
 			_, _ = pw.Write([]byte("data: " + string(jsonChunk) + "\n\n"))
 		}
 
+		if err := scanner.Err(); err != nil {
+			return
+		}
+
 		finishChunk := map[string]any{
 			"id":      openAIID,
 			"object":  "chat.completion.chunk",

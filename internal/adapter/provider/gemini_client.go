@@ -297,7 +297,7 @@ func convertGeminiStream(resp *http.Response, modelID string) io.ReadCloser {
 		defer resp.Body.Close()
 
 		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 64*1024), 64*1024)
+		scanner.Buffer(make([]byte, 256*1024), 256*1024)
 		created := int(time.Now().Unix())
 		openAIID := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
 
@@ -363,6 +363,9 @@ func convertGeminiStream(resp *http.Response, modelID string) io.ReadCloser {
 			}
 			jsonChunk, _ := json.Marshal(chunk)
 			_, _ = pw.Write([]byte("data: " + string(jsonChunk) + "\n\n"))
+		}
+		if err := scanner.Err(); err != nil {
+			return
 		}
 		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
 	}()
