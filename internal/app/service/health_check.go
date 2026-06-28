@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/livingdolls/yute-modelmux/internal/config"
@@ -67,30 +68,61 @@ func (h *HealthChecker) runCheck(ctx context.Context) {
 
 		err := h.rs.TestKey(checkCtx, key.ID)
 		if err != nil {
-			h.rs.mu.Lock()
-			for i := range h.rs.keys {
-				if h.rs.keys[i].ID == key.ID {
-					if h.rs.keys[i].Status != "disabled" && h.rs.keys[i].Status != "invalid" {
-						h.rs.keys[i].Status = "invalid"
-						h.rs.saveKeyRuntimeLocked(h.rs.keys[i])
-					}
-					break
-				}
+			errStr := err.Error()
+			if strings.Contains(errStr, "401") || strings.Contains(errStr, "403") {
+				h.markInvalid(key.ID)
+			} else {
+				h.markCooldown(key.ID)
 			}
-			h.rs.mu.Unlock()
 		} else {
-			h.rs.mu.Lock()
-			for i := range h.rs.keys {
-				if h.rs.keys[i].ID == key.ID {
-					if h.rs.keys[i].Status == "invalid" {
-						h.rs.keys[i].Status = "active"
-						h.rs.keys[i].CooldownEnd = nil
-						h.rs.saveKeyRuntimeLocked(h.rs.keys[i])
-					}
-					break
-				}
+			h.markRecovered(key.ID)
+		}
+	}
+}
+
+func (h *HealthChecker) markInvalid(keyID string) {
+	h.rs.mu.Lock()
+	defer h.rs.mu.Unlock()
+	for i := range h.rs.keys {
+		if h.rs.keys[i].ID == keyID {
+			if h.rs.keys[i].Status != "disabled" && h.rs.keys[i].Status != "invalid" {
+				h.rs.keys[i].Status = "invalid"
+				h.rs.keys[i].CooldownEnd = nil
+				h.rs.saveKeyRuntimeLocked(h.rs.keys[i])
 			}
-			h.rs.mu.Unlock()
+			return
+		}
+	}
+}
+
+func (h *HealthChecker) markCooldown(keyID string) {
+	h.rs.mu.Lock()
+	defer h.rs.mu.Unlock()
+	for i := range h.rs.keys {
+		if h.rs.keys[i].ID == keyID {
+			if h.rs.keys[i].Status == "disabled" || h.rs.keys[i].Status == "invalid" {
+				return
+			}
+			h.rs.keys[i].Status = "cooldown"
+			until := time.Now().Add(time.Duration(h.rs.cfg.Cooldown.RateLimitSeconds) * time.Second)
+			h.rs.keys[i].CooldownEnd = &until
+			h.rs.saveKeyRuntimeLocked(h.rs.keys[i])
+			return
+		}
+	}
+}
+
+func (h *HealthChecker) markRecovered(keyID string) {
+	h.rs.mu.Lock()
+	defer h.rs.mu.Unlock()
+	for i := range h.rs.keys {
+		if h.rs.keys[i].ID == keyID {
+			if h.rs.keys[i].Status == "invalid" || h.rs.keys[i].Status == "cooldown" {
+				h.rs.keys[i].Status = "active"
+				h.rs.keys[i].CooldownEnd = nil
+				h.rs.saveKeyRuntimeLocked(h.rs.keys[i])
+			}
+			return
 		}
 	}
 }

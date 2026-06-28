@@ -137,3 +137,78 @@ func TestHealthCheckerDoesNotStartWhenDisabled(t *testing.T) {
 		t.Fatal("expected no cancel func when disabled")
 	}
 }
+
+func TestHealthCheckerMarksTransientErrorAsCooldown(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer ts.Close()
+
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = ts.URL + "/v1"
+	cfg.HealthCheck = config.HealthCheckConfig{
+		Enabled:         true,
+		IntervalSeconds: 1,
+		TimeoutSeconds:  5,
+	}
+	cfg.Keys = []config.KeyConfig{
+		{ID: "key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "k", Status: "active", Priority: 1},
+	}
+
+	rs, _ := NewRouterService(cfg)
+	hc := NewHealthChecker(rs, cfg.HealthCheck)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	hc.Start(ctx)
+
+	time.Sleep(1500 * time.Millisecond)
+	hc.Stop()
+
+	keys := rs.ListKeys()
+	if keys[0].Status != "cooldown" {
+		t.Fatalf("expected cooldown for 429, got %s", keys[0].Status)
+	}
+	if keys[0].CooldownEnd == nil {
+		t.Fatal("expected cooldown end set")
+	}
+}
+
+func TestHealthCheckerRecoversFromCooldown(t *testing.T) {
+	callCount := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount <= 2 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = ts.URL + "/v1"
+	cfg.HealthCheck = config.HealthCheckConfig{
+		Enabled:         true,
+		IntervalSeconds: 1,
+		TimeoutSeconds:  5,
+	}
+	cfg.Keys = []config.KeyConfig{
+		{ID: "key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "k", Status: "active", Priority: 1},
+	}
+
+	rs, _ := NewRouterService(cfg)
+	hc := NewHealthChecker(rs, cfg.HealthCheck)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	hc.Start(ctx)
+
+	time.Sleep(3500 * time.Millisecond)
+	hc.Stop()
+
+	keys := rs.ListKeys()
+	if keys[0].Status != "active" {
+		t.Fatalf("expected active after recovery from 5xx, got %s", keys[0].Status)
+	}
+}
