@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/livingdolls/yute-modelmux/internal/config"
 )
 
@@ -40,17 +41,21 @@ type configEditorState struct {
 }
 
 type configFormState struct {
-	title string
-	kind  configSection
-	index int
-	field int
-	items []formField
+	title       string
+	kind        configSection
+	index       int
+	field       int
+	items       []formField
+	selectOpen  bool
+	selectIndex int
 }
 
 type formField struct {
-	label string
-	value string
-	mask  bool
+	label   string
+	value   string
+	mask    bool
+	options []string
+	multi   bool
 }
 
 type deleteConfirmState struct {
@@ -161,6 +166,9 @@ func (m model) updateConfigFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateConfigForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.editor.form.selectOpen {
+		return m.updateConfigFormSelect(msg)
+	}
 	key := msg.String()
 	switch key {
 	case "esc":
@@ -180,6 +188,12 @@ func (m model) updateConfigForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up":
 		m.editor.form.field = previousIndex(m.editor.form.field, len(m.editor.form.items))
 		return m, nil
+	case "left":
+		m.openConfigFormFieldSelect()
+		return m, nil
+	case "right":
+		m.openConfigFormFieldSelect()
+		return m, nil
 	case "backspace", "ctrl+h":
 		field := &m.editor.form.items[m.editor.form.field]
 		field.value = dropLastRune(field.value)
@@ -193,6 +207,30 @@ func (m model) updateConfigForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if len(msg.Runes) > 0 {
 		m.editor.form.items[m.editor.form.field].value += string(msg.Runes)
+	}
+	return m, nil
+}
+
+func (m model) updateConfigFormSelect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	field := m.currentConfigFormField()
+	if field == nil || len(field.options) == 0 {
+		m.editor.form.selectOpen = false
+		return m, nil
+	}
+	switch key {
+	case "esc", "left":
+		m.editor.form.selectOpen = false
+		return m, nil
+	case "up":
+		m.editor.form.selectIndex = previousIndex(m.editor.form.selectIndex, len(field.options))
+		return m, nil
+	case "down", "right":
+		m.editor.form.selectIndex = nextIndex(m.editor.form.selectIndex, len(field.options))
+		return m, nil
+	case "enter", " ":
+		m.applyConfigFormSelect()
+		return m, nil
 	}
 	return m, nil
 }
@@ -315,7 +353,7 @@ func (m model) renderConfigForm() string {
 	var b strings.Builder
 	b.WriteString(m.styles.panelTitle.Render(":: " + strings.ToUpper(form.title) + " ::"))
 	b.WriteString("\n")
-	b.WriteString(m.styles.hint.Render("enter:next/apply  ctrl+s:save  esc:cancel"))
+	b.WriteString(m.styles.hint.Render("enter:next/apply  right:open select  ctrl+s:save  esc:cancel"))
 	b.WriteString("\n")
 	b.WriteString(m.styles.muted.Render(strings.Repeat("-", 46)))
 	b.WriteString("\n")
@@ -328,13 +366,47 @@ func (m model) renderConfigForm() string {
 		if field.mask && value != "" {
 			value = strings.Repeat("*", minInt(12, len([]rune(value))))
 		}
-		b.WriteString(fmt.Sprintf("%s%-14s %s\n", prefix, field.label+":", value))
+		selectHint := ""
+		if len(field.options) > 0 {
+			selectHint = " " + m.styles.hint.Render("[right]")
+		}
+		b.WriteString(fmt.Sprintf("%s%-14s %s%s\n", prefix, field.label+":", value, selectHint))
+		if i == form.field && form.selectOpen {
+			b.WriteString(m.renderConfigFormSelectPopup(field))
+		}
 	}
 	if m.editor.message != "" {
 		b.WriteString("\n")
 		b.WriteString(m.styles.bad.Render(m.editor.message))
 	}
 	return b.String()
+}
+
+func (m model) renderConfigFormSelectPopup(field formField) string {
+	var b strings.Builder
+	b.WriteString("  ")
+	b.WriteString(m.styles.card.Render(m.configFormSelectPopupContent(field)))
+	b.WriteString("\n")
+	return b.String()
+}
+
+func (m model) configFormSelectPopupContent(field formField) string {
+	width := minInt(maxInt(28, m.pageBodyWidth()/2), 56)
+	lines := []string{
+		m.styles.panelTitle.Render("Select " + field.label),
+		m.styles.hint.Render("up/down choose  enter apply  esc cancel"),
+		m.styles.muted.Render(strings.Repeat("-", width-4)),
+	}
+	for i, option := range field.options {
+		line := "  " + option
+		if i == m.editor.form.selectIndex {
+			line = m.styles.navActive.Width(width - 4).Render("> " + option)
+		} else {
+			line = m.styles.nav.Width(width - 4).Render(line)
+		}
+		lines = append(lines, line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
 func (m model) renderDeleteConfirm() string {
@@ -490,30 +562,178 @@ func newConfigForm(section configSection, index int, m *model) configFormState {
 		if m != nil && index >= 0 {
 			item = m.cfg.Models[index]
 		}
-		form.items = []formField{{"ID", item.ID, false}, {"Provider ID", item.ProviderID, false}, {"Model Name", item.ModelName, false}, {"Strategy", defaultText(item.Strategy, "failover"), false}, {"Enabled", boolString(item.Enabled), false}}
+		form.items = []formField{
+			{label: "ID", value: item.ID},
+			{label: "Provider ID", value: item.ProviderID, options: providerIDOptions(m)},
+			{label: "Model Name", value: item.ModelName},
+			{label: "Strategy", value: defaultText(item.Strategy, "failover"), options: modelStrategyOptions()},
+			{label: "Enabled", value: boolString(item.Enabled), options: boolOptions()},
+		}
 	case configSectionGroups:
 		form.title = suffix + " Group"
 		item := config.ModelGroupConfig{Strategy: "failover", Enabled: true}
 		if m != nil && index >= 0 {
 			item = m.cfg.ModelGroups[index]
 		}
-		form.items = []formField{{"ID", item.ID, false}, {"Name", item.Name, false}, {"Strategy", defaultText(item.Strategy, "failover"), false}, {"Members", groupMembersText(item.Members), false}, {"Enabled", boolString(item.Enabled), false}}
+		form.items = []formField{
+			{label: "ID", value: item.ID},
+			{label: "Name", value: item.Name},
+			{label: "Strategy", value: defaultText(item.Strategy, "failover"), options: groupStrategyOptions()},
+			{label: "Members", value: groupMembersText(item.Members), options: modelIDOptions(m), multi: true},
+			{label: "Enabled", value: boolString(item.Enabled), options: boolOptions()},
+		}
 	case configSectionKeys:
 		form.title = suffix + " API Key"
 		item := config.KeyConfig{Status: "active", Priority: 1}
 		if m != nil && index >= 0 {
 			item = m.cfg.Keys[index]
 		}
-		form.items = []formField{{"ID", item.ID, false}, {"Provider ID", item.ProviderID, false}, {"Model ID", item.ModelID, false}, {"Name", item.Name, false}, {"Value", item.Value, true}, {"Value Env", item.ValueEnv, false}, {"Secret Ref", item.SecretRef, false}, {"Status", defaultText(item.Status, "active"), false}, {"Priority", fmt.Sprint(defaultInt(item.Priority, 1)), false}, {"Req Limit/Day", fmt.Sprint(item.DailyRequestLimit), false}, {"Token Limit/Day", fmt.Sprint(item.DailyTokenLimit), false}}
+		form.items = []formField{
+			{label: "ID", value: item.ID},
+			{label: "Provider ID", value: item.ProviderID, options: providerIDOptions(m)},
+			{label: "Model ID", value: item.ModelID, options: modelIDOptions(m)},
+			{label: "Name", value: item.Name},
+			{label: "Value", value: item.Value, mask: true},
+			{label: "Value Env", value: item.ValueEnv},
+			{label: "Secret Ref", value: item.SecretRef},
+			{label: "Status", value: defaultText(item.Status, "active"), options: keyStatusOptions()},
+			{label: "Priority", value: fmt.Sprint(defaultInt(item.Priority, 1))},
+			{label: "Req Limit/Day", value: fmt.Sprint(item.DailyRequestLimit)},
+			{label: "Token Limit/Day", value: fmt.Sprint(item.DailyTokenLimit)},
+		}
 	default:
 		form.title = suffix + " Provider"
 		item := config.ProviderConfig{Type: "openai-compatible", AuthType: "bearer", TimeoutSeconds: 120, Enabled: true}
 		if m != nil && index >= 0 {
 			item = m.cfg.Providers[index]
 		}
-		form.items = []formField{{"ID", item.ID, false}, {"Name", item.Name, false}, {"Type", defaultText(item.Type, "openai-compatible"), false}, {"Base URL", item.BaseURL, false}, {"Auth Type", defaultText(item.AuthType, "bearer"), false}, {"Auth Header", item.AuthHeaderName, false}, {"Timeout", fmt.Sprint(defaultInt(item.TimeoutSeconds, 120)), false}, {"Enabled", boolString(item.Enabled), false}}
+		form.items = []formField{
+			{label: "ID", value: item.ID},
+			{label: "Name", value: item.Name},
+			{label: "Type", value: defaultText(item.Type, "openai-compatible"), options: providerTypeOptions()},
+			{label: "Base URL", value: item.BaseURL},
+			{label: "Auth Type", value: defaultText(item.AuthType, "bearer"), options: authTypeOptions()},
+			{label: "Auth Header", value: item.AuthHeaderName},
+			{label: "Timeout", value: fmt.Sprint(defaultInt(item.TimeoutSeconds, 120))},
+			{label: "Enabled", value: boolString(item.Enabled), options: boolOptions()},
+		}
 	}
 	return form
+}
+
+func (m *model) currentConfigFormField() *formField {
+	if m.editor.mode != editorModeForm || len(m.editor.form.items) == 0 {
+		return nil
+	}
+	if m.editor.form.field < 0 || m.editor.form.field >= len(m.editor.form.items) {
+		return nil
+	}
+	return &m.editor.form.items[m.editor.form.field]
+}
+
+func (m *model) openConfigFormFieldSelect() {
+	if m.editor.mode != editorModeForm || len(m.editor.form.items) == 0 {
+		return
+	}
+	field := m.currentConfigFormField()
+	if field == nil || len(field.options) == 0 {
+		return
+	}
+	m.editor.form.selectIndex = configFormFieldOptionIndex(*field)
+	m.editor.form.selectOpen = true
+}
+
+func (m *model) applyConfigFormSelect() {
+	field := m.currentConfigFormField()
+	if field == nil || len(field.options) == 0 {
+		m.editor.form.selectOpen = false
+		return
+	}
+	index := clampIndex(m.editor.form.selectIndex, len(field.options))
+	if field.multi {
+		field.value = replaceLastMultiValueOption(field.value, field.options[index])
+	} else {
+		field.value = field.options[index]
+	}
+	m.editor.form.selectOpen = false
+}
+
+func configFormFieldOptionIndex(field formField) int {
+	value := strings.TrimSpace(field.value)
+	if field.multi {
+		parts := strings.Split(field.value, ",")
+		if len(parts) > 0 {
+			value = strings.TrimSpace(parts[len(parts)-1])
+		}
+	}
+	for i, option := range field.options {
+		if option == value {
+			return i
+		}
+	}
+	return 0
+}
+
+func replaceLastMultiValueOption(value string, option string) string {
+	parts := strings.Split(value, ",")
+	if len(parts) == 0 {
+		return option
+	}
+	parts[len(parts)-1] = option
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	return strings.Join(parts, ",")
+}
+
+func providerIDOptions(m *model) []string {
+	if m == nil || m.cfg == nil {
+		return nil
+	}
+	out := make([]string, 0, len(m.cfg.Providers))
+	for _, item := range m.cfg.Providers {
+		if strings.TrimSpace(item.ID) != "" {
+			out = append(out, item.ID)
+		}
+	}
+	return out
+}
+
+func modelIDOptions(m *model) []string {
+	if m == nil || m.cfg == nil {
+		return nil
+	}
+	out := make([]string, 0, len(m.cfg.Models))
+	for _, item := range m.cfg.Models {
+		if strings.TrimSpace(item.ID) != "" {
+			out = append(out, item.ID)
+		}
+	}
+	return out
+}
+
+func providerTypeOptions() []string {
+	return []string{"openai-compatible", "anthropic", "gemini", "custom"}
+}
+
+func authTypeOptions() []string {
+	return []string{"bearer", "header"}
+}
+
+func modelStrategyOptions() []string {
+	return []string{"failover", "round_robin", "least_error", "least_used"}
+}
+
+func groupStrategyOptions() []string {
+	return []string{"failover", "round_robin", "weighted"}
+}
+
+func keyStatusOptions() []string {
+	return []string{"active", "disabled", "limited", "cooldown", "invalid"}
+}
+
+func boolOptions() []string {
+	return []string{"true", "false"}
 }
 
 func (m *model) applyConfigForm() {

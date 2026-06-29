@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/livingdolls/yute-modelmux/internal/config"
 )
 
@@ -55,6 +57,99 @@ func TestEditKeyPreservesSecretRefAndDailyLimits(t *testing.T) {
 	}
 	if edited.ID != "key-1" {
 		t.Fatalf("expected id key-1, got %q", edited.ID)
+	}
+}
+
+func TestModelProviderIDCanBeSelectedFromProviders(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers = append(cfg.Providers, config.ProviderConfig{ID: "second", Name: "Second", Type: "openai-compatible", BaseURL: "https://second.example.com/v1", AuthType: "bearer", TimeoutSeconds: 120, Enabled: true})
+	m := model{cfg: cfg}
+	m.editor.section = configSectionModels
+	m.editor.mode = editorModeForm
+	m.editor.form = newConfigForm(m.editor.section, -1, &m)
+	m.editor.form.field = 1
+
+	updated, cmd := m.updateConfigForm(tea.KeyMsg{Type: tea.KeyRight})
+	got := updated.(model)
+
+	if cmd != nil {
+		t.Fatal("expected no command when opening provider id select")
+	}
+	if !got.editor.form.selectOpen {
+		t.Fatal("expected provider id select popup to open")
+	}
+	if !strings.Contains(got.renderConfigForm(), "Select Provider ID") || !strings.Contains(got.renderConfigForm(), "second") {
+		t.Fatal("expected select popup to render provider id options")
+	}
+
+	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(model)
+	if got.editor.form.selectOpen {
+		t.Fatal("expected provider id select popup to close after apply")
+	}
+	if got.editor.form.items[1].value != "mimo" {
+		t.Fatalf("expected first provider id to be selected, got %q", got.editor.form.items[1].value)
+	}
+
+	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeyRight})
+	got = updated.(model)
+	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(model)
+	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(model)
+	if got.editor.form.items[1].value != "second" {
+		t.Fatalf("expected second provider id to be selected, got %q", got.editor.form.items[1].value)
+	}
+}
+
+func TestKeyModelIDCanBeSelectedFromModels(t *testing.T) {
+	cfg := config.Default()
+	cfg.Models = append(cfg.Models, config.ModelConfig{ID: "extra-model", ProviderID: "mimo", ModelName: "extra", Strategy: "failover", Enabled: true})
+	m := model{cfg: cfg}
+	m.editor.section = configSectionKeys
+	m.editor.mode = editorModeForm
+	m.editor.form = newConfigForm(m.editor.section, -1, &m)
+	m.editor.form.field = 2
+
+	updated, _ := m.updateConfigForm(tea.KeyMsg{Type: tea.KeyRight})
+	got := updated.(model)
+	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(model)
+	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(model)
+
+	if got.editor.form.items[2].value != "extra-model" {
+		t.Fatalf("expected extra model id to be selected, got %q", got.editor.form.items[2].value)
+	}
+}
+
+func TestGroupMembersCanSelectModelIDs(t *testing.T) {
+	cfg := config.Default()
+	cfg.Models = append(cfg.Models, config.ModelConfig{ID: "extra-model", ProviderID: "mimo", ModelName: "extra", Strategy: "failover", Enabled: true})
+	m := model{cfg: cfg}
+	m.editor.section = configSectionGroups
+	m.editor.mode = editorModeForm
+	m.editor.form = newConfigForm(m.editor.section, -1, &m)
+	m.editor.form.field = 3
+
+	updated, _ := m.updateConfigForm(tea.KeyMsg{Type: tea.KeyRight})
+	got := updated.(model)
+	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(model)
+	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(model)
+
+	if got.editor.form.items[3].value != "extra-model" {
+		t.Fatalf("expected selected group member model id, got %q", got.editor.form.items[3].value)
+	}
+
+	got.editor.form.items[3].value += ","
+	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeyRight})
+	got = updated.(model)
+	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(model)
+	if got.editor.form.items[3].value != "extra-model,mimo-v2.5-pro" {
+		t.Fatalf("expected select to fill the trailing member token, got %q", got.editor.form.items[3].value)
 	}
 }
 
