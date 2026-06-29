@@ -4,8 +4,10 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/livingdolls/yute-modelmux/internal/config"
 	"github.com/livingdolls/yute-modelmux/internal/core/domain"
 	"github.com/livingdolls/yute-modelmux/internal/core/port/inbound"
@@ -175,6 +177,33 @@ func TestEscReturnsFromConfigBrowseToMenu(t *testing.T) {
 	}
 	if got.selected != pageConfig {
 		t.Fatalf("expected selected menu to stay on config, got %d", got.selected)
+	}
+}
+
+func TestChatViewDoesNotExceedTerminalHeightWithLongConversation(t *testing.T) {
+	cfg := cloneConfig(config.Default())
+	chat := newTUIChatSession(1, "mimo-v2.5-pro")
+	for i := 0; i < 40; i++ {
+		chat.Messages = append(chat.Messages, tuiChatMessage{
+			Role:      "assistant",
+			Content:   "this is a long response that should wrap across multiple lines and must not push the menu or header out of the terminal viewport",
+			CreatedAt: time.Now(),
+		})
+	}
+	m := model{
+		cfg:            cfg,
+		page:           pageChat,
+		selected:       pageChat,
+		contentFocused: true,
+		width:          120,
+		height:         28,
+		styles:         defaultStyles(defaultTheme),
+		chats:          []tuiChatSession{chat},
+	}
+
+	view := m.View()
+	if got := lipgloss.Height(view); got > m.height {
+		t.Fatalf("expected view height <= %d, got %d", m.height, got)
 	}
 }
 

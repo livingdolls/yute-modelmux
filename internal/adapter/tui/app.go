@@ -77,6 +77,7 @@ type model struct {
 	page             int
 	contentFocused   bool
 	width            int
+	height           int
 	styles           styles
 	editor           configEditorState
 	chats            []tuiChatSession
@@ -326,6 +327,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
 	case tickMsg:
 		return m, tickCmd()
 	case chatResponseMsg:
@@ -423,6 +425,10 @@ func (m model) View() string {
 	if width == 0 {
 		width = 100
 	}
+	height := m.height
+	if height == 0 {
+		height = 30
+	}
 	if m.showSplash() {
 		return m.renderSplash(width)
 	}
@@ -431,9 +437,6 @@ func (m model) View() string {
 
 	header := m.renderHeader(width - 2)
 	statusBar := m.renderStatusBar(width - 2)
-	sidebar := m.renderSidebar(sidebarWidth)
-	content := m.styles.panel.Width(contentWidth).Render(m.renderPage())
-	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, strings.Repeat(" ", m.bodyGap()), content)
 	footerText := "MENU tab/shift+tab:move  enter:open  ?:help  q:quit"
 	if m.contentFocused && m.page == pageChat {
 		footerText = "CHAT enter:send  up/down:session  ctrl+n:new  ctrl+t:target  ctrl+f:filter  esc:menu"
@@ -451,6 +454,10 @@ func (m model) View() string {
 	}
 	footerText += "  AUTO:" + strings.ToUpper(m.layoutMode()) + "  THEME:" + strings.ToUpper(m.theme)
 	footer := m.styles.footer.Width(width - 2).Render(footerText)
+	bodyHeight := maxInt(8, height-lipgloss.Height(header)-lipgloss.Height(statusBar)-lipgloss.Height(footer)-2)
+	sidebar := trimVisibleLines(m.renderSidebar(sidebarWidth), bodyHeight)
+	content := trimVisibleLines(m.styles.panel.Width(contentWidth).Render(m.renderPage(maxInt(4, bodyHeight-2))), bodyHeight)
+	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, strings.Repeat(" ", m.bodyGap()), content)
 
 	base := m.styles.app.Render(lipgloss.JoinVertical(lipgloss.Left, header, statusBar, body, footer))
 	if m.showHelp {
@@ -529,10 +536,11 @@ func (m model) renderSidebar(width int) string {
 	return m.styles.sidebar.Width(width).Render(b.String())
 }
 
-func (m model) renderPage() string {
+func (m model) renderPage(maxHeight int) string {
 	title := m.styles.panelTitle.Render(pageGlyph(m.page) + " :: " + strings.ToUpper(navItems[m.page].label) + " ::")
 	subtitle := m.styles.subtitle.Render(m.pageSubtitle())
 	var body string
+	bodyHeight := maxInt(1, maxHeight-4)
 	switch m.page {
 	case pageModels:
 		body = m.renderModels(m.cfg.Models)
@@ -543,7 +551,7 @@ func (m model) renderPage() string {
 			body = m.renderConfigGroups(m.cfg.ModelGroups)
 		}
 	case pageChat:
-		body = m.renderChat()
+		body = m.renderChat(bodyHeight)
 	case pageKeys:
 		if m.router != nil {
 			body = m.renderDomainKeys(m.router.ListKeys())
@@ -559,7 +567,7 @@ func (m model) renderPage() string {
 	default:
 		body = m.renderProviders(m.cfg.Providers)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, title, subtitle, m.styles.muted.Render(strings.Repeat("-", 58)), body)
+	return lipgloss.JoinVertical(lipgloss.Left, title, subtitle, m.styles.muted.Render(strings.Repeat("-", 58)), trimVisibleLines(body, bodyHeight))
 }
 
 func (m *model) toggleTheme() {
@@ -1325,15 +1333,15 @@ func (m model) renderDomainKeys(items []domain.APIKey) string {
 	return lipgloss.JoinVertical(lipgloss.Left, summary, "", strings.Join(entries, "\n\n"))
 }
 
-func (m model) renderChat() string {
+func (m model) renderChat(maxHeight int) string {
 	if len(m.chats) == 0 {
 		return m.emptyState("No chat sessions")
 	}
 	active := m.chats[m.activeChat]
 	leftWidth := m.chatSidebarWidth()
 	rightWidth := maxInt(34, m.pageBodyWidth()-leftWidth-m.bodyGap())
-	left := m.renderChatSessionList(leftWidth)
-	right := m.renderChatConversation(active, rightWidth)
+	left := trimVisibleLines(m.renderChatSessionList(leftWidth), maxHeight)
+	right := trimVisibleLines(m.renderChatConversation(active, rightWidth, maxHeight), maxHeight)
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", m.bodyGap()), right)
 }
 
@@ -1388,7 +1396,7 @@ func (m model) renderChatSessionList(width int) string {
 	return m.styles.sidebar.Width(width).Render(b.String())
 }
 
-func (m model) renderChatConversation(chat tuiChatSession, width int) string {
+func (m model) renderChatConversation(chat tuiChatSession, width int, maxHeight int) string {
 	var b strings.Builder
 	header := m.styles.panelTitle.Render(chat.Title)
 	target := m.styles.badge.Render(defaultText(chat.Target, "no-target"))
@@ -1406,14 +1414,18 @@ func (m model) renderChatConversation(chat tuiChatSession, width int) string {
 		b.WriteString(m.styles.muted.Render("No messages yet. Start typing below and press enter to send."))
 		b.WriteString("\n")
 	} else {
+		var messageBlock strings.Builder
 		start := 0
-		if len(chat.Messages) > 10 {
-			start = len(chat.Messages) - 10
+		if len(chat.Messages) > 20 {
+			start = len(chat.Messages) - 20
 		}
 		for _, message := range chat.Messages[start:] {
-			b.WriteString(m.renderChatMessage(message, width))
-			b.WriteString("\n")
+			messageBlock.WriteString(m.renderChatMessage(message, width))
+			messageBlock.WriteString("\n")
 		}
+		messageHeight := maxInt(1, maxHeight-10)
+		b.WriteString(tailVisibleLines(messageBlock.String(), messageHeight))
+		b.WriteString("\n")
 	}
 
 	if chat.Error != "" {
@@ -1712,6 +1724,28 @@ func wrapText(text string, width int) string {
 		b.WriteString(line)
 	}
 	return b.String()
+}
+
+func trimVisibleLines(value string, maxLines int) string {
+	if maxLines <= 0 {
+		return ""
+	}
+	lines := strings.Split(value, "\n")
+	if len(lines) <= maxLines {
+		return value
+	}
+	return strings.Join(lines[:maxLines], "\n")
+}
+
+func tailVisibleLines(value string, maxLines int) string {
+	if maxLines <= 0 {
+		return ""
+	}
+	lines := strings.Split(strings.TrimRight(value, "\n"), "\n")
+	if len(lines) <= maxLines {
+		return strings.Join(lines, "\n")
+	}
+	return strings.Join(lines[len(lines)-maxLines:], "\n")
 }
 
 func (m model) renderLogs() string {
