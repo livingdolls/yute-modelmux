@@ -1,3 +1,5 @@
+![ModelMux TUI](https://res.cloudinary.com/dwg1vtwlc/image/upload/v1782697574/repo/Cuplikan_layar_dari_2026-06-29_08-43-28_oxcdu6.png)
+
 # ModelMux
 
 **Lightweight LLM API Key Router — Built for Reliability, Operated from the Terminal.**
@@ -10,14 +12,14 @@ No dependencies on Redis, message queues, or external databases. Just a single G
 
 ## Why ModelMux?
 
-| Problem | ModelMux Solution |
-|---------|-------------------|
-| API key rate limits kill production traffic | Priority-based rotation, per-minute/concurrency caps, cooldown logic |
-| One key goes down, everything breaks | Automatic failover with retry + backoff across multiple keys |
-| Token usage tracking gaps | Full accounting for stream AND non-stream requests (OpenAI, Anthropic, Gemini) |
-| Config drift between deployments | YAML is the single source of truth; validate before deploy |
-| No visibility into routing | Built-in Prometheus metrics, request logs, key health dashboard |
-| Secrets in shell history | Encrypted secret store with Argon2id + hidden terminal prompt |
+| Problem                                     | ModelMux Solution                                                              |
+| ------------------------------------------- | ------------------------------------------------------------------------------ |
+| API key rate limits kill production traffic | Priority-based rotation, per-minute/concurrency caps, cooldown logic           |
+| One key goes down, everything breaks        | Automatic failover with retry + backoff across multiple keys                   |
+| Token usage tracking gaps                   | Full accounting for stream AND non-stream requests (OpenAI, Anthropic, Gemini) |
+| Config drift between deployments            | YAML is the single source of truth; validate before deploy                     |
+| No visibility into routing                  | Built-in Prometheus metrics, request logs, key health dashboard                |
+| Secrets in shell history                    | Encrypted secret store with Argon2id + hidden terminal prompt                  |
 
 ---
 
@@ -51,11 +53,11 @@ app:
 server:
   host: "127.0.0.1"
   port: 8787
-  require_auth: false           # set true + auth_token_env for network exposure
+  require_auth: false # set true + auth_token_env for network exposure
   max_request_body_mb: 10
 
 storage:
-  type: ""                      # set to sqlite to persist state across restarts
+  type: "" # set to sqlite to persist state across restarts
   path: ~/.local/share/modelmux/modelmux.db
 
 providers:
@@ -71,18 +73,18 @@ models:
   - id: mimo-v2.5-pro
     provider_id: mimo
     model_name: mimo-v2.5-pro
-    strategy: failover              # failover | round_robin | least_error | least_used
+    strategy: failover # failover | round_robin | least_error | least_used
     enabled: true
-    requests_per_minute: 120        # optional: limit model-wide RPM
-    max_concurrent_requests: 10     # optional: limit simultaneous requests
-    capabilities:                   # optional: fine-grained feature gating
+    requests_per_minute: 120 # optional: limit model-wide RPM
+    max_concurrent_requests: 10 # optional: limit simultaneous requests
+    capabilities: # optional: fine-grained feature gating
       tools: true
       json_mode: true
 
 model_groups:
   - id: high-price
     name: High Price Models
-    strategy: weighted             # failover | round_robin | weighted
+    strategy: weighted # failover | round_robin | weighted
     enabled: true
     members:
       - model_id: mimo-v2.5-pro
@@ -94,7 +96,7 @@ keys:
   - id: mimo-key-1
     provider_id: mimo
     model_id: mimo-v2.5-pro
-    value_env: MIMO_API_KEY        # env var (recommended)
+    value_env: MIMO_API_KEY # env var (recommended)
     status: active
     priority: 1
     daily_request_limit: 1000
@@ -121,23 +123,23 @@ retry:
 
 ### Key Rotation Strategies
 
-| Strategy | Behavior |
-|----------|----------|
-| `failover` | Lowest priority first (default) |
-| `round_robin` | Distribute evenly across keys |
-| `least_error` | Pick key with fewest errors |
-| `least_used` | Pick key with lowest daily usage |
+| Strategy      | Behavior                         |
+| ------------- | -------------------------------- |
+| `failover`    | Lowest priority first (default)  |
+| `round_robin` | Distribute evenly across keys    |
+| `least_error` | Pick key with fewest errors      |
+| `least_used`  | Pick key with lowest daily usage |
 
 Group-level strategies (`failover`, `round_robin`, `weighted`) control how members are selected before key rotation kicks in.
 
 ### Provider Types
 
-| Type | Supports | Auto-Converted |
-|------|----------|----------------|
-| `openai-compatible` | Chat, Completions, Streaming, Tools | Direct pass-through |
-| `anthropic` | Chat, Streaming | Requests/Responses converted to OpenAI format |
-| `gemini` | Chat, Streaming | Requests/Responses converted to OpenAI format |
-| `custom` | Same as `openai-compatible` | Direct pass-through |
+| Type                | Supports                            | Auto-Converted                                |
+| ------------------- | ----------------------------------- | --------------------------------------------- |
+| `openai-compatible` | Chat, Completions, Streaming, Tools | Direct pass-through                           |
+| `anthropic`         | Chat, Streaming                     | Requests/Responses converted to OpenAI format |
+| `gemini`            | Chat, Streaming                     | Requests/Responses converted to OpenAI format |
+| `custom`            | Same as `openai-compatible`         | Direct pass-through                           |
 
 ---
 
@@ -213,14 +215,14 @@ GET  /admin/status                    Server summary (keys, models, providers)
 
 ModelMux enforces limits at three levels, applied in order:
 
-| Level | Config | Scope |
-|-------|--------|-------|
-| **Model RPM** | `models[].requests_per_minute` | Global per-model |
-| **Model Concurrency** | `models[].max_concurrent_requests` | Simultaneous requests |
-| **Key RPM** | `keys[].requests_per_minute` | Per-key |
-| **Key Tokens/min** | `keys[].tokens_per_minute` | Per-key total tokens (input + output) |
-| **Key Concurrency** | `keys[].max_concurrent_requests` | Per-key simultaneous |
-| **Daily Quota** | `keys[].daily_request_limit`, `daily_token_limit` | Per-key daily |
+| Level                 | Config                                            | Scope                                 |
+| --------------------- | ------------------------------------------------- | ------------------------------------- |
+| **Model RPM**         | `models[].requests_per_minute`                    | Global per-model                      |
+| **Model Concurrency** | `models[].max_concurrent_requests`                | Simultaneous requests                 |
+| **Key RPM**           | `keys[].requests_per_minute`                      | Per-key                               |
+| **Key Tokens/min**    | `keys[].tokens_per_minute`                        | Per-key total tokens (input + output) |
+| **Key Concurrency**   | `keys[].max_concurrent_requests`                  | Per-key simultaneous                  |
+| **Daily Quota**       | `keys[].daily_request_limit`, `daily_token_limit` | Per-key daily                         |
 
 Limits use in-memory rolling windows (minute granularity). Counters reset on restart. When all keys for a model are exhausted, a `429` is returned.
 
@@ -245,21 +247,75 @@ Every proxied request gets a unique `X-ModelMux-Request-ID` response header. Str
 
 ## Storage
 
-ModelMux uses in-memory state by default. Add SQLite for persistence across restarts:
+ModelMux uses in-memory state by default. This is fine for local testing, but all runtime state resets when the process restarts. Enable SQLite when you want request logs, key usage counters, daily quotas, and cooldown state to survive restarts.
 
 ```yaml
 storage:
   type: sqlite
-  path: ~/.local/share/modelmux/modelmux.db   # default, optional
+  path: ~/.local/share/modelmux/modelmux.db # default, optional
 ```
 
-When enabled, the following data is persisted:
+If `storage.type` is empty or omitted, runtime state resets on restart and logs are kept in-memory only. The in-memory log buffer keeps the last 200 entries.
+
+When SQLite is enabled, the following data is persisted:
 
 - **Key runtime state** — status, usage counts, cooldown timers, daily quotas
-- **Request logs** — full history with model, key, status code, latency, token counts
+- **Daily usage counters** — request and token counts used by `daily_request_limit` and `daily_token_limit`
+- **Request logs** — history with group, model, provider, key, status code, latency, token counts, and timestamp
 - **Log queries** — `modelmux logs` CLI and `/logs` HTTP endpoint pull from this store
+- **Metrics source data** — `/metrics` can use stored request logs instead of only in-memory logs
 
-If `storage.type` is empty or omitted, runtime state resets on restart and logs are kept in-memory (last 200 entries). SQLite uses WAL mode and auto-migrates on startup.
+SQLite is opened in WAL mode and auto-migrates its schema on startup. No Redis, Postgres, or external database service is required.
+
+Common log queries:
+
+```bash
+modelmux logs --limit 50
+modelmux logs --model-id mimo-v2.5-pro
+modelmux logs --status-code 429
+modelmux logs --json --limit 100
+```
+
+The HTTP log endpoint supports similar filters:
+
+```http
+GET /logs?limit=50
+GET /logs?model_id=mimo-v2.5-pro
+GET /logs?status_code=429
+```
+
+SQLite creates the main database file plus WAL files next to it:
+
+```text
+~/.local/share/modelmux/modelmux.db
+~/.local/share/modelmux/modelmux.db-wal
+~/.local/share/modelmux/modelmux.db-shm
+```
+
+The `-wal` and `-shm` files are normal SQLite WAL files.
+
+If you use the encrypted secret store, its file is placed next to the storage directory. With the default storage path, the secret store is:
+
+```text
+~/.local/share/modelmux/secrets.enc
+```
+
+Secret store usage still requires `MODELMUX_MASTER_KEY`:
+
+```bash
+export MODELMUX_MASTER_KEY="your-strong-master-password"
+```
+
+For backups, copy the SQLite database and, if used, the encrypted secret store:
+
+```bash
+cp ~/.local/share/modelmux/modelmux.db ~/modelmux.db.backup
+cp ~/.local/share/modelmux/secrets.enc ~/modelmux-secrets.enc.backup
+```
+
+Keep the matching `MODELMUX_MASTER_KEY` safe. Without it, `secrets.enc` cannot be decrypted.
+
+SQLite storage is intended for a single ModelMux instance using one database file. Sharing the same SQLite file across multiple running instances is not recommended.
 
 ### Health Check
 
@@ -281,32 +337,32 @@ modelmux tui
 
 ### TUI Keyboard Shortcuts
 
-| Area | Shortcut | Action |
-|------|----------|--------|
-| Global | `tab` / `shift+tab` | Move between pages |
-| Global | `enter` | Open or confirm the selected item |
-| Global | `esc` | Cancel input, close dialogs, or leave filter mode |
-| Global | `?` | Toggle help when not typing |
-| Global | `q` | Quit when not typing |
-| Global | `ctrl+c` | Force quit |
-| Chat | `enter` | Send message |
-| Chat | `up/down` | Switch active chat session |
-| Chat | `ctrl+n` | New chat session |
-| Chat | `ctrl+t` | Switch target model |
-| Chat | `ctrl+f` | Filter chat sessions |
-| Config | `up/down` | Select row |
-| Config | `left/right` | Switch section |
-| Config | `enter` | Edit selected item |
-| Config | `a` | Add item |
-| Config | `delete` | Delete selected item |
-| Config | `ctrl+s` | Save config and reload router |
-| Config | `ctrl+r` | Reload draft config |
-| Config | `/` or `ctrl+f` | Filter rows |
-| Keys | `1`, `2`, `3` | Sort by status, cooldown, or errors |
-| Keys | `x` | Test a key by ID |
-| Logs | `1`-`6` | Change log filter or sort order |
-| Theme | `t` | Cycle theme when not typing |
-| Theme | `T` | Open theme picker when not typing |
+| Area   | Shortcut            | Action                                            |
+| ------ | ------------------- | ------------------------------------------------- |
+| Global | `tab` / `shift+tab` | Move between pages                                |
+| Global | `enter`             | Open or confirm the selected item                 |
+| Global | `esc`               | Cancel input, close dialogs, or leave filter mode |
+| Global | `?`                 | Toggle help when not typing                       |
+| Global | `q`                 | Quit when not typing                              |
+| Global | `ctrl+c`            | Force quit                                        |
+| Chat   | `enter`             | Send message                                      |
+| Chat   | `up/down`           | Switch active chat session                        |
+| Chat   | `ctrl+n`            | New chat session                                  |
+| Chat   | `ctrl+t`            | Switch target model                               |
+| Chat   | `ctrl+f`            | Filter chat sessions                              |
+| Config | `up/down`           | Select row                                        |
+| Config | `left/right`        | Switch section                                    |
+| Config | `enter`             | Edit selected item                                |
+| Config | `a`                 | Add item                                          |
+| Config | `delete`            | Delete selected item                              |
+| Config | `ctrl+s`            | Save config and reload router                     |
+| Config | `ctrl+r`            | Reload draft config                               |
+| Config | `/` or `ctrl+f`     | Filter rows                                       |
+| Keys   | `1`, `2`, `3`       | Sort by status, cooldown, or errors               |
+| Keys   | `x`                 | Test a key by ID                                  |
+| Logs   | `1`-`6`             | Change log filter or sort order                   |
+| Theme  | `t`                 | Cycle theme when not typing                       |
+| Theme  | `T`                 | Open theme picker when not typing                 |
 
 Text input modes do not use single-letter navigation shortcuts, so normal typing works as expected.
 
