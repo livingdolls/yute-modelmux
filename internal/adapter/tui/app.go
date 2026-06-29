@@ -1015,7 +1015,7 @@ func (m model) renderConfigGroupCard(item config.ModelGroupConfig) string {
 		m.styles.navMuted.Render("id="+item.ID),
 		m.styles.badgeSoft.Render(strings.ToUpper(defaultText(item.Strategy, "failover"))),
 		m.styles.hint.Render(fmt.Sprintf("members  %d", len(item.Members))),
-		m.styles.hint.Render("models   "+truncate(groupMembersText(item.Members), maxInt(16, m.pageBodyWidth()/2))),
+		m.styles.hint.Render("members  "+truncate(groupMembersText(item.Members), maxInt(16, m.pageBodyWidth()/2))),
 	)
 	return m.styles.card.Render(content)
 }
@@ -1031,7 +1031,7 @@ func (m model) renderDomainGroupCard(item domain.ModelGroup) string {
 		m.styles.navMuted.Render("id="+item.ID),
 		m.styles.badgeSoft.Render(strings.ToUpper(string(item.Strategy))),
 		m.styles.hint.Render(fmt.Sprintf("members  %d", len(item.Members))),
-		m.styles.hint.Render("models   "+truncate(domainGroupMembersText(item.Members), maxInt(16, m.pageBodyWidth()/2))),
+		m.styles.hint.Render("members  "+truncate(domainGroupMembersText(item.Members), maxInt(16, m.pageBodyWidth()/2))),
 	)
 	return m.styles.card.Render(content)
 }
@@ -2122,7 +2122,11 @@ func keyRecentText(lastUsedAt *time.Time) string {
 func domainGroupMembersText(members []domain.ModelGroupMember) string {
 	items := make([]string, 0, len(members))
 	for _, member := range members {
-		items = append(items, member.ModelID)
+		if member.KeyID != "" {
+			items = append(items, "key:"+member.KeyID)
+			continue
+		}
+		items = append(items, "model:"+member.ModelID)
 	}
 	return strings.Join(items, ",")
 }

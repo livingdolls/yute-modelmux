@@ -228,7 +228,18 @@ func (m model) updateConfigFormSelect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "right":
 		m.editor.form.selectIndex = nextIndex(m.editor.form.selectIndex, len(field.options))
 		return m, nil
-	case "enter", " ":
+	case "enter":
+		if field.multi {
+			m.editor.form.selectOpen = false
+			return m, nil
+		}
+		m.applyConfigFormSelect()
+		return m, nil
+	case " ":
+		if field.multi {
+			m.toggleConfigFormMultiSelect()
+			return m, nil
+		}
 		m.applyConfigFormSelect()
 		return m, nil
 	}
@@ -392,15 +403,28 @@ func (m model) renderConfigFormSelectPopup(field formField) string {
 
 func (m model) configFormSelectPopupContent(field formField) string {
 	width := minInt(maxInt(28, m.pageBodyWidth()/2), 56)
+	helpText := "up/down choose  enter apply  esc cancel"
+	if field.multi {
+		helpText = "up/down choose  space toggle  enter done"
+	}
 	lines := []string{
 		m.styles.panelTitle.Render("Select " + field.label),
-		m.styles.hint.Render("up/down choose  enter apply  esc cancel"),
+		m.styles.hint.Render(helpText),
 		m.styles.muted.Render(strings.Repeat("-", width-4)),
 	}
+	selected := selectedMultiOptions(field.value)
 	for i, option := range field.options {
-		line := "  " + option
+		label := option
+		if field.multi {
+			mark := "[ ] "
+			if selected[option] {
+				mark = "[x] "
+			}
+			label = mark + option
+		}
+		line := "  " + label
 		if i == m.editor.form.selectIndex {
-			line = m.styles.navActive.Width(width - 4).Render("> " + option)
+			line = m.styles.navActive.Width(width - 4).Render("> " + label)
 		} else {
 			line = m.styles.nav.Width(width - 4).Render(line)
 		}
@@ -579,7 +603,7 @@ func newConfigForm(section configSection, index int, m *model) configFormState {
 			{label: "ID", value: item.ID},
 			{label: "Name", value: item.Name},
 			{label: "Strategy", value: defaultText(item.Strategy, "failover"), options: groupStrategyOptions()},
-			{label: "Members", value: groupMembersText(item.Members), options: modelIDOptions(m), multi: true},
+			{label: "Members", value: groupMembersText(item.Members), options: groupMemberOptions(m), multi: true},
 			{label: "Enabled", value: boolString(item.Enabled), options: boolOptions()},
 		}
 	case configSectionKeys:
@@ -658,6 +682,15 @@ func (m *model) applyConfigFormSelect() {
 	m.editor.form.selectOpen = false
 }
 
+func (m *model) toggleConfigFormMultiSelect() {
+	field := m.currentConfigFormField()
+	if field == nil || len(field.options) == 0 {
+		return
+	}
+	index := clampIndex(m.editor.form.selectIndex, len(field.options))
+	field.value = toggleMultiValueOption(field.value, field.options[index])
+}
+
 func configFormFieldOptionIndex(field formField) int {
 	value := strings.TrimSpace(field.value)
 	if field.multi {
@@ -672,6 +705,38 @@ func configFormFieldOptionIndex(field formField) int {
 		}
 	}
 	return 0
+}
+
+func selectedMultiOptions(value string) map[string]bool {
+	selected := map[string]bool{}
+	for _, part := range strings.Split(value, ",") {
+		token := strings.TrimSpace(part)
+		if token != "" {
+			selected[token] = true
+		}
+	}
+	return selected
+}
+
+func toggleMultiValueOption(value string, option string) string {
+	selected := selectedMultiOptions(value)
+	if selected[option] {
+		delete(selected, option)
+	} else {
+		selected[option] = true
+	}
+	parts := make([]string, 0, len(selected))
+	for _, part := range strings.Split(value, ",") {
+		token := strings.TrimSpace(part)
+		if token != "" && selected[token] {
+			parts = append(parts, token)
+			delete(selected, token)
+		}
+	}
+	if selected[option] {
+		parts = append(parts, option)
+	}
+	return strings.Join(parts, ",")
 }
 
 func replaceLastMultiValueOption(value string, option string) string {
@@ -707,6 +772,24 @@ func modelIDOptions(m *model) []string {
 	for _, item := range m.cfg.Models {
 		if strings.TrimSpace(item.ID) != "" {
 			out = append(out, item.ID)
+		}
+	}
+	return out
+}
+
+func groupMemberOptions(m *model) []string {
+	if m == nil || m.cfg == nil {
+		return nil
+	}
+	out := make([]string, 0, len(m.cfg.Models)+len(m.cfg.Keys))
+	for _, item := range m.cfg.Models {
+		if strings.TrimSpace(item.ID) != "" {
+			out = append(out, "model:"+item.ID)
+		}
+	}
+	for _, item := range m.cfg.Keys {
+		if strings.TrimSpace(item.ID) != "" {
+			out = append(out, "key:"+item.ID)
 		}
 	}
 	return out
@@ -845,13 +928,17 @@ func (m *model) applyDeleteConfigItem() {
 	switch section {
 	case configSectionModels:
 		modelID := m.cfg.Models[index].ID
+		keyIDs := keyIDsForModels(m.cfg, map[string]struct{}{modelID: {}})
 		m.cfg.Models = append(m.cfg.Models[:index], m.cfg.Models[index+1:]...)
 		removeKeysForModels(m.cfg, map[string]struct{}{modelID: {}})
 		removeModelsFromGroups(m.cfg, map[string]struct{}{modelID: {}})
+		removeKeysFromGroups(m.cfg, keyIDs)
 	case configSectionGroups:
 		m.cfg.ModelGroups = append(m.cfg.ModelGroups[:index], m.cfg.ModelGroups[index+1:]...)
 	case configSectionKeys:
+		keyID := m.cfg.Keys[index].ID
 		m.cfg.Keys = append(m.cfg.Keys[:index], m.cfg.Keys[index+1:]...)
+		removeKeysFromGroups(m.cfg, map[string]struct{}{keyID: {}})
 	default:
 		providerID := m.cfg.Providers[index].ID
 		modelIDs := map[string]struct{}{}
@@ -860,10 +947,12 @@ func (m *model) applyDeleteConfigItem() {
 				modelIDs[model.ID] = struct{}{}
 			}
 		}
+		keyIDs := keyIDsForModels(m.cfg, modelIDs)
 		m.cfg.Providers = append(m.cfg.Providers[:index], m.cfg.Providers[index+1:]...)
 		filterModelsByProvider(m.cfg, providerID)
 		removeKeysForModels(m.cfg, modelIDs)
 		removeModelsFromGroups(m.cfg, modelIDs)
+		removeKeysFromGroups(m.cfg, keyIDs)
 	}
 	m.editor.selected = clampIndex(m.editor.selected, m.configSectionLen())
 	m.editor.sectionSelected[int(m.editor.section)] = m.editor.selected
@@ -960,11 +1049,20 @@ func parseGroupMembers(value string) []config.ModelGroupMemberConfig {
 	parts := strings.Split(value, ",")
 	members := make([]config.ModelGroupMemberConfig, 0, len(parts))
 	for _, part := range parts {
-		modelID := strings.TrimSpace(part)
-		if modelID == "" {
+		token := strings.TrimSpace(part)
+		if token == "" {
 			continue
 		}
-		members = append(members, config.ModelGroupMemberConfig{ModelID: modelID, Priority: len(members) + 1, Weight: 1, Enabled: true})
+		member := config.ModelGroupMemberConfig{Priority: len(members) + 1, Weight: 1, Enabled: true}
+		switch {
+		case strings.HasPrefix(token, "key:"):
+			member.KeyID = strings.TrimSpace(strings.TrimPrefix(token, "key:"))
+		case strings.HasPrefix(token, "model:"):
+			member.ModelID = strings.TrimSpace(strings.TrimPrefix(token, "model:"))
+		default:
+			member.ModelID = token
+		}
+		members = append(members, member)
 	}
 	return members
 }
@@ -972,7 +1070,11 @@ func parseGroupMembers(value string) []config.ModelGroupMemberConfig {
 func groupMembersText(members []config.ModelGroupMemberConfig) string {
 	items := make([]string, 0, len(members))
 	for _, member := range members {
-		items = append(items, member.ModelID)
+		if member.KeyID != "" {
+			items = append(items, "key:"+member.KeyID)
+			continue
+		}
+		items = append(items, "model:"+member.ModelID)
 	}
 	return strings.Join(items, ",")
 }
@@ -1013,14 +1115,40 @@ func countKeysForModel(cfg *config.Config, modelID string) int {
 	return count
 }
 
+func keyIDsForModels(cfg *config.Config, modelIDs map[string]struct{}) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, key := range cfg.Keys {
+		if _, remove := modelIDs[key.ModelID]; remove {
+			out[key.ID] = struct{}{}
+		}
+	}
+	return out
+}
+
 func countGroupsForModel(cfg *config.Config, modelID string) int {
 	count := 0
 	for _, group := range cfg.ModelGroups {
+		groupAffected := false
 		for _, member := range group.Members {
 			if member.ModelID == modelID {
-				count++
+				groupAffected = true
 				break
 			}
+			if member.KeyID == "" {
+				continue
+			}
+			for _, key := range cfg.Keys {
+				if key.ID == member.KeyID && key.ModelID == modelID {
+					groupAffected = true
+					break
+				}
+			}
+			if groupAffected {
+				break
+			}
+		}
+		if groupAffected {
+			count++
 		}
 	}
 	return count
@@ -1042,6 +1170,23 @@ func removeModelsFromGroups(cfg *config.Config, modelIDs map[string]struct{}) {
 		members := cfg.ModelGroups[i].Members[:0]
 		for _, member := range cfg.ModelGroups[i].Members {
 			if _, remove := modelIDs[member.ModelID]; remove {
+				continue
+			}
+			member.Priority = len(members) + 1
+			members = append(members, member)
+		}
+		cfg.ModelGroups[i].Members = members
+		if len(members) == 0 {
+			cfg.ModelGroups[i].Enabled = false
+		}
+	}
+}
+
+func removeKeysFromGroups(cfg *config.Config, keyIDs map[string]struct{}) {
+	for i := range cfg.ModelGroups {
+		members := cfg.ModelGroups[i].Members[:0]
+		for _, member := range cfg.ModelGroups[i].Members {
+			if _, remove := keyIDs[member.KeyID]; remove && member.KeyID != "" {
 				continue
 			}
 			member.Priority = len(members) + 1

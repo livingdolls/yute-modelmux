@@ -13,6 +13,7 @@ func TestDeleteModelRemovesKeysAndGroupMembers(t *testing.T) {
 	cfg.Models = append(cfg.Models, config.ModelConfig{ID: "extra", ProviderID: "mimo", ModelName: "extra", Strategy: "failover", Enabled: true})
 	cfg.Keys = append(cfg.Keys, config.KeyConfig{ID: "extra-key", ProviderID: "mimo", ModelID: "extra", Value: "key", Status: "active", Priority: 1})
 	cfg.ModelGroups[0].Members = append(cfg.ModelGroups[0].Members, config.ModelGroupMemberConfig{ModelID: "extra", Priority: 2, Weight: 1, Enabled: true})
+	cfg.ModelGroups[0].Members = append(cfg.ModelGroups[0].Members, config.ModelGroupMemberConfig{KeyID: "extra-key", Priority: 3, Weight: 1, Enabled: true})
 	m := model{cfg: cfg, editor: configEditorState{section: configSectionModels, selected: 1, confirm: deleteConfirmState{kind: configSectionModels, index: 1}}}
 
 	m.applyDeleteConfigItem()
@@ -25,6 +26,9 @@ func TestDeleteModelRemovesKeysAndGroupMembers(t *testing.T) {
 	for _, member := range m.cfg.ModelGroups[0].Members {
 		if member.ModelID == "extra" {
 			t.Fatalf("expected extra model to be removed from group: %+v", m.cfg.ModelGroups[0].Members)
+		}
+		if member.KeyID == "extra-key" {
+			t.Fatalf("expected extra model key member to be removed from group: %+v", m.cfg.ModelGroups[0].Members)
 		}
 	}
 }
@@ -126,6 +130,7 @@ func TestKeyModelIDCanBeSelectedFromModels(t *testing.T) {
 func TestGroupMembersCanSelectModelIDs(t *testing.T) {
 	cfg := config.Default()
 	cfg.Models = append(cfg.Models, config.ModelConfig{ID: "extra-model", ProviderID: "mimo", ModelName: "extra", Strategy: "failover", Enabled: true})
+	cfg.Keys = append(cfg.Keys, config.KeyConfig{ID: "extra-key", ProviderID: "mimo", ModelID: "extra-model", Value: "key", Status: "active", Priority: 2})
 	m := model{cfg: cfg}
 	m.editor.section = configSectionGroups
 	m.editor.mode = editorModeForm
@@ -134,22 +139,59 @@ func TestGroupMembersCanSelectModelIDs(t *testing.T) {
 
 	updated, _ := m.updateConfigForm(tea.KeyMsg{Type: tea.KeyRight})
 	got := updated.(model)
+	if !strings.Contains(got.renderConfigForm(), "[ ] model:mimo-v2.5-pro") {
+		t.Fatal("expected group member popup to render multi-select checkboxes")
+	}
 	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeyDown})
 	got = updated.(model)
-	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeySpace})
 	got = updated.(model)
 
-	if got.editor.form.items[3].value != "extra-model" {
+	if got.editor.form.items[3].value != "model:extra-model" {
 		t.Fatalf("expected selected group member model id, got %q", got.editor.form.items[3].value)
 	}
+	if !strings.Contains(got.renderConfigForm(), "[x] model:extra-model") {
+		t.Fatal("expected selected group member to render checked")
+	}
 
-	got.editor.form.items[3].value += ","
-	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeyRight})
+	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeyDown})
 	got = updated.(model)
+	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeySpace})
+	got = updated.(model)
+	if got.editor.form.items[3].value != "model:extra-model,key:mimo-key-1" {
+		t.Fatalf("expected multi-select to keep both members, got %q", got.editor.form.items[3].value)
+	}
 	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(model)
-	if got.editor.form.items[3].value != "extra-model,mimo-v2.5-pro" {
-		t.Fatalf("expected select to fill the trailing member token, got %q", got.editor.form.items[3].value)
+	if got.editor.form.selectOpen {
+		t.Fatal("expected enter to close multi-select popup")
+	}
+
+	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeyRight})
+	got = updated.(model)
+	updated, _ = got.updateConfigForm(tea.KeyMsg{Type: tea.KeySpace})
+	got = updated.(model)
+	if got.editor.form.items[3].value != "model:extra-model" {
+		t.Fatalf("expected space to toggle selected key member off, got %q", got.editor.form.items[3].value)
+	}
+}
+
+func TestParseGroupMembersSupportsModelAndKeyTokens(t *testing.T) {
+	members := parseGroupMembers("model:mimo-v2.5-pro,key:mimo-key-1,legacy-model")
+	if len(members) != 3 {
+		t.Fatalf("expected 3 members, got %d", len(members))
+	}
+	if members[0].ModelID != "mimo-v2.5-pro" || members[0].KeyID != "" {
+		t.Fatalf("expected first member to be model, got %+v", members[0])
+	}
+	if members[1].KeyID != "mimo-key-1" || members[1].ModelID != "" {
+		t.Fatalf("expected second member to be key, got %+v", members[1])
+	}
+	if members[2].ModelID != "legacy-model" || members[2].KeyID != "" {
+		t.Fatalf("expected unprefixed member to remain legacy model, got %+v", members[2])
+	}
+	if text := groupMembersText(members); text != "model:mimo-v2.5-pro,key:mimo-key-1,model:legacy-model" {
+		t.Fatalf("unexpected group member text %q", text)
 	}
 }
 

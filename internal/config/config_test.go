@@ -29,6 +29,42 @@ func TestValidateRejectsUnknownModelGroupMember(t *testing.T) {
 	}
 }
 
+func TestValidateAllowsKeyModelGroupMember(t *testing.T) {
+	cfg := Default()
+	cfg.ModelGroups[0].Members = []ModelGroupMemberConfig{{KeyID: "mimo-key-1", Priority: 1, Weight: 1, Enabled: true}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("key group member should be valid: %v", err)
+	}
+}
+
+func TestValidateAllowsMixedModelAndKeyGroupMembers(t *testing.T) {
+	cfg := Default()
+	cfg.Keys = append(cfg.Keys, KeyConfig{ID: "mimo-key-2", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "key-2", Status: "active", Priority: 2})
+	cfg.ModelGroups[0].Members = []ModelGroupMemberConfig{
+		{ModelID: "mimo-v2.5-pro", Priority: 1, Weight: 1, Enabled: true},
+		{KeyID: "mimo-key-2", Priority: 2, Weight: 1, Enabled: true},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("mixed model/key group members should be valid: %v", err)
+	}
+}
+
+func TestValidateRejectsAmbiguousModelGroupMember(t *testing.T) {
+	cfg := Default()
+	cfg.ModelGroups[0].Members = []ModelGroupMemberConfig{{ModelID: "mimo-v2.5-pro", KeyID: "mimo-key-1", Priority: 1, Weight: 1, Enabled: true}}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected ambiguous group member error")
+	}
+}
+
+func TestValidateRejectsUnknownKeyGroupMember(t *testing.T) {
+	cfg := Default()
+	cfg.ModelGroups[0].Members = []ModelGroupMemberConfig{{KeyID: "missing-key", Priority: 1, Weight: 1, Enabled: true}}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected unknown key group member error")
+	}
+}
+
 func TestValidateAllowsDisabledEmptyModelGroup(t *testing.T) {
 	cfg := Default()
 	cfg.ModelGroups[0].Enabled = false

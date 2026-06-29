@@ -18,6 +18,7 @@ type ModelGroup struct {
 
 type ModelGroupMember struct {
 	ModelID  string
+	KeyID    string
 	Priority int
 	Weight   int
 	Enabled  bool

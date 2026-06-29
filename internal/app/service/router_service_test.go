@@ -211,6 +211,50 @@ func TestHandleChatCompletionGroupFallsBackToNextMember(t *testing.T) {
 	}
 }
 
+func TestHandleChatCompletionGroupFallsBackBetweenKeyMembers(t *testing.T) {
+	var gotKeys []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKeys = append(gotKeys, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		if gotKeys[len(gotKeys)-1] == "first-key" {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := groupRoutingConfig(server.URL + "/v1")
+	cfg.Retry.MaxRetryPerKey = 0
+	cfg.Retry.MaxTotalAttempts = 1
+	cfg.Keys = []config.KeyConfig{
+		{ID: "key-1", ProviderID: "openai", ModelID: "gpt-5.5-xhigh", Value: "first-key", Status: "active", Priority: 1},
+		{ID: "key-2", ProviderID: "openai", ModelID: "gpt-5.5-xhigh", Value: "second-key", Status: "active", Priority: 2},
+	}
+	cfg.ModelGroups[0].Members = []config.ModelGroupMemberConfig{
+		{KeyID: "key-1", Priority: 1, Weight: 1, Enabled: true},
+		{KeyID: "key-2", Priority: 2, Weight: 1, Enabled: true},
+	}
+	rs, _ := NewRouterService(cfg)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"high-price","messages":[]}`))
+
+	resp, err := rs.HandleChatCompletion(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handle key-member group fallback failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if strings.Join(gotKeys, ",") != "first-key,second-key" {
+		t.Fatalf("expected key-member fallback from first to second key, got %v", gotKeys)
+	}
+	logs := rs.Logs()
+	if len(logs) != 2 {
+		t.Fatalf("expected 2 logs, got %d", len(logs))
+	}
+	if logs[1].KeyID != "key-2" || logs[1].ModelID != "gpt-5.5-xhigh" || logs[1].ProviderID != "openai" {
+		t.Fatalf("unexpected success log for key member: %+v", logs[1])
+	}
+}
+
 func TestHandleChatCompletionGroupUnavailable(t *testing.T) {
 	cfg := groupRoutingConfig("https://example.test/v1")
 	rs, _ := NewRouterService(cfg)

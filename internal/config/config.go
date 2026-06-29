@@ -72,13 +72,13 @@ type ProviderConfig struct {
 }
 
 type ModelConfig struct {
-	ID                    string                `yaml:"id"`
-	ProviderID            string                `yaml:"provider_id"`
-	ModelName             string                `yaml:"model_name"`
-	Strategy              string                `yaml:"strategy"`
-	Enabled               bool                  `yaml:"enabled"`
-	RequestsPerMinute     int                   `yaml:"requests_per_minute"`
-	MaxConcurrentRequests int                   `yaml:"max_concurrent_requests"`
+	ID                    string                 `yaml:"id"`
+	ProviderID            string                 `yaml:"provider_id"`
+	ModelName             string                 `yaml:"model_name"`
+	Strategy              string                 `yaml:"strategy"`
+	Enabled               bool                   `yaml:"enabled"`
+	RequestsPerMinute     int                    `yaml:"requests_per_minute"`
+	MaxConcurrentRequests int                    `yaml:"max_concurrent_requests"`
 	Capabilities          *ModelCapabilityConfig `yaml:"capabilities,omitempty"`
 }
 
@@ -118,6 +118,7 @@ type ModelGroupConfig struct {
 
 type ModelGroupMemberConfig struct {
 	ModelID  string `yaml:"model_id"`
+	KeyID    string `yaml:"key_id"`
 	Priority int    `yaml:"priority"`
 	Weight   int    `yaml:"weight"`
 	Enabled  bool   `yaml:"enabled"`
@@ -323,14 +324,6 @@ func (c *Config) collectValidationErrors() ValidationErrors {
 			}
 			continue
 		}
-		for _, member := range g.Members {
-			if member.ModelID == "" {
-				errs = append(errs, "model group "+g.ID+" has member without model_id")
-			}
-			if _, ok := modelIDs[member.ModelID]; !ok && member.ModelID != "" {
-				errs = append(errs, "model group "+g.ID+" references unknown model "+member.ModelID)
-			}
-		}
 	}
 	keyIDs := map[string]struct{}{}
 	for _, k := range c.Keys {
@@ -355,6 +348,25 @@ func (c *Config) collectValidationErrors() ValidationErrors {
 		}
 		if k.Value == "" && k.ValueEnv == "" && k.SecretRef == "" {
 			errs = append(errs, "key "+k.ID+" has no value; set keys[].value or keys[].value_env or keys[].secret_ref in config")
+		}
+	}
+	for _, g := range c.ModelGroups {
+		for _, member := range g.Members {
+			hasModel := member.ModelID != ""
+			hasKey := member.KeyID != ""
+			if hasModel == hasKey {
+				errs = append(errs, "model group "+g.ID+" member must set exactly one of model_id or key_id")
+				continue
+			}
+			if hasModel {
+				if _, ok := modelIDs[member.ModelID]; !ok {
+					errs = append(errs, "model group "+g.ID+" references unknown model "+member.ModelID)
+				}
+				continue
+			}
+			if _, ok := keyIDs[member.KeyID]; !ok {
+				errs = append(errs, "model group "+g.ID+" references unknown key "+member.KeyID)
+			}
 		}
 	}
 	return errs
