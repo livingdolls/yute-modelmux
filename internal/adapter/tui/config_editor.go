@@ -98,10 +98,10 @@ func (m model) updateConfigEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.selected = previousIndex(m.selected, len(navItems))
 		return m, nil
 	case "up":
-		m.selected = previousIndex(m.selected, len(navItems))
+		m.moveConfigSelection(-1)
 		return m, nil
 	case "down":
-		m.selected = nextIndex(m.selected, len(navItems))
+		m.moveConfigSelection(1)
 		return m, nil
 	case "enter":
 		if m.selected != m.page {
@@ -109,31 +109,27 @@ func (m model) updateConfigEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.startEditConfigItem()
-	case "left", "h":
+	case "left":
 		m.editor.sectionSelected[int(m.editor.section)] = m.editor.selected
 		m.editor.section = configSection(previousIndex(int(m.editor.section), 4))
 		m.editor.selected = m.editor.sectionSelected[int(m.editor.section)]
 		m.ensureConfigSelectionVisible()
-	case "right", "l":
+	case "right":
 		m.editor.sectionSelected[int(m.editor.section)] = m.editor.selected
 		m.editor.section = configSection(nextIndex(int(m.editor.section), 4))
 		m.editor.selected = m.editor.sectionSelected[int(m.editor.section)]
 		m.ensureConfigSelectionVisible()
-	case "k":
-		m.moveConfigSelection(-1)
-	case "j":
-		m.moveConfigSelection(1)
 	case "a":
 		m.startAddConfigItem()
 	case "e":
 		m.startEditConfigItem()
-	case "d":
+	case "delete", "d":
 		m.startDeleteConfigItem()
 	case " ":
 		m.toggleConfigItem()
-	case "s":
+	case "ctrl+s":
 		m.saveDraftConfig()
-	case "r":
+	case "ctrl+r":
 		m.reloadDraftConfig()
 	case "/", "ctrl+f":
 		m.editor.filterOn = true
@@ -268,7 +264,7 @@ func (m model) renderConfigEditor() string {
 		b.WriteString(m.styles.hint.Render(m.editor.message))
 	}
 	b.WriteString("\n")
-	b.WriteString(m.styles.hint.Render("up/down:menu  j/k:row  <- ->:section  a:add  e:edit  d:del  /:filter  s:save"))
+	b.WriteString(m.styles.hint.Render("up/down:row  left/right:section  tab:menu  enter:edit  a:add  delete:del  ctrl+s:save"))
 	return b.String()
 }
 

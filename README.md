@@ -273,11 +273,42 @@ When `health_check.enabled: true`, a background goroutine periodically tests eac
 modelmux tui
 ```
 
-- **Chat** — In-memory chat sessions with config models. `ctrl+n` new session, `ctrl+t` switch model.
-- **Config** — Full YAML editor. Add/edit/delete providers, models, groups, keys. `a` add, `e` edit, `d` delete, `s` save+reload.
+- **Chat** — In-memory chat sessions with config models. `enter` send, `up/down` switch session, `ctrl+n` new session, `ctrl+t` switch model.
+- **Config** — Full YAML editor. Add/edit/delete providers, models, groups, keys. `up/down` select row, `left/right` switch section, `enter` edit, `a` add, `delete` delete, `ctrl+s` save, `ctrl+r` reload.
 - **Logs** — View recent request logs with filtering.
 - **Metrics** — Live Prometheus metrics display.
 - **Themes** — Multiple terminal color themes.
+
+### TUI Keyboard Shortcuts
+
+| Area | Shortcut | Action |
+|------|----------|--------|
+| Global | `tab` / `shift+tab` | Move between pages |
+| Global | `enter` | Open or confirm the selected item |
+| Global | `esc` | Cancel input, close dialogs, or leave filter mode |
+| Global | `?` | Toggle help when not typing |
+| Global | `q` | Quit when not typing |
+| Global | `ctrl+c` | Force quit |
+| Chat | `enter` | Send message |
+| Chat | `up/down` | Switch active chat session |
+| Chat | `ctrl+n` | New chat session |
+| Chat | `ctrl+t` | Switch target model |
+| Chat | `ctrl+f` | Filter chat sessions |
+| Config | `up/down` | Select row |
+| Config | `left/right` | Switch section |
+| Config | `enter` | Edit selected item |
+| Config | `a` | Add item |
+| Config | `delete` | Delete selected item |
+| Config | `ctrl+s` | Save config and reload router |
+| Config | `ctrl+r` | Reload draft config |
+| Config | `/` or `ctrl+f` | Filter rows |
+| Keys | `1`, `2`, `3` | Sort by status, cooldown, or errors |
+| Keys | `x` | Test a key by ID |
+| Logs | `1`-`6` | Change log filter or sort order |
+| Theme | `t` | Cycle theme when not typing |
+| Theme | `T` | Open theme picker when not typing |
+
+Text input modes do not use single-letter navigation shortcuts, so normal typing works as expected.
 
 ---
 

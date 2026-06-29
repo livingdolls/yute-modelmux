@@ -310,9 +310,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch key {
-		case "up", "k", "shift+tab":
+		case "up", "shift+tab":
 			m.selected = previousIndex(m.selected, len(navItems))
-		case "down", "j", "tab":
+		case "down", "tab":
 			m.selected = nextIndex(m.selected, len(navItems))
 		case "enter", " ":
 			m.page = m.selected
@@ -348,10 +348,10 @@ func (m model) updateChat(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab":
 		m.selected = previousIndex(m.selected, len(navItems))
 		return m, nil
-	case "up", "k", "[":
+	case "up":
 		m.moveActiveChat(-1)
 		return m, nil
-	case "down", "j", "]":
+	case "down":
 		m.moveActiveChat(1)
 		return m, nil
 	case "ctrl+n":
@@ -424,9 +424,9 @@ func (m model) View() string {
 	sidebar := m.renderSidebar(sidebarWidth)
 	content := m.styles.panel.Width(contentWidth).Render(m.renderPage())
 	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, strings.Repeat(" ", m.bodyGap()), content)
-	footerText := "NAV tab/jk  OPEN enter  t:cycle  T:picker  ?:help  q quit"
+	footerText := "NAV tab/shift+tab  OPEN enter  t:theme  T:picker  ?:help  q quit"
 	if m.page == pageChat {
-		footerText = "CHAT enter:send  ctrl+n:new  ctrl+t:target  ctrl+f:filter  ?:help"
+		footerText = "CHAT enter:send  up/down:session  ctrl+n:new  ctrl+t:target  ctrl+f:filter"
 	} else if m.page == pageKeys {
 		footerText = "KEYS 1:status  2:cooldown  3:errors  x:test  ?:help"
 		if m.keyTesting {
@@ -437,7 +437,7 @@ func (m model) View() string {
 	} else if m.page == pageLogs {
 		footerText = "LOGS 1:latest  2:errors  3:slow  4:rate-limit  5:newest  6:slowest  ?:help"
 	} else if m.page == pageConfig {
-		footerText = "CFG up/down:menu  j/k:row  <- ->:section  a:add  e:edit  /:filter"
+		footerText = "CFG up/down:row  left/right:section  tab:menu  enter:edit  ctrl+s:save"
 	}
 	footerText += "  AUTO:" + strings.ToUpper(m.layoutMode()) + "  THEME:" + strings.ToUpper(m.theme)
 	footer := m.styles.footer.Width(width - 2).Render(footerText)
@@ -513,7 +513,7 @@ func (m model) renderSidebar(width int) string {
 	}
 	b.WriteString(m.styles.section.Render(".:: KEYS ::."))
 	b.WriteString("\n")
-	b.WriteString(m.styles.hint.Render("tab/jk move"))
+	b.WriteString(m.styles.hint.Render("tab move"))
 	b.WriteString("\n")
 	b.WriteString(m.styles.hint.Render("enter open"))
 	return m.styles.sidebar.Width(width).Render(b.String())
@@ -589,10 +589,10 @@ func (m model) updateThemePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.styles = defaultStyles(m.theme)
 		m.showThemePicker = false
 		return m, nil
-	case "up", "k":
+	case "up":
 		m.themePickerIndex = previousIndex(m.themePickerIndex, len(themeOrder))
 		return m, nil
-	case "down", "j":
+	case "down":
 		m.themePickerIndex = nextIndex(m.themePickerIndex, len(themeOrder))
 		return m, nil
 	}
@@ -708,13 +708,13 @@ func (m model) renderHelpText() string {
 	lines := []string{
 		"global: q quit, ctrl+c force quit, t cycle theme, T open picker, ? toggle help",
 		"themes: " + strings.Join(themeOrder, ", "),
-		"nav: tab/jk move, enter open",
+		"nav: tab/shift+tab move menu, enter open",
 	}
 	switch m.page {
 	case pageChat:
 		lines = append(lines,
 			"chat: enter send, ctrl+n new session, ctrl+t cycle target",
-			"chat: ctrl+f filter sessions, up/down change active session",
+			"chat: up/down change active session, ctrl+f filter sessions",
 		)
 	case pageKeys:
 		lines = append(lines,
@@ -726,8 +726,8 @@ func (m model) renderHelpText() string {
 		)
 	case pageConfig:
 		lines = append(lines,
-			"config: a add, e edit, d delete, / filter, s save, r reload",
-			"config: left/right switch section, up/down move selection",
+			"config: enter edit, a add, delete remove, ctrl+s save, ctrl+r reload",
+			"config: left/right switch section, up/down move row, tab move menu",
 		)
 	}
 	return strings.Join(lines, "\n")

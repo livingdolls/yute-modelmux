@@ -55,6 +55,27 @@ func TestUpdateTypesQInChatInsteadOfQuitting(t *testing.T) {
 	}
 }
 
+func TestUpdateTypesJKInChatInsteadOfMovingSession(t *testing.T) {
+	m := model{
+		page:     pageChat,
+		selected: pageChat,
+		chats:    []tuiChatSession{newTUIChatSession(1, "gpt"), newTUIChatSession(2, "gpt")},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j', 'k'}})
+	got := updated.(model)
+
+	if cmd != nil {
+		t.Fatal("expected no command while typing in chat")
+	}
+	if got.chatInput != "jk" {
+		t.Fatalf("expected chat input to contain jk, got %q", got.chatInput)
+	}
+	if got.activeChat != 0 {
+		t.Fatalf("expected active chat to stay unchanged, got %d", got.activeChat)
+	}
+}
+
 func TestUpdateTypesQInConfigFormInsteadOfQuitting(t *testing.T) {
 	m := model{
 		page: pageConfig,
@@ -134,7 +155,7 @@ func TestSaveDraftConfigPreservesThemeAcrossRouterReload(t *testing.T) {
 	}
 }
 
-func TestConfigPageUpDownMovesMainMenu(t *testing.T) {
+func TestConfigPageTabMovesMainMenu(t *testing.T) {
 	m := model{
 		page:     pageConfig,
 		selected: pageConfig,
@@ -142,21 +163,21 @@ func TestConfigPageUpDownMovesMainMenu(t *testing.T) {
 		editor:   newConfigEditorState(config.Default()),
 	}
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	got := updated.(model)
 
 	if cmd != nil {
 		t.Fatal("expected no command when moving menu from config page")
 	}
-	if got.selected != pageLogs {
-		t.Fatalf("expected selected menu to move to logs, got %d", got.selected)
+	if got.selected != pageProviders {
+		t.Fatalf("expected selected menu to move to providers, got %d", got.selected)
 	}
 	if got.editor.selected != 0 {
 		t.Fatalf("expected config row selection to stay unchanged, got %d", got.editor.selected)
 	}
 }
 
-func TestConfigPageJKMovesRows(t *testing.T) {
+func TestConfigPageDownMovesRows(t *testing.T) {
 	cfg := cloneConfig(config.Default())
 	cfg.Providers = append(cfg.Providers, config.ProviderConfig{ID: "extra", Name: "Extra", Type: "openai-compatible", BaseURL: "https://example.org/v1", AuthType: "bearer", TimeoutSeconds: 60, Enabled: true})
 
@@ -167,7 +188,7 @@ func TestConfigPageJKMovesRows(t *testing.T) {
 		editor:   newConfigEditorState(cfg),
 	}
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	got := updated.(model)
 
 	if cmd != nil {
@@ -183,10 +204,10 @@ func TestConfigPageJKMovesRows(t *testing.T) {
 
 func TestKeyTestEnterReturnsAsyncCommand(t *testing.T) {
 	m := model{
-		page:        pageKeys,
-		selected:    pageKeys,
-		router:      stubRouter{},
-		keyTesting:  true,
+		page:         pageKeys,
+		selected:     pageKeys,
+		router:       stubRouter{},
+		keyTesting:   true,
 		keyTestInput: "test-key-1",
 	}
 
@@ -207,9 +228,9 @@ func TestKeyTestEnterReturnsAsyncCommand(t *testing.T) {
 
 func TestKeyTestEscExitsMode(t *testing.T) {
 	m := model{
-		page:        pageKeys,
-		selected:    pageKeys,
-		keyTesting:  true,
+		page:         pageKeys,
+		selected:     pageKeys,
+		keyTesting:   true,
 		keyTestInput: "some-key",
 	}
 
