@@ -341,6 +341,33 @@ func TestOpenChatConversationDoesNotRenderSessionPicker(t *testing.T) {
 	}
 }
 
+func TestChatSessionPickerKeepsLongPreviewCompact(t *testing.T) {
+	chat := newTUIChatSession(1, "gpt")
+	chat.Title = "A very long generated title that should not take over the entire session list row"
+	chat.Messages = append(chat.Messages, tuiChatMessage{
+		Role:      "assistant",
+		Content:   "first line of a very long assistant response\nsecond line should stay hidden " + strings.Repeat("tail ", 40),
+		CreatedAt: time.Now(),
+	})
+	m := model{
+		styles: defaultStyles(defaultTheme),
+		chats:  []tuiChatSession{chat},
+	}
+
+	view := m.renderChatSessionPicker(80)
+	for _, line := range strings.Split(view, "\n") {
+		if lipgloss.Width(line) > 80 {
+			t.Fatalf("expected session picker line width <= 80, got %d for %q", lipgloss.Width(line), line)
+		}
+	}
+	if strings.Contains(view, "second line should stay hidden") {
+		t.Fatal("expected multiline assistant response to be collapsed in session preview")
+	}
+	if strings.Count(view, "tail") > 8 {
+		t.Fatal("expected long assistant response preview to be truncated")
+	}
+}
+
 func TestThemePickerAppliesSelectedTheme(t *testing.T) {
 	m := model{page: pageProviders, theme: defaultTheme, styles: defaultStyles(defaultTheme)}
 

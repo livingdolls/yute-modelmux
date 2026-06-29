@@ -1450,7 +1450,6 @@ func (m model) renderChatSessionPicker(width int) string {
 	}
 	for _, idx := range indexes {
 		chat := m.chats[idx]
-		label := fmt.Sprintf("%d. %s", chat.ID, chat.Title)
 		style := m.styles.nav.Width(width)
 		prefix := "  "
 		if idx == m.activeChat {
@@ -1462,11 +1461,13 @@ func (m model) renderChatSessionPicker(width int) string {
 			state = "SENDING"
 		}
 		meta := fmt.Sprintf("[%s]  %s  MSG %d", state, truncate(chat.Target, 18), len(chat.Messages))
-		titleWidth := maxInt(8, width-lipgloss.Width(meta)-6)
+		titleWidth := minInt(44, maxInt(8, width-lipgloss.Width(meta)-6))
+		label := fmt.Sprintf("%d. %s", chat.ID, oneLineText(chat.Title))
 		row := prefix + truncate(label, titleWidth) + "  " + meta
 		b.WriteString(style.Render(row))
 		b.WriteString("\n")
-		b.WriteString(m.styles.hint.Render("   " + truncate(defaultText(chatPreview(chat), "no messages yet"), width-6)))
+		previewWidth := minInt(72, maxInt(12, width-6))
+		b.WriteString(m.styles.hint.Render("   " + truncate(defaultText(oneLineText(chatPreview(chat)), "no messages yet"), previewWidth)))
 		if idx != indexes[len(indexes)-1] {
 			b.WriteString("\n\n")
 		}
@@ -1566,6 +1567,10 @@ func chatPreview(chat tuiChatSession) string {
 		return ""
 	}
 	return chat.Messages[len(chat.Messages)-1].Content
+}
+
+func oneLineText(value string) string {
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func (m *model) moveActiveChat(step int) {
