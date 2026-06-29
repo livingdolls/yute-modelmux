@@ -84,6 +84,7 @@ type model struct {
 	activeChat       int
 	chatAnchor       int
 	chatScroll       int
+	chatOpen         bool
 	chatInput        string
 	chatFilter       string
 	chatFiltering    bool
@@ -263,7 +264,7 @@ func (m model) Init() tea.Cmd { return tickCmd() }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
-		if m.contentFocused && m.page == pageChat {
+		if m.contentFocused && m.page == pageChat && m.chatOpen {
 			switch msg.Type {
 			case tea.MouseWheelUp:
 				m.scrollChatHistory(3)
@@ -334,6 +335,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter", " ":
 			m.page = m.selected
 			m.contentFocused = true
+			if m.page == pageChat {
+				m.chatOpen = false
+				m.chatInput = ""
+				m.chatScroll = 0
+			}
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -356,10 +362,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateChat(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
 	if m.chatFiltering {
 		return m.updateChatFilter(msg)
 	}
+	if !m.chatOpen {
+		return m.updateChatSessionPicker(msg)
+	}
+	return m.updateChatConversation(msg)
+}
+
+func (m model) updateChatSessionPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
 	switch key {
 	case "tab":
 		m.selected = nextIndex(m.selected, len(navItems))
@@ -372,6 +385,32 @@ func (m model) updateChat(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "down":
 		m.moveActiveChat(1)
+		return m, nil
+	case "enter", " ":
+		m.openActiveChat()
+		return m, nil
+	case "ctrl+n":
+		m.addChatSession()
+		return m, nil
+	case "ctrl+t":
+		m.cycleActiveChatTarget()
+		return m, nil
+	case "ctrl+f":
+		m.chatOpen = false
+		m.chatFiltering = true
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m model) updateChatConversation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "tab":
+		m.selected = nextIndex(m.selected, len(navItems))
+		return m, nil
+	case "shift+tab":
+		m.selected = previousIndex(m.selected, len(navItems))
 		return m, nil
 	case "pgup":
 		m.scrollChatHistory(m.chatScrollPageSize())
@@ -398,9 +437,15 @@ func (m model) updateChat(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cycleActiveChatTarget()
 		return m, nil
 	case "ctrl+f":
+		m.chatOpen = false
 		m.chatFiltering = true
 		return m, nil
 	case "esc":
+		if m.chatInput == "" {
+			m.chatOpen = false
+			m.chatScroll = 0
+			return m, nil
+		}
 		m.chatInput = ""
 		return m, nil
 	case "ctrl+u":
@@ -467,7 +512,7 @@ func (m model) View() string {
 	statusBar := m.renderStatusBar(width - 2)
 	footerText := "MENU tab/shift+tab:move  enter:open  ?:help  q:quit"
 	if m.contentFocused && m.page == pageChat {
-		footerText = "CHAT enter:send  up/down:session  pgup/pgdn:history  ctrl+n:new  ctrl+f:filter  esc:menu"
+		footerText = m.chatFooterText()
 	} else if m.contentFocused && m.page == pageKeys {
 		footerText = "KEYS 1:status  2:cooldown  3:errors  x:test  esc:menu  ?:help"
 		if m.keyTesting {
@@ -760,10 +805,10 @@ func (m model) renderHelpText() string {
 	switch m.page {
 	case pageChat:
 		lines = append(lines,
-			"chat: enter send, ctrl+n new session, ctrl+t cycle target",
-			"chat: up/down change active session, ctrl+f filter sessions",
-			"chat: pgup/pgdown scroll history, home/end jump top/bottom",
-			"chat: esc clears typed text; esc again returns to menu",
+			"chat sessions: up/down choose, enter open, ctrl+n new",
+			"chat sessions: ctrl+t cycle target, ctrl+f filter sessions",
+			"chat conversation: enter send, pgup/pgdown scroll history",
+			"chat conversation: esc clears typed text or returns to sessions",
 		)
 	case pageKeys:
 		lines = append(lines,
@@ -873,6 +918,20 @@ func (m model) chatSidebarWidth() int {
 		return 29
 	}
 	return 24
+}
+
+func (m model) chatConversationWidth() int {
+	return maxInt(34, m.pageBodyWidth()-4)
+}
+
+func (m model) chatFooterText() string {
+	if m.chatFiltering {
+		return "CHAT FILTER type:search  enter/esc:close  ctrl+u:clear"
+	}
+	if !m.chatOpen {
+		return "CHAT SESSIONS up/down:choose  enter:open  ctrl+n:new  ctrl+t:target  ctrl+f:filter  esc:menu"
+	}
+	return "CHAT enter:send  pgup/pgdn:history  ctrl+n:new  ctrl+t:target  esc:sessions"
 }
 
 func (m model) bodyGap() int {
@@ -1366,22 +1425,24 @@ func (m model) renderChat(maxHeight int) string {
 	if len(m.chats) == 0 {
 		return m.emptyState("No chat sessions")
 	}
-	active := m.chats[m.activeChat]
-	leftWidth := m.chatSidebarWidth()
-	rightWidth := maxInt(34, m.pageBodyWidth()-leftWidth-m.bodyGap())
-	left := trimVisibleLines(m.renderChatSessionList(leftWidth), maxHeight)
-	right := trimVisibleLines(m.renderChatConversation(active, rightWidth, maxHeight), maxHeight)
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", m.bodyGap()), right)
+	width := m.chatConversationWidth()
+	if !m.chatOpen {
+		return trimVisibleLines(m.renderChatSessionPicker(width), maxHeight)
+	}
+	return trimVisibleLines(m.renderChatConversation(m.chats[m.activeChat], width, maxHeight), maxHeight)
 }
 
-func (m model) renderChatSessionList(width int) string {
+func (m model) renderChatSessionPicker(width int) string {
 	indexes := m.filteredChatIndexes()
 	var b strings.Builder
-	b.WriteString(m.styles.section.Render(".:: SESSIONS ::."))
+	b.WriteString(lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		m.styles.section.Render(".:: SESSIONS ::."),
+		"  ",
+		m.styles.hint.Render("enter open  ctrl+n new  ctrl+t target  ctrl+f filter"),
+	))
 	b.WriteString("\n")
-	b.WriteString(m.styles.hint.Render("ctrl+n new  ctrl+t target  ctrl+f filter"))
-	b.WriteString("\n")
-	b.WriteString(m.styles.input.Width(width - 2).Render("/ " + defaultText(m.chatFilter, "all sessions")))
+	b.WriteString(m.styles.input.Width(width).Render("/ " + defaultText(m.chatFilter, "all sessions")))
 	b.WriteString("\n\n")
 	if len(indexes) == 0 {
 		b.WriteString(m.styles.muted.Render("no matching sessions"))
@@ -1390,39 +1451,27 @@ func (m model) renderChatSessionList(width int) string {
 	for _, idx := range indexes {
 		chat := m.chats[idx]
 		label := fmt.Sprintf("%d. %s", chat.ID, chat.Title)
-		style := m.styles.nav.Width(width - 4)
+		style := m.styles.nav.Width(width)
 		prefix := "  "
 		if idx == m.activeChat {
-			style = m.styles.navActive.Width(width - 4)
+			style = m.styles.navActive.Width(width)
 			prefix = "> "
 		}
-		preview := "no messages yet"
-		if len(chat.Messages) > 0 {
-			preview = truncate(chat.Messages[len(chat.Messages)-1].Content, width-8)
-		}
-		stateBadge := m.styles.badgeSoft.Render("READY")
+		state := "READY"
 		if chat.Pending {
-			stateBadge = m.styles.badgeWarn.Render("SENDING")
+			state = "SENDING"
 		}
-		b.WriteString(style.Render(prefix + truncate(label, width-6)))
+		meta := fmt.Sprintf("[%s]  %s  MSG %d", state, truncate(chat.Target, 18), len(chat.Messages))
+		titleWidth := maxInt(8, width-lipgloss.Width(meta)-6)
+		row := prefix + truncate(label, titleWidth) + "  " + meta
+		b.WriteString(style.Render(row))
 		b.WriteString("\n")
-		b.WriteString(m.styles.navMuted.Render("   " + truncate(chat.Target, width-6)))
-		b.WriteString("\n")
-		b.WriteString("   ")
-		b.WriteString(stateBadge)
-		b.WriteString("\n")
-		b.WriteString(m.styles.hint.Render("   " + preview))
+		b.WriteString(m.styles.hint.Render("   " + truncate(defaultText(chatPreview(chat), "no messages yet"), width-6)))
 		if idx != indexes[len(indexes)-1] {
 			b.WriteString("\n\n")
 		}
 	}
-	b.WriteString("\n\n")
-	b.WriteString(m.styles.section.Render(".:: FLOW ::."))
-	b.WriteString("\n")
-	b.WriteString(m.styles.hint.Render("up/down switch"))
-	b.WriteString("\n")
-	b.WriteString(m.styles.hint.Render("enter send"))
-	return m.styles.sidebar.Width(width).Render(b.String())
+	return b.String()
 }
 
 func (m model) renderChatConversation(chat tuiChatSession, width int, maxHeight int) string {
@@ -1551,6 +1600,15 @@ func (m *model) scrollChatHistory(delta int) {
 	m.chatScroll = minInt(maxScroll, maxInt(0, m.chatScroll+delta))
 }
 
+func (m *model) openActiveChat() {
+	if len(m.chats) == 0 {
+		return
+	}
+	m.chatOpen = true
+	m.chatScroll = 0
+	m.chatAnchor = m.activeChat
+}
+
 func (m model) chatScrollPageSize() int {
 	height := m.height
 	if height == 0 {
@@ -1564,7 +1622,7 @@ func (m model) activeChatHistoryLineCount() int {
 		return 0
 	}
 	var b strings.Builder
-	width := maxInt(34, m.pageBodyWidth()-m.chatSidebarWidth()-m.bodyGap())
+	width := m.chatConversationWidth()
 	for _, message := range m.chats[m.activeChat].Messages {
 		b.WriteString(m.renderChatMessage(message, width))
 		b.WriteString("\n")
@@ -2092,7 +2150,7 @@ func (m model) emptyState(text string) string {
 
 func (m model) isTextEntryMode() bool {
 	if m.contentFocused && m.page == pageChat {
-		return true
+		return m.chatFiltering || m.chatOpen || m.chatInput != ""
 	}
 	if m.keyTesting {
 		return true
@@ -2106,7 +2164,7 @@ func (m model) isTextEntryMode() bool {
 func (m model) shouldHandleEscInContent() bool {
 	switch m.page {
 	case pageChat:
-		return m.chatFiltering || m.chatInput != ""
+		return m.chatFiltering || m.chatOpen || m.chatInput != ""
 	case pageConfig:
 		return m.editor.mode == editorModeForm || m.editor.mode == editorModeDelete || m.editor.filterOn
 	default:

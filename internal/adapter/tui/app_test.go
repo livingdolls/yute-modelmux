@@ -46,6 +46,7 @@ func TestUpdateTypesQInChatInsteadOfQuitting(t *testing.T) {
 		page:           pageChat,
 		selected:       pageChat,
 		contentFocused: true,
+		chatOpen:       true,
 		chats:          []tuiChatSession{newTUIChatSession(1, "gpt")},
 	}
 
@@ -65,6 +66,7 @@ func TestUpdateTypesJKInChatInsteadOfMovingSession(t *testing.T) {
 		page:           pageChat,
 		selected:       pageChat,
 		contentFocused: true,
+		chatOpen:       true,
 		chats:          []tuiChatSession{newTUIChatSession(1, "gpt"), newTUIChatSession(2, "gpt")},
 	}
 
@@ -129,9 +131,12 @@ func TestEnterFocusesSelectedPageFromMenu(t *testing.T) {
 	if !got.contentFocused {
 		t.Fatal("expected content to be focused after enter")
 	}
+	if got.chatOpen {
+		t.Fatal("expected chat to open on session picker")
+	}
 }
 
-func TestEscReturnsFromChatToMenu(t *testing.T) {
+func TestEscReturnsFromChatSessionsToMenu(t *testing.T) {
 	m := model{page: pageChat, selected: pageChat, contentFocused: true, chats: []tuiChatSession{newTUIChatSession(1, "gpt")}}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
@@ -148,8 +153,8 @@ func TestEscReturnsFromChatToMenu(t *testing.T) {
 	}
 }
 
-func TestEscClearsChatInputBeforeReturningToMenu(t *testing.T) {
-	m := model{page: pageChat, selected: pageChat, contentFocused: true, chatInput: "hello", chats: []tuiChatSession{newTUIChatSession(1, "gpt")}}
+func TestEscClearsChatInputBeforeReturningToSessions(t *testing.T) {
+	m := model{page: pageChat, selected: pageChat, contentFocused: true, chatOpen: true, chatInput: "hello", chats: []tuiChatSession{newTUIChatSession(1, "gpt")}}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
 	got := updated.(model)
@@ -162,6 +167,51 @@ func TestEscClearsChatInputBeforeReturningToMenu(t *testing.T) {
 	}
 	if !got.contentFocused {
 		t.Fatal("expected chat to stay focused after clearing input")
+	}
+	if !got.chatOpen {
+		t.Fatal("expected chat conversation to stay open after clearing input")
+	}
+}
+
+func TestEnterOpensSelectedChatSession(t *testing.T) {
+	m := model{
+		page:           pageChat,
+		selected:       pageChat,
+		contentFocused: true,
+		chats:          []tuiChatSession{newTUIChatSession(1, "gpt")},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(model)
+
+	if cmd != nil {
+		t.Fatal("expected no command when opening chat session")
+	}
+	if !got.chatOpen {
+		t.Fatal("expected selected chat session to open")
+	}
+}
+
+func TestEscFromChatConversationReturnsToSessions(t *testing.T) {
+	m := model{
+		page:           pageChat,
+		selected:       pageChat,
+		contentFocused: true,
+		chatOpen:       true,
+		chats:          []tuiChatSession{newTUIChatSession(1, "gpt")},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	got := updated.(model)
+
+	if cmd != nil {
+		t.Fatal("expected no command when returning to chat sessions")
+	}
+	if !got.contentFocused {
+		t.Fatal("expected chat page to stay focused")
+	}
+	if got.chatOpen {
+		t.Fatal("expected chat conversation to close")
 	}
 }
 
@@ -197,6 +247,7 @@ func TestChatViewDoesNotExceedTerminalHeightWithLongConversation(t *testing.T) {
 		page:           pageChat,
 		selected:       pageChat,
 		contentFocused: true,
+		chatOpen:       true,
 		width:          120,
 		height:         28,
 		styles:         defaultStyles(defaultTheme),
@@ -222,6 +273,7 @@ func TestChatPageUpScrollsHistoryWithoutMovingSession(t *testing.T) {
 		page:           pageChat,
 		selected:       pageChat,
 		contentFocused: true,
+		chatOpen:       true,
 		height:         30,
 		styles:         defaultStyles(defaultTheme),
 		chats:          []tuiChatSession{newTUIChatSession(1, "gpt"), activeChat},
@@ -263,6 +315,29 @@ func TestChatConversationCanRenderOlderHistoryWhenScrolled(t *testing.T) {
 	}
 	if strings.Contains(view, "history marker 23") {
 		t.Fatal("expected scrolled chat view to hide latest message")
+	}
+}
+
+func TestOpenChatConversationDoesNotRenderSessionPicker(t *testing.T) {
+	m := model{
+		cfg:            cloneConfig(config.Default()),
+		page:           pageChat,
+		selected:       pageChat,
+		contentFocused: true,
+		chatOpen:       true,
+		width:          120,
+		height:         28,
+		styles:         defaultStyles(defaultTheme),
+		chats:          []tuiChatSession{newTUIChatSession(1, "gpt")},
+	}
+
+	view := m.View()
+
+	if strings.Contains(view, ".:: SESSIONS ::.") {
+		t.Fatal("expected open chat conversation not to render session picker")
+	}
+	if !strings.Contains(view, "type your prompt") {
+		t.Fatal("expected open chat conversation to render prompt input")
 	}
 }
 
