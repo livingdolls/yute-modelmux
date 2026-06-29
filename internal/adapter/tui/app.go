@@ -75,6 +75,7 @@ type model struct {
 	reloadRouter     func(*config.Config) (inbound.RouterService, error)
 	selected         int
 	page             int
+	contentFocused   bool
 	width            int
 	styles           styles
 	editor           configEditorState
@@ -291,19 +292,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key == "q" && !m.isTextEntryMode() {
 			return m, tea.Quit
 		}
-		if m.page == pageChat {
+		if key == "esc" && m.contentFocused && !m.shouldHandleEscInContent() {
+			m.contentFocused = false
+			m.selected = m.page
+			return m, nil
+		}
+		if m.contentFocused && m.page == pageChat {
 			return m.updateChat(msg)
 		}
-		if m.page == pageConfig {
+		if m.contentFocused && m.page == pageConfig {
 			return m.updateConfigEditor(msg)
 		}
-		if m.page == pageKeys && m.applyKeysSortKey(key) {
+		if m.contentFocused && m.page == pageKeys && m.applyKeysSortKey(key) {
 			return m, nil
 		}
-		if m.page == pageLogs && m.applyLogFilterKey(key) {
+		if m.contentFocused && m.page == pageLogs && m.applyLogFilterKey(key) {
 			return m, nil
 		}
-		if m.page == pageKeys && key == "x" {
+		if m.contentFocused && m.page == pageKeys && key == "x" {
 			m.keyTesting = true
 			m.keyTestInput = ""
 			m.keyTestResult = ""
@@ -316,6 +322,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selected = nextIndex(m.selected, len(navItems))
 		case "enter", " ":
 			m.page = m.selected
+			m.contentFocused = true
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -362,6 +369,9 @@ func (m model) updateChat(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+f":
 		m.chatFiltering = true
+		return m, nil
+	case "esc":
+		m.chatInput = ""
 		return m, nil
 	case "ctrl+u":
 		m.chatInput = ""
@@ -424,20 +434,20 @@ func (m model) View() string {
 	sidebar := m.renderSidebar(sidebarWidth)
 	content := m.styles.panel.Width(contentWidth).Render(m.renderPage())
 	body := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, strings.Repeat(" ", m.bodyGap()), content)
-	footerText := "NAV tab/shift+tab  OPEN enter  t:theme  T:picker  ?:help  q quit"
-	if m.page == pageChat {
-		footerText = "CHAT enter:send  up/down:session  ctrl+n:new  ctrl+t:target  ctrl+f:filter"
-	} else if m.page == pageKeys {
-		footerText = "KEYS 1:status  2:cooldown  3:errors  x:test  ?:help"
+	footerText := "MENU tab/shift+tab:move  enter:open  ?:help  q:quit"
+	if m.contentFocused && m.page == pageChat {
+		footerText = "CHAT enter:send  up/down:session  ctrl+n:new  ctrl+t:target  ctrl+f:filter  esc:menu"
+	} else if m.contentFocused && m.page == pageKeys {
+		footerText = "KEYS 1:status  2:cooldown  3:errors  x:test  esc:menu  ?:help"
 		if m.keyTesting {
 			footerText = fmt.Sprintf("TEST KEY ID: %s", m.keyTestInput)
 		} else if m.keyTestResult != "" {
 			footerText = m.keyTestResult
 		}
-	} else if m.page == pageLogs {
-		footerText = "LOGS 1:latest  2:errors  3:slow  4:rate-limit  5:newest  6:slowest  ?:help"
-	} else if m.page == pageConfig {
-		footerText = "CFG up/down:row  left/right:section  tab:menu  enter:edit  ctrl+s:save"
+	} else if m.contentFocused && m.page == pageLogs {
+		footerText = "LOGS 1:latest  2:errors  3:slow  4:rate-limit  5:newest  6:slowest  esc:menu"
+	} else if m.contentFocused && m.page == pageConfig {
+		footerText = "CFG up/down:row  left/right:section  enter:edit  ctrl+s:save  esc:menu"
 	}
 	footerText += "  AUTO:" + strings.ToUpper(m.layoutMode()) + "  THEME:" + strings.ToUpper(m.theme)
 	footer := m.styles.footer.Width(width - 2).Render(footerText)
@@ -706,15 +716,17 @@ func (m model) renderThemePicker(width int, base string) string {
 
 func (m model) renderHelpText() string {
 	lines := []string{
-		"global: q quit, ctrl+c force quit, t cycle theme, T open picker, ? toggle help",
+		"global: esc back/cancel, q quit, ctrl+c force quit, ? toggle help",
+		"global: t cycle theme, T open picker when not typing",
 		"themes: " + strings.Join(themeOrder, ", "),
-		"nav: tab/shift+tab move menu, enter open",
+		"menu: tab/shift+tab move, enter open selected page",
 	}
 	switch m.page {
 	case pageChat:
 		lines = append(lines,
 			"chat: enter send, ctrl+n new session, ctrl+t cycle target",
 			"chat: up/down change active session, ctrl+f filter sessions",
+			"chat: esc clears typed text; esc again returns to menu",
 		)
 	case pageKeys:
 		lines = append(lines,
@@ -728,6 +740,7 @@ func (m model) renderHelpText() string {
 		lines = append(lines,
 			"config: enter edit, a add, delete remove, ctrl+s save, ctrl+r reload",
 			"config: left/right switch section, up/down move row, tab move menu",
+			"config: esc cancels forms/filters or returns to menu",
 		)
 	}
 	return strings.Join(lines, "\n")
@@ -1970,16 +1983,27 @@ func (m model) emptyState(text string) string {
 }
 
 func (m model) isTextEntryMode() bool {
-	if m.page == pageChat {
+	if m.contentFocused && m.page == pageChat {
 		return true
 	}
 	if m.keyTesting {
 		return true
 	}
-	if m.page != pageConfig {
+	if !m.contentFocused || m.page != pageConfig {
 		return false
 	}
 	return m.editor.mode == editorModeForm || m.editor.mode == editorModeDelete || m.editor.filterOn
+}
+
+func (m model) shouldHandleEscInContent() bool {
+	switch m.page {
+	case pageChat:
+		return m.chatFiltering || m.chatInput != ""
+	case pageConfig:
+		return m.editor.mode == editorModeForm || m.editor.mode == editorModeDelete || m.editor.filterOn
+	default:
+		return false
+	}
 }
 
 func (m model) renderAdaptiveTable(headers []string, rows [][]string, widths []int, minWidths []int) string {

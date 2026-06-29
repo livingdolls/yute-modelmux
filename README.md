@@ -329,8 +329,8 @@ When `health_check.enabled: true`, a background goroutine periodically tests eac
 modelmux tui
 ```
 
-- **Chat** — In-memory chat sessions with config models. `enter` send, `up/down` switch session, `ctrl+n` new session, `ctrl+t` switch model.
-- **Config** — Full YAML editor. Add/edit/delete providers, models, groups, keys. `up/down` select row, `left/right` switch section, `enter` edit, `a` add, `delete` delete, `ctrl+s` save, `ctrl+r` reload.
+- **Chat** — In-memory chat sessions with config models. `enter` opens Chat from the menu, then `enter` sends messages. `esc` clears typed text or returns to the menu.
+- **Config** — Full YAML editor. `enter` opens Config from the menu, `up/down` select rows, `left/right` switch sections, and `esc` returns to the menu.
 - **Logs** — View recent request logs with filtering.
 - **Metrics** — Live Prometheus metrics display.
 - **Themes** — Multiple terminal color themes.
@@ -339,20 +339,22 @@ modelmux tui
 
 | Area   | Shortcut            | Action                                            |
 | ------ | ------------------- | ------------------------------------------------- |
-| Global | `tab` / `shift+tab` | Move between pages                                |
-| Global | `enter`             | Open or confirm the selected item                 |
-| Global | `esc`               | Cancel input, close dialogs, or leave filter mode |
+| Menu   | `tab` / `shift+tab` | Move between pages                                |
+| Menu   | `enter`             | Open the selected page                            |
+| Global | `esc`               | Cancel input, close dialogs, or return to menu    |
 | Global | `?`                 | Toggle help when not typing                       |
 | Global | `q`                 | Quit when not typing                              |
 | Global | `ctrl+c`            | Force quit                                        |
 | Chat   | `enter`             | Send message                                      |
 | Chat   | `up/down`           | Switch active chat session                        |
+| Chat   | `esc`               | Clear typed text; press again to return to menu   |
 | Chat   | `ctrl+n`            | New chat session                                  |
 | Chat   | `ctrl+t`            | Switch target model                               |
 | Chat   | `ctrl+f`            | Filter chat sessions                              |
 | Config | `up/down`           | Select row                                        |
 | Config | `left/right`        | Switch section                                    |
 | Config | `enter`             | Edit selected item                                |
+| Config | `esc`               | Cancel form/filter or return to menu              |
 | Config | `a`                 | Add item                                          |
 | Config | `delete`            | Delete selected item                              |
 | Config | `ctrl+s`            | Save config and reload router                     |

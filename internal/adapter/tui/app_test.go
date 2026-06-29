@@ -39,9 +39,10 @@ func (stubRouter) TestKey(context.Context, string) error { return nil }
 
 func TestUpdateTypesQInChatInsteadOfQuitting(t *testing.T) {
 	m := model{
-		page:     pageChat,
-		selected: pageChat,
-		chats:    []tuiChatSession{newTUIChatSession(1, "gpt")},
+		page:           pageChat,
+		selected:       pageChat,
+		contentFocused: true,
+		chats:          []tuiChatSession{newTUIChatSession(1, "gpt")},
 	}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
@@ -57,9 +58,10 @@ func TestUpdateTypesQInChatInsteadOfQuitting(t *testing.T) {
 
 func TestUpdateTypesJKInChatInsteadOfMovingSession(t *testing.T) {
 	m := model{
-		page:     pageChat,
-		selected: pageChat,
-		chats:    []tuiChatSession{newTUIChatSession(1, "gpt"), newTUIChatSession(2, "gpt")},
+		page:           pageChat,
+		selected:       pageChat,
+		contentFocused: true,
+		chats:          []tuiChatSession{newTUIChatSession(1, "gpt"), newTUIChatSession(2, "gpt")},
 	}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j', 'k'}})
@@ -78,7 +80,8 @@ func TestUpdateTypesJKInChatInsteadOfMovingSession(t *testing.T) {
 
 func TestUpdateTypesQInConfigFormInsteadOfQuitting(t *testing.T) {
 	m := model{
-		page: pageConfig,
+		page:           pageConfig,
+		contentFocused: true,
 		editor: configEditorState{
 			mode: editorModeForm,
 			form: configFormState{
@@ -104,6 +107,74 @@ func TestUpdateQuitsWithQOutsideTextEntry(t *testing.T) {
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if cmd == nil {
 		t.Fatal("expected quit command outside text entry mode")
+	}
+}
+
+func TestEnterFocusesSelectedPageFromMenu(t *testing.T) {
+	m := model{page: pageProviders, selected: pageChat}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(model)
+
+	if cmd != nil {
+		t.Fatal("expected no command when opening selected page")
+	}
+	if got.page != pageChat {
+		t.Fatalf("expected page chat, got %d", got.page)
+	}
+	if !got.contentFocused {
+		t.Fatal("expected content to be focused after enter")
+	}
+}
+
+func TestEscReturnsFromChatToMenu(t *testing.T) {
+	m := model{page: pageChat, selected: pageChat, contentFocused: true, chats: []tuiChatSession{newTUIChatSession(1, "gpt")}}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	got := updated.(model)
+
+	if cmd != nil {
+		t.Fatal("expected no command when returning to menu")
+	}
+	if got.contentFocused {
+		t.Fatal("expected content focus to be false after esc")
+	}
+	if got.selected != pageChat {
+		t.Fatalf("expected selected menu to stay on chat, got %d", got.selected)
+	}
+}
+
+func TestEscClearsChatInputBeforeReturningToMenu(t *testing.T) {
+	m := model{page: pageChat, selected: pageChat, contentFocused: true, chatInput: "hello", chats: []tuiChatSession{newTUIChatSession(1, "gpt")}}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	got := updated.(model)
+
+	if cmd != nil {
+		t.Fatal("expected no command when clearing chat input")
+	}
+	if got.chatInput != "" {
+		t.Fatalf("expected chat input to be cleared, got %q", got.chatInput)
+	}
+	if !got.contentFocused {
+		t.Fatal("expected chat to stay focused after clearing input")
+	}
+}
+
+func TestEscReturnsFromConfigBrowseToMenu(t *testing.T) {
+	m := model{page: pageConfig, selected: pageConfig, contentFocused: true, cfg: cloneConfig(config.Default()), editor: newConfigEditorState(config.Default())}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	got := updated.(model)
+
+	if cmd != nil {
+		t.Fatal("expected no command when returning to menu")
+	}
+	if got.contentFocused {
+		t.Fatal("expected content focus to be false after esc")
+	}
+	if got.selected != pageConfig {
+		t.Fatalf("expected selected menu to stay on config, got %d", got.selected)
 	}
 }
 
@@ -182,10 +253,11 @@ func TestConfigPageDownMovesRows(t *testing.T) {
 	cfg.Providers = append(cfg.Providers, config.ProviderConfig{ID: "extra", Name: "Extra", Type: "openai-compatible", BaseURL: "https://example.org/v1", AuthType: "bearer", TimeoutSeconds: 60, Enabled: true})
 
 	m := model{
-		page:     pageConfig,
-		selected: pageConfig,
-		cfg:      cfg,
-		editor:   newConfigEditorState(cfg),
+		page:           pageConfig,
+		selected:       pageConfig,
+		contentFocused: true,
+		cfg:            cfg,
+		editor:         newConfigEditorState(cfg),
 	}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
