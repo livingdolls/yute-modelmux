@@ -1,13 +1,72 @@
 app:
-  name: "modelmux"
-  log_level: "info"
+  name: modelmux
+  log_level: info
 
 server:
   host: "127.0.0.1"
   port: 8787
-  read_timeout_seconds: 60
-  write_timeout_seconds: 300
+  require_auth: false # set true + auth_token_env for network exposure
   max_request_body_mb: 10
+
+storage:
+  type: "" # set to sqlite to persist state across restarts
+  path: ~/.local/share/modelmux/modelmux.db
+
+providers:
+  - id: mimo
+    name: Xiaomi MiMo
+    type: openai-compatible
+    base_url: https://api.example.com/v1
+    auth_type: bearer
+    timeout_seconds: 120
+    enabled: true
+
+models:
+  - id: mimo-v2.5-pro
+    provider_id: mimo
+    model_name: mimo-v2.5-pro
+    strategy: failover # failover | round_robin | least_error | least_used
+    enabled: true
+    requests_per_minute: 120 # optional: limit model-wide RPM
+    max_concurrent_requests: 10 # optional: limit simultaneous requests
+    capabilities: # optional: fine-grained feature gating
+      tools: true
+      json_mode: true
+
+model_groups:
+  - id: high-price
+    name: High Price Models
+    strategy: weighted # failover | round_robin | weighted
+    enabled: true
+    members:
+      # model_id members route through any available key for that model
+      - model_id: mimo-v2.5-pro
+        priority: 1
+        weight: 1
+        enabled: true
+      # key_id members pin this group member to one exact key
+      - key_id: mimo-key-1
+        priority: 2
+        weight: 1
+        enabled: true
+
+keys:
+  - id: mimo-key-1
+    provider_id: mimo
+    model_id: mimo-v2.5-pro
+    value_env: MIMO_API_KEY # env var (recommended)
+    status: active
+    priority: 1
+    daily_request_limit: 1000
+    daily_token_limit: 500000
+    requests_per_minute: 60
+    tokens_per_minute: 30000
+    max_concurrent_requests: 3
+
+health_check:
+  enabled: false
+  interval_seconds: 300
+  timeout_seconds: 15
 
 cooldown:
   rate_limit_seconds: 300
@@ -16,138 +75,5 @@ cooldown:
 
 retry:
   max_retry_per_key: 1
-  max_total_attempts: 8
-  backoff_milliseconds:
-    - 300
-    - 700
-    - 1500
-
-providers:
-  - id: "openai"
-    name: "OpenAI"
-    type: "openai-compatible"
-    base_url: "https://api.openai.com/v1"
-    auth_type: "bearer"
-    timeout_seconds: 120
-    enabled: true
-
-  - id: "claude"
-    name: "Claude OpenAI-compatible Gateway"
-    type: "openai-compatible"
-    base_url: "https://api.example-claude-gateway.com/v1"
-    auth_type: "bearer"
-    timeout_seconds: 120
-    enabled: true
-
-models:
-  - id: "gpt-5.5-xhigh"
-    provider_id: "openai"
-    model_name: "gpt-5.5-xHigh"
-    strategy: "failover"
-    enabled: true
-
-  - id: "gpt-5.5-fast"
-    provider_id: "openai"
-    model_name: "gpt-5.5-fast"
-    strategy: "failover"
-    enabled: true
-
-  - id: "claude-4.8"
-    provider_id: "claude"
-    model_name: "claude-4.8"
-    strategy: "failover"
-    enabled: true
-
-  - id: "claude-fable"
-    provider_id: "claude"
-    model_name: "claude-fable"
-    strategy: "failover"
-    enabled: true
-
-model_groups:
-  - id: "high-price"
-    name: "High Price Models"
-    strategy: "failover"
-    enabled: true
-    members:
-      - model_id: "gpt-5.5-xhigh"
-        priority: 1
-        weight: 1
-        enabled: true
-      - model_id: "gpt-5.5-fast"
-        priority: 2
-        weight: 1
-        enabled: true
-      - model_id: "claude-4.8"
-        priority: 3
-        weight: 1
-        enabled: true
-      - model_id: "claude-fable"
-        priority: 4
-        weight: 1
-        enabled: true
-
-keys:
-  - id: "openai-xhigh-key-1"
-    provider_id: "openai"
-    model_id: "gpt-5.5-xhigh"
-    name: "OpenAI xHigh 1"
-    value: "replace-with-openai-xhigh-key-1"
-    status: "active"
-    priority: 1
-
-  - id: "openai-xhigh-key-2"
-    provider_id: "openai"
-    model_id: "gpt-5.5-xhigh"
-    name: "OpenAI xHigh 2"
-    value: "replace-with-openai-xhigh-key-2"
-    status: "active"
-    priority: 2
-
-  - id: "openai-xhigh-key-3"
-    provider_id: "openai"
-    model_id: "gpt-5.5-xhigh"
-    name: "OpenAI xHigh 3"
-    value: "replace-with-openai-xhigh-key-3"
-    status: "active"
-    priority: 3
-
-  - id: "openai-fast-key-1"
-    provider_id: "openai"
-    model_id: "gpt-5.5-fast"
-    name: "OpenAI Fast 1"
-    value: "replace-with-openai-fast-key-1"
-    status: "active"
-    priority: 1
-
-  - id: "claude-48-key-1"
-    provider_id: "claude"
-    model_id: "claude-4.8"
-    name: "Claude 4.8 1"
-    value: "replace-with-claude-48-key-1"
-    status: "active"
-    priority: 1
-
-  - id: "claude-48-key-2"
-    provider_id: "claude"
-    model_id: "claude-4.8"
-    name: "Claude 4.8 2"
-    value: "replace-with-claude-48-key-2"
-    status: "active"
-    priority: 2
-
-  - id: "claude-fable-key-1"
-    provider_id: "claude"
-    model_id: "claude-fable"
-    name: "Claude Fable 1"
-    value: "replace-with-claude-fable-key-1"
-    status: "active"
-    priority: 1
-
-  - id: "claude-fable-key-2"
-    provider_id: "claude"
-    model_id: "claude-fable"
-    name: "Claude Fable 2"
-    value: "replace-with-claude-fable-key-2"
-    status: "active"
-    priority: 2
+  max_total_attempts: 5
+  backoff_milliseconds: [300, 700, 1500]
