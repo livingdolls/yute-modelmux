@@ -87,8 +87,14 @@ model_groups:
     strategy: weighted # failover | round_robin | weighted
     enabled: true
     members:
+      # model_id members route through any available key for that model
       - model_id: mimo-v2.5-pro
         priority: 1
+        weight: 1
+        enabled: true
+      # key_id members pin this group member to one exact key
+      - key_id: mimo-key-1
+        priority: 2
         weight: 1
         enabled: true
 
@@ -130,7 +136,7 @@ retry:
 | `least_error` | Pick key with fewest errors      |
 | `least_used`  | Pick key with lowest daily usage |
 
-Group-level strategies (`failover`, `round_robin`, `weighted`) control how members are selected before key rotation kicks in.
+Group-level strategies (`failover`, `round_robin`, `weighted`) control how members are selected before key rotation kicks in. Group members can reference either `model_id` or `key_id`: `model_id` keeps the normal per-model key pool behavior, while `key_id` pins that member to one exact key. This lets one group contain entries such as `key-1-deepseek`, `key-1-mimo`, `key-2-mimo`, and a model-level fallback.
 
 ### Provider Types
 
@@ -329,8 +335,8 @@ When `health_check.enabled: true`, a background goroutine periodically tests eac
 modelmux tui
 ```
 
-- **Chat** — In-memory chat sessions with config models. `enter` opens Chat from the menu, then `enter` sends messages. `esc` clears typed text or returns to the menu.
-- **Config** — Full YAML editor. `enter` opens Config from the menu, `up/down` select rows, `left/right` switch sections, and `esc` returns to the menu.
+- **Chat** — In-memory chat sessions with config models/groups. `enter` opens Chat from the menu, choose a session, then `enter` opens the conversation. `pgup/pgdown` scrolls history; `esc` returns from conversation to sessions.
+- **Config** — Full YAML editor. `enter` opens Config from the menu, `up/down` select rows, `left/right` switch sections, and `esc` returns to the menu. Selectable fields open popups; group members support multi-select across models and keys.
 - **Logs** — View recent request logs with filtering.
 - **Metrics** — Live Prometheus metrics display.
 - **Themes** — Multiple terminal color themes.
@@ -345,9 +351,10 @@ modelmux tui
 | Global | `?`                 | Toggle help when not typing                       |
 | Global | `q`                 | Quit when not typing                              |
 | Global | `ctrl+c`            | Force quit                                        |
-| Chat   | `enter`             | Send message                                      |
-| Chat   | `up/down`           | Switch active chat session                        |
-| Chat   | `esc`               | Clear typed text; press again to return to menu   |
+| Chat   | `enter`             | Open selected session or send message             |
+| Chat   | `up/down`           | Choose chat session                               |
+| Chat   | `pgup` / `pgdown`   | Scroll conversation history                       |
+| Chat   | `esc`               | Clear text, return to sessions, or return to menu |
 | Chat   | `ctrl+n`            | New chat session                                  |
 | Chat   | `ctrl+t`            | Switch target model                               |
 | Chat   | `ctrl+f`            | Filter chat sessions                              |
@@ -355,6 +362,8 @@ modelmux tui
 | Config | `left/right`        | Switch section                                    |
 | Config | `enter`             | Edit selected item                                |
 | Config | `esc`               | Cancel form/filter or return to menu              |
+| Config | `right`             | Open select popup for selectable form fields      |
+| Config | `space`             | Toggle item in multi-select popup                 |
 | Config | `a`                 | Add item                                          |
 | Config | `delete`            | Delete selected item                              |
 | Config | `ctrl+s`            | Save config and reload router                     |
