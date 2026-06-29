@@ -196,3 +196,23 @@ func TestConfigValidateBadYAML(t *testing.T) {
 		t.Fatalf("expected YAML error, got: %v", err)
 	}
 }
+
+func TestVersionCommand(t *testing.T) {
+	cmd := newRootCommand()
+
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"version"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("expected version command to succeed, got error: %v", err)
+	}
+	out := stdout.String()
+	for _, want := range []string{"modelmux", "commit:", "built:"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected output to contain %q, got: %s", want, out)
+		}
+	}
+}

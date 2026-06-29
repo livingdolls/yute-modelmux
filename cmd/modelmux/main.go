@@ -23,6 +23,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	if err := newRootCommand().Execute(); err != nil {
 		os.Exit(1)
@@ -38,6 +44,14 @@ func newRootCommand() *cobra.Command {
 	}
 
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", config.DefaultConfigPath(), "config file path")
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "version",
+		Short: "Print version information",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Fprintf(cmd.OutOrStdout(), "modelmux %s\ncommit: %s\nbuilt: %s\n", version, commit, date)
+		},
+	})
 
 	configCmd := &cobra.Command{Use: "config", Short: "Config helpers"}
 	configCmd.AddCommand(&cobra.Command{
@@ -97,31 +111,31 @@ Exit code is non-zero if any validation errors are found.`,
 				}
 			}
 
-		if len(allErrs) == 0 {
+			if len(allErrs) == 0 {
+				if validateJSON {
+					b, _ := json.MarshalIndent(map[string]any{"valid": true, "errors": []string{}}, "", "  ")
+					fmt.Fprintln(cmd.OutOrStdout(), string(b))
+				} else {
+					fmt.Fprintln(cmd.OutOrStdout(), "config is valid")
+				}
+				return nil
+			}
+
 			if validateJSON {
-				b, _ := json.MarshalIndent(map[string]any{"valid": true, "errors": []string{}}, "", "  ")
+				type jsonOutput struct {
+					Valid  bool     `json:"valid"`
+					Errors []string `json:"errors"`
+				}
+				out := jsonOutput{Valid: false, Errors: allErrs}
+				b, _ := json.MarshalIndent(out, "", "  ")
 				fmt.Fprintln(cmd.OutOrStdout(), string(b))
 			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "config is valid")
+				fmt.Fprintln(cmd.ErrOrStderr(), "config has", len(allErrs), "error(s):")
+				for _, e := range allErrs {
+					fmt.Fprintln(cmd.ErrOrStderr(), "  -", e)
+				}
 			}
-			return nil
-		}
-
-		if validateJSON {
-			type jsonOutput struct {
-				Valid  bool     `json:"valid"`
-				Errors []string `json:"errors"`
-			}
-			out := jsonOutput{Valid: false, Errors: allErrs}
-			b, _ := json.MarshalIndent(out, "", "  ")
-			fmt.Fprintln(cmd.OutOrStdout(), string(b))
-		} else {
-			fmt.Fprintln(cmd.ErrOrStderr(), "config has", len(allErrs), "error(s):")
-			for _, e := range allErrs {
-				fmt.Fprintln(cmd.ErrOrStderr(), "  -", e)
-			}
-		}
-		return fmt.Errorf("config validation failed with %d error(s)", len(allErrs))
+			return fmt.Errorf("config validation failed with %d error(s)", len(allErrs))
 		},
 	}
 	configValidateCmd.Flags().BoolVar(&validateJSON, "json", false, "output as JSON")
@@ -227,13 +241,13 @@ Exit code is non-zero if any validation errors are found.`,
 	rootCmd.AddCommand(keyCmd)
 
 	var (
-		providerAddID          string
-		providerAddName        string
-		providerAddType        string
-		providerAddBaseURL     string
-		providerAddAuthType    string
-		providerAddAuthHeader  string
-		providerAddTimeout     int
+		providerAddID         string
+		providerAddName       string
+		providerAddType       string
+		providerAddBaseURL    string
+		providerAddAuthType   string
+		providerAddAuthHeader string
+		providerAddTimeout    int
 	)
 	providerCmd := &cobra.Command{Use: "provider", Short: "Provider management"}
 	providerAddCmd := &cobra.Command{
@@ -859,18 +873,18 @@ to the new key before running this command.`,
 				return err
 			}
 
-		router, rerr := newRouterServiceWithSecret(cfg, store, secStore)
-		if rerr != nil {
-			return rerr
-		}
-		srv := httpserver.New(router, cfg)
-		srv.SetConfigPath(configPath)
+			router, rerr := newRouterServiceWithSecret(cfg, store, secStore)
+			if rerr != nil {
+				return rerr
+			}
+			srv := httpserver.New(router, cfg)
+			srv.SetConfigPath(configPath)
 
-		healthChecker := service.NewHealthChecker(router, cfg.HealthCheck)
-		healthChecker.Start(cmd.Context())
-		defer healthChecker.Stop()
+			healthChecker := service.NewHealthChecker(router, cfg.HealthCheck)
+			healthChecker.Start(cmd.Context())
+			defer healthChecker.Stop()
 
-		return srv.Run(cmd.Context())
+			return srv.Run(cmd.Context())
 		},
 	})
 

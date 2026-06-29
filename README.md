@@ -417,6 +417,29 @@ Client (OpenAI SDK)
 
 ## Install
 
+Download a prebuilt binary from [GitHub Releases](https://github.com/livingdolls/yute-modelmux/releases):
+
+| Platform | Asset |
+| --- | --- |
+| Linux x86_64 | `modelmux_linux_amd64.tar.gz` |
+| Linux arm64 | `modelmux_linux_arm64.tar.gz` |
+| macOS Intel | `modelmux_darwin_amd64.tar.gz` |
+| macOS Apple Silicon | `modelmux_darwin_arm64.tar.gz` |
+| Windows x86_64 | `modelmux_windows_amd64.zip` |
+| Windows arm64 | `modelmux_windows_arm64.zip` |
+
+Example for Linux x86_64:
+
+```bash
+curl -L -o modelmux.tar.gz \
+  https://github.com/livingdolls/yute-modelmux/releases/latest/download/modelmux_linux_amd64.tar.gz
+tar -xzf modelmux.tar.gz
+sudo install modelmux_linux_amd64/modelmux /usr/local/bin/modelmux
+modelmux version
+```
+
+Or install with Go:
+
 ```bash
 go install github.com/livingdolls/yute-modelmux/cmd/modelmux@latest
 ```
