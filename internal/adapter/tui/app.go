@@ -83,6 +83,7 @@ type model struct {
 	chats            []tuiChatSession
 	activeChat       int
 	chatAnchor       int
+	chatScroll       int
 	chatInput        string
 	chatFilter       string
 	chatFiltering    bool
@@ -194,7 +195,7 @@ func Run(options Options) error {
 		editor:       newConfigEditorState(draft),
 	}
 	m.chats = []tuiChatSession{newTUIChatSession(1, defaultChatTarget(draft))}
-	prog := tea.NewProgram(m, tea.WithAltScreen())
+	prog := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := prog.Run()
 	return err
 }
@@ -261,6 +262,15 @@ func (m model) Init() tea.Cmd { return tickCmd() }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.MouseMsg:
+		if m.contentFocused && m.page == pageChat {
+			switch msg.Type {
+			case tea.MouseWheelUp:
+				m.scrollChatHistory(3)
+			case tea.MouseWheelDown:
+				m.scrollChatHistory(-3)
+			}
+		}
 	case tea.KeyMsg:
 		key := msg.String()
 		if key == "ctrl+c" {
@@ -363,6 +373,24 @@ func (m model) updateChat(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down":
 		m.moveActiveChat(1)
 		return m, nil
+	case "pgup":
+		m.scrollChatHistory(m.chatScrollPageSize())
+		return m, nil
+	case "pgdown":
+		m.scrollChatHistory(-m.chatScrollPageSize())
+		return m, nil
+	case "home":
+		m.chatScroll = maxInt(0, m.activeChatHistoryLineCount()-1)
+		return m, nil
+	case "end":
+		m.chatScroll = 0
+		return m, nil
+	case "ctrl+up":
+		m.scrollChatHistory(3)
+		return m, nil
+	case "ctrl+down":
+		m.scrollChatHistory(-3)
+		return m, nil
 	case "ctrl+n":
 		m.addChatSession()
 		return m, nil
@@ -439,7 +467,7 @@ func (m model) View() string {
 	statusBar := m.renderStatusBar(width - 2)
 	footerText := "MENU tab/shift+tab:move  enter:open  ?:help  q:quit"
 	if m.contentFocused && m.page == pageChat {
-		footerText = "CHAT enter:send  up/down:session  ctrl+n:new  ctrl+t:target  ctrl+f:filter  esc:menu"
+		footerText = "CHAT enter:send  up/down:session  pgup/pgdn:history  ctrl+n:new  ctrl+f:filter  esc:menu"
 	} else if m.contentFocused && m.page == pageKeys {
 		footerText = "KEYS 1:status  2:cooldown  3:errors  x:test  esc:menu  ?:help"
 		if m.keyTesting {
@@ -734,6 +762,7 @@ func (m model) renderHelpText() string {
 		lines = append(lines,
 			"chat: enter send, ctrl+n new session, ctrl+t cycle target",
 			"chat: up/down change active session, ctrl+f filter sessions",
+			"chat: pgup/pgdown scroll history, home/end jump top/bottom",
 			"chat: esc clears typed text; esc again returns to menu",
 		)
 	case pageKeys:
@@ -1415,16 +1444,21 @@ func (m model) renderChatConversation(chat tuiChatSession, width int, maxHeight 
 		b.WriteString("\n")
 	} else {
 		var messageBlock strings.Builder
-		start := 0
-		if len(chat.Messages) > 20 {
-			start = len(chat.Messages) - 20
-		}
-		for _, message := range chat.Messages[start:] {
+		for _, message := range chat.Messages {
 			messageBlock.WriteString(m.renderChatMessage(message, width))
 			messageBlock.WriteString("\n")
 		}
 		messageHeight := maxInt(1, maxHeight-10)
-		b.WriteString(tailVisibleLines(messageBlock.String(), messageHeight))
+		visible, offset, maxOffset := visibleLinesFromBottom(messageBlock.String(), messageHeight, m.chatScroll)
+		if maxOffset > 0 {
+			scrollText := "history bottom  pgup/pgdn scroll"
+			if offset > 0 {
+				scrollText = fmt.Sprintf("history %d/%d lines from bottom  end jumps latest", offset, maxOffset)
+			}
+			b.WriteString(m.styles.hint.Render(scrollText))
+			b.WriteString("\n")
+		}
+		b.WriteString(visible)
 		b.WriteString("\n")
 	}
 
@@ -1505,7 +1539,41 @@ func (m *model) moveActiveChat(step int) {
 	if pos >= 0 && pos < len(indexes) {
 		m.activeChat = indexes[pos]
 		m.chatAnchor = m.activeChat
+		m.chatScroll = 0
 	}
+}
+
+func (m *model) scrollChatHistory(delta int) {
+	if len(m.chats) == 0 {
+		return
+	}
+	maxScroll := maxInt(0, m.activeChatHistoryLineCount()-1)
+	m.chatScroll = minInt(maxScroll, maxInt(0, m.chatScroll+delta))
+}
+
+func (m model) chatScrollPageSize() int {
+	height := m.height
+	if height == 0 {
+		height = 30
+	}
+	return maxInt(4, height/3)
+}
+
+func (m model) activeChatHistoryLineCount() int {
+	if len(m.chats) == 0 || m.activeChat < 0 || m.activeChat >= len(m.chats) {
+		return 0
+	}
+	var b strings.Builder
+	width := maxInt(34, m.pageBodyWidth()-m.chatSidebarWidth()-m.bodyGap())
+	for _, message := range m.chats[m.activeChat].Messages {
+		b.WriteString(m.renderChatMessage(message, width))
+		b.WriteString("\n")
+	}
+	value := strings.TrimRight(b.String(), "\n")
+	if value == "" {
+		return 0
+	}
+	return len(strings.Split(value, "\n"))
 }
 
 func (m *model) ensureActiveChatVisible() {
@@ -1540,6 +1608,7 @@ func (m *model) addChatSession() {
 	m.chats = append(m.chats, newTUIChatSession(m.nextChatID, target))
 	m.activeChat = len(m.chats) - 1
 	m.chatAnchor = m.activeChat
+	m.chatScroll = 0
 	m.nextChatID++
 	m.chatInput = ""
 }
@@ -1575,12 +1644,14 @@ func (m model) sendActiveChatMessage() (tea.Model, tea.Cmd) {
 	if m.router == nil {
 		m.chats[m.activeChat].Messages = append(m.chats[m.activeChat].Messages, tuiChatMessage{Role: "error", Content: "router is not available", CreatedAt: time.Now()})
 		m.chatInput = ""
+		m.chatScroll = 0
 		return m, nil
 	}
 	m.chats[m.activeChat].Messages = append(m.chats[m.activeChat].Messages, tuiChatMessage{Role: "user", Content: input, CreatedAt: time.Now()})
 	m.chats[m.activeChat].Pending = true
 	m.chats[m.activeChat].Error = ""
 	m.chatInput = ""
+	m.chatScroll = 0
 	chat := m.chats[m.activeChat]
 	return m, sendChatCmd(m.router, chat)
 }
@@ -1737,15 +1808,18 @@ func trimVisibleLines(value string, maxLines int) string {
 	return strings.Join(lines[:maxLines], "\n")
 }
 
-func tailVisibleLines(value string, maxLines int) string {
+func visibleLinesFromBottom(value string, maxLines int, offsetFromBottom int) (string, int, int) {
 	if maxLines <= 0 {
-		return ""
+		return "", 0, 0
 	}
 	lines := strings.Split(strings.TrimRight(value, "\n"), "\n")
 	if len(lines) <= maxLines {
-		return strings.Join(lines, "\n")
+		return strings.Join(lines, "\n"), 0, 0
 	}
-	return strings.Join(lines[len(lines)-maxLines:], "\n")
+	maxOffset := len(lines) - maxLines
+	offset := minInt(maxInt(0, offsetFromBottom), maxOffset)
+	start := len(lines) - maxLines - offset
+	return strings.Join(lines[start:start+maxLines], "\n"), offset, maxOffset
 }
 
 func (m model) renderLogs() string {

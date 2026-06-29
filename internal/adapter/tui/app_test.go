@@ -2,7 +2,9 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -204,6 +206,63 @@ func TestChatViewDoesNotExceedTerminalHeightWithLongConversation(t *testing.T) {
 	view := m.View()
 	if got := lipgloss.Height(view); got > m.height {
 		t.Fatalf("expected view height <= %d, got %d", m.height, got)
+	}
+}
+
+func TestChatPageUpScrollsHistoryWithoutMovingSession(t *testing.T) {
+	activeChat := newTUIChatSession(2, "gpt")
+	for i := 0; i < 8; i++ {
+		activeChat.Messages = append(activeChat.Messages, tuiChatMessage{
+			Role:      "assistant",
+			Content:   fmt.Sprintf("message %d", i),
+			CreatedAt: time.Now(),
+		})
+	}
+	m := model{
+		page:           pageChat,
+		selected:       pageChat,
+		contentFocused: true,
+		height:         30,
+		styles:         defaultStyles(defaultTheme),
+		chats:          []tuiChatSession{newTUIChatSession(1, "gpt"), activeChat},
+		activeChat:     1,
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	got := updated.(model)
+
+	if cmd != nil {
+		t.Fatal("expected no command when scrolling chat history")
+	}
+	if got.activeChat != 1 {
+		t.Fatalf("expected active chat to stay unchanged, got %d", got.activeChat)
+	}
+	if got.chatScroll == 0 {
+		t.Fatal("expected chat scroll to increase")
+	}
+}
+
+func TestChatConversationCanRenderOlderHistoryWhenScrolled(t *testing.T) {
+	chat := newTUIChatSession(1, "gpt")
+	for i := 0; i < 24; i++ {
+		chat.Messages = append(chat.Messages, tuiChatMessage{
+			Role:      "assistant",
+			Content:   fmt.Sprintf("history marker %02d", i),
+			CreatedAt: time.Now(),
+		})
+	}
+	m := model{
+		styles:     defaultStyles(defaultTheme),
+		chatScroll: 1 << 20,
+	}
+
+	view := m.renderChatConversation(chat, 80, 18)
+
+	if !strings.Contains(view, "history marker 00") {
+		t.Fatal("expected scrolled chat view to include oldest message")
+	}
+	if strings.Contains(view, "history marker 23") {
+		t.Fatal("expected scrolled chat view to hide latest message")
 	}
 }
 
