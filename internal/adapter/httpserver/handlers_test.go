@@ -402,11 +402,19 @@ func TestAdminDisableKeySavesConfig(t *testing.T) {
 }
 
 func TestAdminKeyNotFound(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
 	cfg := config.Default()
 	cfg.Server.RequireAuth = false
 	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	cfg.Keys = []config.KeyConfig{
+		{ID: "key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "k1", Status: "active", Priority: 1},
+	}
+	config.Save(cfgPath, cfg)
+
 	rs, _ := NewTestRouterService(cfg)
 	s := New(rs, cfg)
+	s.SetConfigPath(cfgPath)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/keys/nonexistent/enable", nil)
 	w := httptest.NewRecorder()
