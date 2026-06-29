@@ -44,6 +44,10 @@ Point your OpenAI-compatible client at `http://127.0.0.1:8787/v1` and use config
 Everything lives in `~/.config/modelmux/config.yaml`:
 
 ```yaml
+app:
+  name: modelmux
+  log_level: info
+
 server:
   host: "127.0.0.1"
   port: 8787
@@ -51,58 +55,46 @@ server:
   max_request_body_mb: 10
 
 storage:
-  type: sqlite                  # optional: persist state across restarts
+  type: ""                      # set to sqlite to persist state across restarts
   path: ~/.local/share/modelmux/modelmux.db
 
 providers:
-  - id: openai
-    name: OpenAI
+  - id: mimo
+    name: Xiaomi MiMo
     type: openai-compatible
-    base_url: https://api.openai.com/v1
+    base_url: https://api.example.com/v1
     auth_type: bearer
     timeout_seconds: 120
     enabled: true
 
-  - id: anthropic
-    name: Anthropic
-    type: anthropic
-    base_url: https://api.anthropic.com
-    timeout_seconds: 120
-    enabled: true
-
 models:
-  - id: gpt-4o
-    provider_id: openai
-    model_name: gpt-4o
+  - id: mimo-v2.5-pro
+    provider_id: mimo
+    model_name: mimo-v2.5-pro
     strategy: failover              # failover | round_robin | least_error | least_used
+    enabled: true
     requests_per_minute: 120        # optional: limit model-wide RPM
     max_concurrent_requests: 10     # optional: limit simultaneous requests
     capabilities:                   # optional: fine-grained feature gating
       tools: true
       json_mode: true
 
-  - id: claude-sonnet
-    provider_id: anthropic
-    model_name: claude-3-5-sonnet-20241022
-    strategy: round_robin
-
 model_groups:
-  - id: premium
-    name: Premium Tier
+  - id: high-price
+    name: High Price Models
     strategy: weighted             # failover | round_robin | weighted
+    enabled: true
     members:
-      - model_id: gpt-4o
+      - model_id: mimo-v2.5-pro
         priority: 1
-        weight: 70
-      - model_id: claude-sonnet
-        priority: 2
-        weight: 30
+        weight: 1
+        enabled: true
 
 keys:
-  - id: openai-key-1
-    provider_id: openai
-    model_id: gpt-4o
-    value_env: OPENAI_KEY_1        # env var (recommended)
+  - id: mimo-key-1
+    provider_id: mimo
+    model_id: mimo-v2.5-pro
+    value_env: MIMO_API_KEY        # env var (recommended)
     status: active
     priority: 1
     daily_request_limit: 1000
@@ -111,15 +103,8 @@ keys:
     tokens_per_minute: 30000
     max_concurrent_requests: 3
 
-  - id: openai-key-2
-    provider_id: openai
-    model_id: gpt-4o
-    secret_ref: openai-backup       # from encrypted secret store
-    status: active
-    priority: 2
-
 health_check:
-  enabled: true
+  enabled: false
   interval_seconds: 300
   timeout_seconds: 15
 
@@ -170,6 +155,10 @@ modelmux key enable --id <key> Enable a key in config
 modelmux key disable --id <key> Disable a key in config
 modelmux key add ...           Add a new key
 
+modelmux provider add ...      Add a provider
+modelmux model add ...         Add a model
+modelmux group add ...         Add a model group
+
 modelmux secret set --ref name          Store secret (omit --value for hidden prompt)
 modelmux secret list                    List stored references
 modelmux secret delete --ref name       Delete a secret
@@ -179,7 +168,7 @@ modelmux secret verify                  Check store integrity
 modelmux secret rotate-master-key       Re-encrypt with new key
 
 modelmux logs --json --limit 50         Show recent request logs
-modelmux logs --model-id gpt-4o --status-code 429
+modelmux logs --model-id mimo-v2.5-pro --status-code 429
 
 modelmux providers                     List providers (--json)
 modelmux models                        List models (--json)
@@ -195,11 +184,11 @@ Secrets are encrypted at rest with AES-256-GCM, key derivation via Argon2id (64 
 export MODELMUX_MASTER_KEY="your-strong-master-password"
 
 # Interactive hidden prompt
-modelmux secret set --ref openai-key-1
-# Enter value for openai-key-1: ****
+modelmux secret set --ref mimo-key-1
+# Enter value for mimo-key-1: ****
 
 # Scripting-safe
-modelmux secret set --ref openai-key-2 --value "$TOKEN"
+modelmux secret set --ref mimo-key-2 --value "$TOKEN"
 ```
 
 Reference secrets in config via `keys[].secret_ref`.
@@ -208,7 +197,7 @@ Reference secrets in config via `keys[].secret_ref`.
 
 ## Admin API
 
-When the server is running, admin endpoints are available. Requires auth if `server.require_auth=true`, or localhost-only access otherwise.
+When the server is running, admin endpoints are available. Requires auth if `server.require_auth=true`; otherwise `/admin/*` is allowed only from localhost.
 
 ```
 POST /admin/reload                    Reload config without restart
@@ -241,7 +230,7 @@ Limits use in-memory rolling windows (minute granularity). Counters reset on res
 
 ### Prometheus Metrics
 
-`GET /metrics` returns Prometheus-formatted output:
+`GET /metrics` returns JSON metrics by default. Use `GET /metrics?format=prometheus` for Prometheus-formatted output:
 
 - `modelmux_requests_total` — Per-model, per-key, per-group request counts
 - `modelmux_errors_total` — Error counts
@@ -334,7 +323,7 @@ Client (OpenAI SDK)
 go install github.com/livingdolls/yute-modelmux/cmd/modelmux@latest
 ```
 
-Requirements: Go 1.22+
+Requirements: Go 1.25+
 
 Or build from source:
 
