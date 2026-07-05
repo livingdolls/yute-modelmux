@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,6 +22,29 @@ import (
 	"github.com/livingdolls/yute-modelmux/internal/secret"
 	"github.com/livingdolls/yute-modelmux/internal/storage"
 )
+
+type blockingLogStorage struct {
+	started chan struct{}
+	unblock chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingLogStorage) SaveKeyRuntime(storage.KeyRuntimeRecord) error { return nil }
+func (s *blockingLogStorage) LoadKeyRuntime() ([]storage.KeyRuntimeRecord, error) {
+	return nil, nil
+}
+func (s *blockingLogStorage) SaveRequestLog(storage.RequestLogRecord) error {
+	s.once.Do(func() { close(s.started) })
+	<-s.unblock
+	return nil
+}
+func (s *blockingLogStorage) LoadRequestLogs() ([]storage.RequestLogRecord, error) {
+	return nil, nil
+}
+func (s *blockingLogStorage) QueryRequestLogs(storage.LogFilter) ([]storage.RequestLogRecord, int, error) {
+	return nil, 0, nil
+}
+func (s *blockingLogStorage) Close() error { return nil }
 
 func TestSelectKeyPrefersLowestPriority(t *testing.T) {
 	cfg := config.Default()
@@ -121,6 +145,50 @@ func TestMarkKeyResultLogsSuccess(t *testing.T) {
 	}
 	if logs[0].StatusCode != 200 || logs[0].ModelID != "mimo-v2.5-pro" || logs[0].LatencyMs != 12 {
 		t.Fatalf("unexpected log entry: %+v", logs[0])
+	}
+}
+
+func TestMarkKeyResultDoesNotHoldLockWhilePersistingLog(t *testing.T) {
+	cfg := config.Default()
+	store := &blockingLogStorage{started: make(chan struct{}), unblock: make(chan struct{})}
+	rs, err := NewRouterServiceWithStorage(cfg, store)
+	if err != nil {
+		t.Fatalf("NewRouterServiceWithStorage failed: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- rs.MarkKeyResult(context.Background(), "mimo-key-1", inbound.KeyResult{Success: true, ModelID: "mimo-v2.5-pro", ProviderID: "mimo", StatusCode: 200})
+	}()
+
+	select {
+	case <-store.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for storage write to start")
+	}
+
+	listed := make(chan []domain.APIKey, 1)
+	go func() {
+		listed <- rs.ListKeys()
+	}()
+
+	select {
+	case keys := <-listed:
+		if len(keys) != 1 || keys[0].UsedCount != 1 {
+			t.Fatalf("unexpected key snapshot while storage is blocked: %+v", keys)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("ListKeys blocked while MarkKeyResult was persisting storage")
+	}
+
+	close(store.unblock)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("MarkKeyResult failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for MarkKeyResult to finish")
 	}
 }
 

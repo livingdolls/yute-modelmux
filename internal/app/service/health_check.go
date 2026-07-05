@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/livingdolls/yute-modelmux/internal/config"
+	"github.com/livingdolls/yute-modelmux/internal/storage"
 )
 
 type HealthChecker struct {
@@ -81,48 +82,54 @@ func (h *HealthChecker) runCheck(ctx context.Context) {
 }
 
 func (h *HealthChecker) markInvalid(keyID string) {
+	var keyRecord *storage.KeyRuntimeRecord
 	h.rs.mu.Lock()
-	defer h.rs.mu.Unlock()
 	for i := range h.rs.keys {
 		if h.rs.keys[i].ID == keyID {
 			if h.rs.keys[i].Status != "disabled" && h.rs.keys[i].Status != "invalid" {
 				h.rs.keys[i].Status = "invalid"
 				h.rs.keys[i].CooldownEnd = nil
-				h.rs.saveKeyRuntimeLocked(h.rs.keys[i])
+				keyRecord = h.rs.keyRuntimeRecord(h.rs.keys[i])
 			}
-			return
+			break
 		}
 	}
+	h.rs.mu.Unlock()
+	h.rs.persistKeyRuntime(keyRecord)
 }
 
 func (h *HealthChecker) markCooldown(keyID string) {
+	var keyRecord *storage.KeyRuntimeRecord
 	h.rs.mu.Lock()
-	defer h.rs.mu.Unlock()
 	for i := range h.rs.keys {
 		if h.rs.keys[i].ID == keyID {
 			if h.rs.keys[i].Status == "disabled" || h.rs.keys[i].Status == "invalid" {
-				return
+				break
 			}
 			h.rs.keys[i].Status = "cooldown"
 			until := time.Now().Add(time.Duration(h.rs.cfg.Cooldown.RateLimitSeconds) * time.Second)
 			h.rs.keys[i].CooldownEnd = &until
-			h.rs.saveKeyRuntimeLocked(h.rs.keys[i])
-			return
+			keyRecord = h.rs.keyRuntimeRecord(h.rs.keys[i])
+			break
 		}
 	}
+	h.rs.mu.Unlock()
+	h.rs.persistKeyRuntime(keyRecord)
 }
 
 func (h *HealthChecker) markRecovered(keyID string) {
+	var keyRecord *storage.KeyRuntimeRecord
 	h.rs.mu.Lock()
-	defer h.rs.mu.Unlock()
 	for i := range h.rs.keys {
 		if h.rs.keys[i].ID == keyID {
 			if h.rs.keys[i].Status == "invalid" || h.rs.keys[i].Status == "cooldown" {
 				h.rs.keys[i].Status = "active"
 				h.rs.keys[i].CooldownEnd = nil
-				h.rs.saveKeyRuntimeLocked(h.rs.keys[i])
+				keyRecord = h.rs.keyRuntimeRecord(h.rs.keys[i])
 			}
-			return
+			break
 		}
 	}
+	h.rs.mu.Unlock()
+	h.rs.persistKeyRuntime(keyRecord)
 }

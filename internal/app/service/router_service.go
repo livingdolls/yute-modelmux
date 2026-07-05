@@ -278,7 +278,7 @@ func newRouterService(cfg *config.Config, store storage.Storage, secretStore *se
 			if rs.keys[i].Status == domain.KeyStatusLimited {
 				rs.keys[i].Status = domain.KeyStatusActive
 			}
-			rs.saveKeyRuntimeLocked(rs.keys[i])
+			rs.persistKeyRuntime(rs.keyRuntimeRecord(rs.keys[i]))
 		}
 	}
 
@@ -744,7 +744,6 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 
 func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result inbound.KeyResult) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	for i := range s.keys {
 		if s.keys[i].ID != keyID {
@@ -765,8 +764,11 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 			}
 			s.keys[i].CooldownEnd = nil
 			s.applyDailyLimitsLocked(i, result.TokenInput, result.TokenOutput)
-			s.appendLog(log)
-			s.saveKeyRuntimeLocked(s.keys[i])
+			logRecord := s.appendLogLocked(log)
+			keyRecord := s.keyRuntimeRecord(s.keys[i])
+			s.mu.Unlock()
+			s.persistRequestLog(logRecord)
+			s.persistKeyRuntime(keyRecord)
 			return nil
 		}
 		s.keys[i].ErrorCount++
@@ -776,8 +778,11 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 		if result.StatusCode == http.StatusUnauthorized || result.StatusCode == http.StatusForbidden {
 			s.keys[i].Status = domain.KeyStatusInvalid
 			s.keys[i].CooldownEnd = nil
-			s.appendLog(log)
-			s.saveKeyRuntimeLocked(s.keys[i])
+			logRecord := s.appendLogLocked(log)
+			keyRecord := s.keyRuntimeRecord(s.keys[i])
+			s.mu.Unlock()
+			s.persistRequestLog(logRecord)
+			s.persistKeyRuntime(keyRecord)
 			return nil
 		}
 		if result.CooldownSeconds > 0 {
@@ -785,16 +790,20 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 			until := now.Add(time.Duration(result.CooldownSeconds) * time.Second)
 			s.keys[i].CooldownEnd = &until
 		}
-		s.appendLog(log)
-		s.saveKeyRuntimeLocked(s.keys[i])
+		logRecord := s.appendLogLocked(log)
+		keyRecord := s.keyRuntimeRecord(s.keys[i])
+		s.mu.Unlock()
+		s.persistRequestLog(logRecord)
+		s.persistKeyRuntime(keyRecord)
 		return nil
 	}
+	s.mu.Unlock()
 	return fmt.Errorf("key %s not found", keyID)
 }
 
-func (s *RouterService) saveKeyRuntimeLocked(k domain.APIKey) {
+func (s *RouterService) keyRuntimeRecord(k domain.APIKey) *storage.KeyRuntimeRecord {
 	if s.store == nil {
-		return
+		return nil
 	}
 	cooldownEnd := ""
 	if k.CooldownEnd != nil {
@@ -805,7 +814,7 @@ func (s *RouterService) saveKeyRuntimeLocked(k domain.APIKey) {
 		lastUsedAt = k.LastUsedAt.Format(time.RFC3339)
 	}
 	updatedAt := k.UpdatedAt.Format(time.RFC3339)
-	if err := s.store.SaveKeyRuntime(storage.KeyRuntimeRecord{
+	return &storage.KeyRuntimeRecord{
 		KeyID:             k.ID,
 		Status:            string(k.Status),
 		UsedCount:         k.UsedCount,
@@ -818,7 +827,14 @@ func (s *RouterService) saveKeyRuntimeLocked(k domain.APIKey) {
 		DailyDate:         k.DailyDate,
 		DailyRequestLimit: k.DailyRequestLimit,
 		DailyTokenLimit:   k.DailyTokenLimit,
-	}); err != nil {
+	}
+}
+
+func (s *RouterService) persistKeyRuntime(record *storage.KeyRuntimeRecord) {
+	if record == nil || s.store == nil {
+		return
+	}
+	if err := s.store.SaveKeyRuntime(*record); err != nil {
 		fmt.Fprintf(os.Stderr, "modelmux: storage write error: %v\n", err)
 	}
 }
@@ -923,44 +939,54 @@ func (s *RouterService) TestKey(ctx context.Context, keyID string) error {
 
 func (s *RouterService) SetKeyStatus(keyID string, status string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	for i := range s.keys {
 		if s.keys[i].ID == keyID {
 			s.keys[i].Status = domain.APIKeyStatus(status)
 			if status == "active" {
 				s.keys[i].CooldownEnd = nil
 			}
-			s.saveKeyRuntimeLocked(s.keys[i])
+			keyRecord := s.keyRuntimeRecord(s.keys[i])
+			s.mu.Unlock()
+			s.persistKeyRuntime(keyRecord)
 			return
 		}
 	}
+	s.mu.Unlock()
 }
 
-func (s *RouterService) appendLog(log domain.RequestLog) {
+func (s *RouterService) appendLogLocked(log domain.RequestLog) *storage.RequestLogRecord {
 	s.logs = append(s.logs, log)
 	if len(s.logs) > 200 {
 		s.logs = s.logs[len(s.logs)-200:]
 	}
-	if s.store != nil {
-		createdAt := ""
-		if !log.CreatedAt.IsZero() {
-			createdAt = log.CreatedAt.Format(time.RFC3339)
-		}
-		if err := s.store.SaveRequestLog(storage.RequestLogRecord{
-			ID:          log.ID,
-			GroupID:     log.GroupID,
-			ModelID:     log.ModelID,
-			ProviderID:  log.ProviderID,
-			KeyID:       log.KeyID,
-			StatusCode:  log.StatusCode,
-			Error:       log.Error,
-			LatencyMs:   log.LatencyMs,
-			TokenInput:  log.TokenInput,
-			TokenOutput: log.TokenOutput,
-			CreatedAt:   createdAt,
-		}); err != nil {
-			fmt.Fprintf(os.Stderr, "modelmux: storage write error: %v\n", err)
-		}
+	if s.store == nil {
+		return nil
+	}
+	createdAt := ""
+	if !log.CreatedAt.IsZero() {
+		createdAt = log.CreatedAt.Format(time.RFC3339)
+	}
+	return &storage.RequestLogRecord{
+		ID:          log.ID,
+		GroupID:     log.GroupID,
+		ModelID:     log.ModelID,
+		ProviderID:  log.ProviderID,
+		KeyID:       log.KeyID,
+		StatusCode:  log.StatusCode,
+		Error:       log.Error,
+		LatencyMs:   log.LatencyMs,
+		TokenInput:  log.TokenInput,
+		TokenOutput: log.TokenOutput,
+		CreatedAt:   createdAt,
+	}
+}
+
+func (s *RouterService) persistRequestLog(record *storage.RequestLogRecord) {
+	if record == nil || s.store == nil {
+		return
+	}
+	if err := s.store.SaveRequestLog(*record); err != nil {
+		fmt.Fprintf(os.Stderr, "modelmux: storage write error: %v\n", err)
 	}
 }
 
@@ -1148,7 +1174,6 @@ func (s *RouterService) availableKeys(modelID string) []domain.APIKey {
 				s.keys[i].DailyRequestCount = 0
 				s.keys[i].DailyTokenCount = 0
 				s.keys[i].DailyDate = todayStr
-				s.saveKeyRuntimeLocked(s.keys[i])
 				k = s.keys[i]
 			} else {
 				continue
@@ -1176,7 +1201,6 @@ func (s *RouterService) isKeyPerMinuteLimited(i int) bool {
 		k.MinuteWindowStart = now.Truncate(time.Minute)
 		k.MinuteRequestCount = 0
 		k.MinuteTokenCount = 0
-		s.saveKeyRuntimeLocked(*k)
 		return false
 	}
 	if k.RequestsPerMinute > 0 && k.MinuteRequestCount >= k.RequestsPerMinute {
@@ -1202,7 +1226,6 @@ func (s *RouterService) acquireKeySlotLocked(i int) bool {
 		return false
 	}
 	k.ConcurrentCount++
-	s.saveKeyRuntimeLocked(*k)
 	return true
 }
 
@@ -1211,7 +1234,6 @@ func (s *RouterService) releaseKeySlotLocked(i int) {
 	if k.ConcurrentCount > 0 {
 		k.ConcurrentCount--
 	}
-	s.saveKeyRuntimeLocked(*k)
 }
 
 func (s *RouterService) recordKeyPerMinuteUsageLocked(i int, tokens int) {
@@ -1229,21 +1251,22 @@ func (s *RouterService) recordKeyPerMinuteUsageLocked(i int, tokens int) {
 	if tokens > 0 {
 		k.MinuteTokenCount += tokens
 	}
-	s.saveKeyRuntimeLocked(*k)
 }
 
 func (s *RouterService) clearKeyCooldown(keyID string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	for i := range s.keys {
 		if s.keys[i].ID == keyID {
 			s.keys[i].Status = domain.KeyStatusActive
 			s.keys[i].CooldownEnd = nil
-			s.saveKeyRuntimeLocked(s.keys[i])
+			keyRecord := s.keyRuntimeRecord(s.keys[i])
+			s.mu.Unlock()
+			s.persistKeyRuntime(keyRecord)
 			return
 		}
 	}
+	s.mu.Unlock()
 }
 
 func cloneRequestWithBody(req *http.Request, body []byte) *http.Request {
