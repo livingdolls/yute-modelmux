@@ -374,6 +374,23 @@ func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.M
 	b.WriteString("# TYPE modelmux_limited_keys gauge\n")
 	b.WriteString(fmt.Sprintf("modelmux_limited_keys %d\n", limitedKeys))
 
+	b.WriteString("# HELP modelmux_latency_ms Request latency in milliseconds\n")
+	b.WriteString("# TYPE modelmux_latency_ms histogram\n")
+	buckets := []struct {
+		le    int64
+		label string
+	}{
+		{50, "50"},
+		{100, "100"},
+		{250, "250"},
+		{500, "500"},
+		{1000, "1000"},
+		{2500, "2500"},
+		{5000, "5000"},
+		{10000, "10000"},
+		{30000, "30000"},
+	}
+
 	for _, model := range models {
 		provider := providerModelMap[model.ID]
 		ms := modelMetrics[model.ID]
@@ -385,20 +402,6 @@ func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.M
 		b.WriteString(fmt.Sprintf("modelmux_errors_total{%s} %d\n", labels, ms.errors))
 		b.WriteString(fmt.Sprintf("modelmux_rate_limits_total{%s} %d\n", labels, ms.rateLimits))
 
-		buckets := []struct {
-			le    float64
-			label string
-		}{
-			{50, "0.05"},
-			{100, "0.1"},
-			{250, "0.25"},
-			{500, "0.5"},
-			{1000, "1"},
-			{2500, "2.5"},
-			{5000, "5"},
-			{10000, "10"},
-			{30000, "30"},
-		}
 		if len(ms.latencies) > 0 {
 			sorted := make([]int64, len(ms.latencies))
 			copy(sorted, ms.latencies)
@@ -415,12 +418,10 @@ func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.M
 			b.WriteString(fmt.Sprintf("modelmux_latency_avg_ms{%s} %.0f\n", labels, avg))
 			b.WriteString(fmt.Sprintf("modelmux_latency_p95_ms{%s} %d\n", labels, sorted[p95Idx]))
 
-			b.WriteString(fmt.Sprintf("# TYPE modelmux_latency_ms histogram\n"))
-			b.WriteString(fmt.Sprintf("# HELP modelmux_latency_ms Request latency in milliseconds\n"))
 			for _, bucket := range buckets {
 				count := 0
 				for _, l := range sorted {
-					if float64(l) <= bucket.le {
+					if l <= bucket.le {
 						count++
 					}
 				}

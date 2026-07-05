@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/livingdolls/yute-modelmux/internal/app/service"
 	"github.com/livingdolls/yute-modelmux/internal/config"
+	"github.com/livingdolls/yute-modelmux/internal/core/port/inbound"
 )
 
 func TestMetricsDoesNotExposeAPIKeyValue(t *testing.T) {
@@ -33,6 +35,37 @@ func TestMetricsDoesNotExposeAPIKeyValue(t *testing.T) {
 	}
 	if !strings.Contains(body, "groups") || !strings.Contains(body, "active_models") {
 		t.Fatalf("metrics missing group summary: %s", body)
+	}
+}
+
+func TestPrometheusMetricsLatencyHistogramUsesMilliseconds(t *testing.T) {
+	cfg := config.Default()
+	cfg.Keys[0].Value = "provider-secret"
+	rs, _ := service.NewRouterService(cfg)
+	if err := rs.MarkKeyResult(context.Background(), "mimo-key-1", inbound.KeyResult{Success: true, ModelID: "mimo-v2.5-pro", ProviderID: "mimo", StatusCode: http.StatusOK, LatencyMs: 75}); err != nil {
+		t.Fatalf("mark key result failed: %v", err)
+	}
+	srv := New(rs, cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics?format=prometheus", nil)
+	rec := httptest.NewRecorder()
+	srv.metricsHandler(rec, req)
+
+	body := rec.Body.String()
+	if got := strings.Count(body, "# HELP modelmux_latency_ms"); got != 1 {
+		t.Fatalf("expected one latency histogram HELP line, got %d:\n%s", got, body)
+	}
+	if got := strings.Count(body, "# TYPE modelmux_latency_ms histogram"); got != 1 {
+		t.Fatalf("expected one latency histogram TYPE line, got %d:\n%s", got, body)
+	}
+	if !strings.Contains(body, `modelmux_latency_ms_bucket{model="mimo-v2.5-pro",provider="mimo",le="50"} 0`) {
+		t.Fatalf("expected 50ms latency bucket, got:\n%s", body)
+	}
+	if !strings.Contains(body, `modelmux_latency_ms_bucket{model="mimo-v2.5-pro",provider="mimo",le="100"} 1`) {
+		t.Fatalf("expected 100ms latency bucket, got:\n%s", body)
+	}
+	if strings.Contains(body, `le="0.1"`) {
+		t.Fatalf("latency bucket labels should be milliseconds, got:\n%s", body)
 	}
 }
 
