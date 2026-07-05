@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -214,5 +215,57 @@ func TestVersionCommand(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected output to contain %q, got: %s", want, out)
 		}
+	}
+}
+
+func TestGroupsCLIJSONIncludesKeyMembers(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers[0].BaseURL = "https://api.example.com/v1"
+	cfg.Keys[0].Value = "test-key-value"
+	cfg.ModelGroups = []config.ModelGroupConfig{{
+		ID:       "mixed",
+		Name:     "Mixed",
+		Strategy: "failover",
+		Enabled:  true,
+		Members: []config.ModelGroupMemberConfig{
+			{ModelID: "mimo-v2.5-pro", Priority: 1, Weight: 1, Enabled: true},
+			{KeyID: "mimo-key-1", Priority: 2, Weight: 1, Enabled: true},
+		},
+	}}
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := config.Save(configPath, cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	cmd := newRootCommand()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--config", configPath, "groups", "--json"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("groups --json failed: %v\nstderr: %s", err, stderr.String())
+	}
+
+	var groups []struct {
+		ID      string `json:"id"`
+		Members []struct {
+			ModelID string `json:"model_id"`
+			KeyID   string `json:"key_id"`
+		} `json:"members"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &groups); err != nil {
+		t.Fatalf("decode groups json: %v\n%s", err, stdout.String())
+	}
+	if len(groups) != 1 || groups[0].ID != "mixed" || len(groups[0].Members) != 2 {
+		t.Fatalf("unexpected groups output: %+v", groups)
+	}
+	if groups[0].Members[0].ModelID != "mimo-v2.5-pro" {
+		t.Fatalf("expected model member, got %+v", groups[0].Members[0])
+	}
+	if groups[0].Members[1].KeyID != "mimo-key-1" {
+		t.Fatalf("expected key member, got %+v", groups[0].Members[1])
 	}
 }

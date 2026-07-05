@@ -776,6 +776,7 @@ to the new key before running this command.`,
 		if readOnlyJSON {
 			type member struct {
 				ModelID  string `json:"model_id"`
+				KeyID    string `json:"key_id,omitempty"`
 				Priority int    `json:"priority"`
 				Weight   int    `json:"weight"`
 				Enabled  bool   `json:"enabled"`
@@ -791,7 +792,7 @@ to the new key before running this command.`,
 			for i, g := range cfg.ModelGroups {
 				members := make([]member, len(g.Members))
 				for j, m := range g.Members {
-					members[j] = member{ModelID: m.ModelID, Priority: m.Priority, Weight: m.Weight, Enabled: m.Enabled}
+					members[j] = member{ModelID: m.ModelID, KeyID: m.KeyID, Priority: m.Priority, Weight: m.Weight, Enabled: m.Enabled}
 				}
 				items[i] = item{ID: g.ID, Name: g.Name, Strategy: g.Strategy, Enabled: g.Enabled, Members: members}
 			}
@@ -813,7 +814,11 @@ to the new key before running this command.`,
 				if !m.Enabled {
 					status = " (disabled)"
 				}
-				memberStrs[j] = fmt.Sprintf("%s%s", m.ModelID, status)
+				ref := "model:" + m.ModelID
+				if m.KeyID != "" {
+					ref = "key:" + m.KeyID
+				}
+				memberStrs[j] = fmt.Sprintf("%s%s", ref, status)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-20s %-14s %-8s %s\n", g.ID, g.Name, g.Strategy, enabled, strings.Join(memberStrs, ", "))
 		}
