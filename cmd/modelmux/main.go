@@ -881,6 +881,7 @@ to the new key before running this command.`,
 			srv.SetConfigPath(configPath)
 
 			healthChecker := service.NewHealthChecker(router, cfg.HealthCheck)
+			srv.SetHealthChecker(healthChecker)
 			healthChecker.Start(cmd.Context())
 			defer healthChecker.Stop()
 

@@ -439,6 +439,8 @@ func TestAdminReloadUpdatesRouter(t *testing.T) {
 	rs, _ := NewTestRouterService(cfg)
 	s := New(rs, cfg)
 	s.SetConfigPath(cfgPath)
+	healthChecker := service.NewHealthChecker(rs, cfg.HealthCheck)
+	s.SetHealthChecker(healthChecker)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/reload", nil)
 	w := httptest.NewRecorder()
@@ -446,6 +448,9 @@ func TestAdminReloadUpdatesRouter(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if healthChecker.Router() == rs {
+		t.Fatal("expected health checker to use reloaded router")
 	}
 }
 

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/livingdolls/yute-modelmux/internal/config"
@@ -10,9 +11,11 @@ import (
 )
 
 type HealthChecker struct {
-	rs     *RouterService
-	cfg    config.HealthCheckConfig
-	cancel context.CancelFunc
+	mu        sync.RWMutex
+	rs        *RouterService
+	cfg       config.HealthCheckConfig
+	parentCtx context.Context
+	cancel    context.CancelFunc
 }
 
 func NewHealthChecker(rs *RouterService, cfg config.HealthCheckConfig) *HealthChecker {
@@ -20,11 +23,42 @@ func NewHealthChecker(rs *RouterService, cfg config.HealthCheckConfig) *HealthCh
 }
 
 func (h *HealthChecker) Start(parentCtx context.Context) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.parentCtx = parentCtx
+	h.stopLocked()
+	h.startLocked()
+}
+
+func (h *HealthChecker) Update(rs *RouterService, cfg config.HealthCheckConfig) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.rs = rs
+	h.cfg = cfg
+	if h.parentCtx == nil {
+		return
+	}
+	h.stopLocked()
+	h.startLocked()
+}
+
+func (h *HealthChecker) Stop() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.stopLocked()
+}
+
+func (h *HealthChecker) Router() *RouterService {
+	rs, _ := h.snapshot()
+	return rs
+}
+
+func (h *HealthChecker) startLocked() {
 	if !h.cfg.Enabled || h.cfg.IntervalSeconds <= 0 {
 		return
 	}
 	interval := time.Duration(h.cfg.IntervalSeconds) * time.Second
-	ctx, cancel := context.WithCancel(parentCtx)
+	ctx, cancel := context.WithCancel(h.parentCtx)
 	h.cancel = cancel
 
 	go func() {
@@ -42,15 +76,26 @@ func (h *HealthChecker) Start(parentCtx context.Context) {
 	}()
 }
 
-func (h *HealthChecker) Stop() {
+func (h *HealthChecker) stopLocked() {
 	if h.cancel != nil {
 		h.cancel()
+		h.cancel = nil
 	}
 }
 
+func (h *HealthChecker) snapshot() (*RouterService, config.HealthCheckConfig) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.rs, h.cfg
+}
+
 func (h *HealthChecker) runCheck(ctx context.Context) {
-	keys := h.rs.ListKeys()
-	timeout := time.Duration(h.cfg.TimeoutSeconds) * time.Second
+	rs, cfg := h.snapshot()
+	if rs == nil {
+		return
+	}
+	keys := rs.ListKeys()
+	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = 15 * time.Second
 	}
@@ -67,69 +112,69 @@ func (h *HealthChecker) runCheck(ctx context.Context) {
 		default:
 		}
 
-		err := h.rs.TestKey(checkCtx, key.ID)
+		err := rs.TestKey(checkCtx, key.ID)
 		if err != nil {
 			errStr := err.Error()
 			if strings.Contains(errStr, "401") || strings.Contains(errStr, "403") {
-				h.markInvalid(key.ID)
+				h.markInvalid(rs, key.ID)
 			} else {
-				h.markCooldown(key.ID)
+				h.markCooldown(rs, key.ID)
 			}
 		} else {
-			h.markRecovered(key.ID)
+			h.markRecovered(rs, key.ID)
 		}
 	}
 }
 
-func (h *HealthChecker) markInvalid(keyID string) {
+func (h *HealthChecker) markInvalid(rs *RouterService, keyID string) {
 	var keyRecord *storage.KeyRuntimeRecord
-	h.rs.mu.Lock()
-	for i := range h.rs.keys {
-		if h.rs.keys[i].ID == keyID {
-			if h.rs.keys[i].Status != "disabled" && h.rs.keys[i].Status != "invalid" {
-				h.rs.keys[i].Status = "invalid"
-				h.rs.keys[i].CooldownEnd = nil
-				keyRecord = h.rs.keyRuntimeRecord(h.rs.keys[i])
+	rs.mu.Lock()
+	for i := range rs.keys {
+		if rs.keys[i].ID == keyID {
+			if rs.keys[i].Status != "disabled" && rs.keys[i].Status != "invalid" {
+				rs.keys[i].Status = "invalid"
+				rs.keys[i].CooldownEnd = nil
+				keyRecord = rs.keyRuntimeRecord(rs.keys[i])
 			}
 			break
 		}
 	}
-	h.rs.mu.Unlock()
-	h.rs.persistKeyRuntime(keyRecord)
+	rs.mu.Unlock()
+	rs.persistKeyRuntime(keyRecord)
 }
 
-func (h *HealthChecker) markCooldown(keyID string) {
+func (h *HealthChecker) markCooldown(rs *RouterService, keyID string) {
 	var keyRecord *storage.KeyRuntimeRecord
-	h.rs.mu.Lock()
-	for i := range h.rs.keys {
-		if h.rs.keys[i].ID == keyID {
-			if h.rs.keys[i].Status == "disabled" || h.rs.keys[i].Status == "invalid" {
+	rs.mu.Lock()
+	for i := range rs.keys {
+		if rs.keys[i].ID == keyID {
+			if rs.keys[i].Status == "disabled" || rs.keys[i].Status == "invalid" {
 				break
 			}
-			h.rs.keys[i].Status = "cooldown"
-			until := time.Now().Add(time.Duration(h.rs.cfg.Cooldown.RateLimitSeconds) * time.Second)
-			h.rs.keys[i].CooldownEnd = &until
-			keyRecord = h.rs.keyRuntimeRecord(h.rs.keys[i])
+			rs.keys[i].Status = "cooldown"
+			until := time.Now().Add(time.Duration(rs.cfg.Cooldown.RateLimitSeconds) * time.Second)
+			rs.keys[i].CooldownEnd = &until
+			keyRecord = rs.keyRuntimeRecord(rs.keys[i])
 			break
 		}
 	}
-	h.rs.mu.Unlock()
-	h.rs.persistKeyRuntime(keyRecord)
+	rs.mu.Unlock()
+	rs.persistKeyRuntime(keyRecord)
 }
 
-func (h *HealthChecker) markRecovered(keyID string) {
+func (h *HealthChecker) markRecovered(rs *RouterService, keyID string) {
 	var keyRecord *storage.KeyRuntimeRecord
-	h.rs.mu.Lock()
-	for i := range h.rs.keys {
-		if h.rs.keys[i].ID == keyID {
-			if h.rs.keys[i].Status == "invalid" || h.rs.keys[i].Status == "cooldown" {
-				h.rs.keys[i].Status = "active"
-				h.rs.keys[i].CooldownEnd = nil
-				keyRecord = h.rs.keyRuntimeRecord(h.rs.keys[i])
+	rs.mu.Lock()
+	for i := range rs.keys {
+		if rs.keys[i].ID == keyID {
+			if rs.keys[i].Status == "invalid" || rs.keys[i].Status == "cooldown" {
+				rs.keys[i].Status = "active"
+				rs.keys[i].CooldownEnd = nil
+				keyRecord = rs.keyRuntimeRecord(rs.keys[i])
 			}
 			break
 		}
 	}
-	h.rs.mu.Unlock()
-	h.rs.persistKeyRuntime(keyRecord)
+	rs.mu.Unlock()
+	rs.persistKeyRuntime(keyRecord)
 }

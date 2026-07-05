@@ -27,16 +27,17 @@ func generateRequestID() string {
 }
 
 type Server struct {
-	rs           *service.RouterService
-	rsMu         sync.RWMutex
-	cfg          *config.Config
-	cfgMu        sync.RWMutex
-	configPath   string
-	store        storage.Storage
+	rs            *service.RouterService
+	rsMu          sync.RWMutex
+	cfg           *config.Config
+	cfgMu         sync.RWMutex
+	configPath    string
+	store         storage.Storage
 	retiredStores []storage.Storage
-	retiredMu    sync.Mutex
-	mux          *http.ServeMux
-	srv          *http.Server
+	retiredMu     sync.Mutex
+	healthChecker *service.HealthChecker
+	mux           *http.ServeMux
+	srv           *http.Server
 }
 
 func New(rs *service.RouterService, cfg *config.Config) *Server {
@@ -63,6 +64,10 @@ func New(rs *service.RouterService, cfg *config.Config) *Server {
 }
 
 func (s *Server) SetConfigPath(path string) { s.configPath = path }
+
+func (s *Server) SetHealthChecker(checker *service.HealthChecker) {
+	s.healthChecker = checker
+}
 
 func (s *Server) loadRouterService() *service.RouterService {
 	s.rsMu.RLock()
@@ -153,6 +158,10 @@ func (s *Server) adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 	s.cfgMu.Lock()
 	s.cfg = cfg
 	s.cfgMu.Unlock()
+
+	if s.healthChecker != nil {
+		s.healthChecker.Update(newRS, cfg.HealthCheck)
+	}
 
 	if oldStore != nil {
 		s.retiredMu.Lock()
@@ -276,11 +285,11 @@ func (s *Server) adminStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type keySummary struct {
-		ID         string `json:"id"`
-		ModelID    string `json:"model_id"`
-		Status     string `json:"status"`
-		Priority   int    `json:"priority"`
-		UsedToday  int    `json:"used_today"`
+		ID        string `json:"id"`
+		ModelID   string `json:"model_id"`
+		Status    string `json:"status"`
+		Priority  int    `json:"priority"`
+		UsedToday int    `json:"used_today"`
 	}
 
 	var keySummaries []keySummary
@@ -295,11 +304,11 @@ func (s *Server) adminStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"providers":   len(providers),
-		"models":      len(models),
-		"groups":      len(groups),
-		"keys_total":  len(keys),
-		"keys_active": len(keys) - cooldownCount - invalidCount - limitedCount - disabledCount,
+		"providers":     len(providers),
+		"models":        len(models),
+		"groups":        len(groups),
+		"keys_total":    len(keys),
+		"keys_active":   len(keys) - cooldownCount - invalidCount - limitedCount - disabledCount,
 		"keys_cooldown": cooldownCount,
 		"keys_invalid":  invalidCount,
 		"keys_limited":  limitedCount,
