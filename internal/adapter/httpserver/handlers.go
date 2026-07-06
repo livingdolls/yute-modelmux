@@ -66,6 +66,9 @@ func (s *Server) completionsHandler(w http.ResponseWriter, r *http.Request) {
 			w.Header().Add(k, v)
 		}
 	}
+	if traceID := service.GetTraceID(r.Context()); traceID != "" {
+		w.Header().Set("X-ModelMux-Route-Trace-ID", traceID)
+	}
 	w.WriteHeader(resp.StatusCode)
 	if err := copyWithFlush(w, resp.Body); err != nil {
 		rs.FinalizeStreamResult(r.Context(), err)
@@ -95,6 +98,9 @@ func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) 
 		for _, v := range values {
 			w.Header().Add(k, v)
 		}
+	}
+	if traceID := service.GetTraceID(r.Context()); traceID != "" {
+		w.Header().Set("X-ModelMux-Route-Trace-ID", traceID)
 	}
 	w.WriteHeader(resp.StatusCode)
 	if err := copyWithFlush(w, resp.Body); err != nil {

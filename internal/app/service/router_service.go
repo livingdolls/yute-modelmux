@@ -16,6 +16,7 @@ import (
 	"time"
 
 	providerclient "github.com/livingdolls/yute-modelmux/internal/adapter/provider"
+	"github.com/livingdolls/yute-modelmux/internal/ai"
 	"github.com/livingdolls/yute-modelmux/internal/config"
 	"github.com/livingdolls/yute-modelmux/internal/core/domain"
 	"github.com/livingdolls/yute-modelmux/internal/core/port/inbound"
@@ -29,6 +30,7 @@ const (
 	ctxKeyStreamResult ctxKey = iota
 	ctxKeyTokenTracker
 	ctxKeyRequestID
+	ctxKeyTraceID
 )
 
 func SetRequestID(ctx context.Context, id string) context.Context {
@@ -37,6 +39,15 @@ func SetRequestID(ctx context.Context, id string) context.Context {
 
 func GetRequestID(ctx context.Context) string {
 	id, _ := ctx.Value(ctxKeyRequestID).(string)
+	return id
+}
+
+func setTraceID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, ctxKeyTraceID, id)
+}
+
+func GetTraceID(ctx context.Context) string {
+	id, _ := ctx.Value(ctxKeyTraceID).(string)
 	return id
 }
 
@@ -129,6 +140,9 @@ type RouterService struct {
 	models       []domain.Model
 	groups       []domain.ModelGroup
 	keys         []domain.APIKey
+	aiClassifier *ai.Classifier
+	aiGuardrails *ai.Guardrails
+	aiTracer     *ai.RouteTracer
 }
 
 func NewRouterService(cfg *config.Config) (*RouterService, error) {
@@ -151,6 +165,9 @@ func newRouterService(cfg *config.Config, store storage.Storage, secretStore *se
 		secretStore:  secretStore,
 		rrIndex:      map[string]int{},
 		groupRRIndex: map[string]int{},
+		aiClassifier: ai.NewClassifier(),
+		aiGuardrails: ai.NewGuardrails(),
+		aiTracer:     ai.NewRouteTracer(),
 	}
 	providerTypes := map[string]domain.ProviderType{}
 	for _, p := range cfg.Providers {
@@ -520,23 +537,62 @@ func (s *RouterService) handleOpenAIRequest(ctx context.Context, req *http.Reque
 	if err != nil {
 		return nil, InvalidRequestBodyError(err.Error())
 	}
-	model, ok := s.modelByID(requestedID)
+
+	var traceID string
+	reroutedID := requestedID
+
+	if s.cfg.AI.Classifier.Enabled || s.cfg.AI.Guardrails.Enabled {
+		requestID := GetRequestID(ctx)
+		trace := s.aiTracer.StartTrace(requestID, requestedID)
+		traceID = trace.ID
+
+		if s.cfg.AI.Classifier.Enabled {
+			profile := s.aiClassifier.Classify(bodyBytes)
+			s.aiTracer.AddStep(traceID, "classifier", profile.TaskClass, "heuristic match", "")
+		}
+
+		if s.cfg.AI.Guardrails.Enabled {
+			result := s.aiGuardrails.Check(s.cfg.AI.Guardrails, bodyBytes)
+			s.aiTracer.AddStep(traceID, "guardrails", result.Action, result.Reason, "")
+			if !result.Allowed {
+				s.aiTracer.FinalizeTrace(traceID, "")
+				return nil, &ProxyError{
+					HTTPStatus: http.StatusBadRequest,
+					Type:       "modelmux_guardrail_blocked",
+					Code:       "guardrail_" + result.Action,
+					Message:    result.Reason,
+				}
+			}
+		}
+
+		s.aiTracer.FinalizeTrace(traceID, reroutedID)
+	}
+
+	model, ok := s.modelByID(reroutedID)
 	if ok {
 		if !model.Enabled {
-			return nil, DisabledError(fmt.Sprintf("model %s is disabled", requestedID))
+			return nil, DisabledError(fmt.Sprintf("model %s is disabled", reroutedID))
+		}
+		if traceID != "" {
+			ctx = setTraceID(ctx, traceID)
+			*req = *req.WithContext(ctx)
 		}
 		return s.handleModelRequest(ctx, req, bodyBytes, "", model, apiPath, "")
 	}
 
-	group, ok := s.groupByID(requestedID)
+	group, ok := s.groupByID(reroutedID)
 	if ok {
 		if !group.Enabled {
-			return nil, DisabledError(fmt.Sprintf("model group %s is disabled", requestedID))
+			return nil, DisabledError(fmt.Sprintf("model group %s is disabled", reroutedID))
+		}
+		if traceID != "" {
+			ctx = setTraceID(ctx, traceID)
+			*req = *req.WithContext(ctx)
 		}
 		return s.handleGroupRequest(ctx, req, bodyBytes, group, apiPath)
 	}
 
-	return nil, NotFoundError(fmt.Sprintf("unknown model or model group %s", requestedID))
+	return nil, NotFoundError(fmt.Sprintf("unknown model or model group %s", reroutedID))
 }
 
 func (s *RouterService) handleGroupRequest(ctx context.Context, req *http.Request, bodyBytes []byte, group domain.ModelGroup, apiPath string) (*http.Response, error) {
