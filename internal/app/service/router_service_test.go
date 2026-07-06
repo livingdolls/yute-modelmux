@@ -52,6 +52,11 @@ func (s *blockingLogStorage) GetRouteTraceByRequestID(string) (*storage.RouteTra
 	return nil, nil
 }
 
+func (s *blockingLogStorage) SaveChatSession(string, string) (int, error) { return 0, nil }
+func (s *blockingLogStorage) SaveChatMessage(int, string, string) error { return nil }
+func (s *blockingLogStorage) ListChatSessions() ([]storage.ChatSessionRecord, error) { return nil, nil }
+func (s *blockingLogStorage) GetChatMessages(int) ([]storage.ChatMessageRecord, error) { return nil, nil }
+
 func TestSelectKeyPrefersLowestPriority(t *testing.T) {
 	cfg := config.Default()
 	cfg.Keys = []config.KeyConfig{

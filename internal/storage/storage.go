@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -60,6 +61,21 @@ type RouteTraceRecord struct {
 	CreatedAt     string
 }
 
+type ChatSessionRecord struct {
+	ID        int
+	Name      string
+	Target    string
+	CreatedAt string
+}
+
+type ChatMessageRecord struct {
+	ID        int
+	SessionID int
+	Role      string
+	Content   string
+	CreatedAt string
+}
+
 type Storage interface {
 	SaveKeyRuntime(record KeyRuntimeRecord) error
 	LoadKeyRuntime() ([]KeyRuntimeRecord, error)
@@ -68,6 +84,10 @@ type Storage interface {
 	QueryRequestLogs(filter LogFilter) ([]RequestLogRecord, int, error)
 	SaveRouteTrace(record RouteTraceRecord) error
 	GetRouteTraceByRequestID(requestID string) (*RouteTraceRecord, error)
+	SaveChatSession(name, target string) (int, error)
+	SaveChatMessage(sessionID int, role, content string) error
+	ListChatSessions() ([]ChatSessionRecord, error)
+	GetChatMessages(sessionID int) ([]ChatMessageRecord, error)
 	Close() error
 }
 
@@ -169,6 +189,31 @@ func migrate(db *sql.DB) error {
 	}
 
 	_, err = db.Exec("CREATE INDEX IF NOT EXISTS idx_route_traces_request_id ON route_traces(request_id)")
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS chat_sessions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			target TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL DEFAULT ''
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS chat_messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id INTEGER NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT ''
+		)
+	`)
 	if err != nil {
 		return err
 	}
@@ -324,6 +369,56 @@ func (s *sqliteStore) GetRouteTraceByRequestID(requestID string) (*RouteTraceRec
 		return nil, err
 	}
 	return &r, nil
+}
+
+func (s *sqliteStore) SaveChatSession(name, target string) (int, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := s.db.Exec("INSERT INTO chat_sessions (name, target, created_at) VALUES (?, ?, ?)", name, target, now)
+	if err != nil {
+		return 0, err
+	}
+	id, err := result.LastInsertId()
+	return int(id), err
+}
+
+func (s *sqliteStore) SaveChatMessage(sessionID int, role, content string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.Exec("INSERT INTO chat_messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)", sessionID, role, content, now)
+	return err
+}
+
+func (s *sqliteStore) ListChatSessions() ([]ChatSessionRecord, error) {
+	rows, err := s.db.Query("SELECT id, name, target, created_at FROM chat_sessions ORDER BY id DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var records []ChatSessionRecord
+	for rows.Next() {
+		var r ChatSessionRecord
+		if err := rows.Scan(&r.ID, &r.Name, &r.Target, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		records = append(records, r)
+	}
+	return records, rows.Err()
+}
+
+func (s *sqliteStore) GetChatMessages(sessionID int) ([]ChatMessageRecord, error) {
+	rows, err := s.db.Query("SELECT id, session_id, role, content, created_at FROM chat_messages WHERE session_id = ? ORDER BY id ASC", sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var records []ChatMessageRecord
+	for rows.Next() {
+		var r ChatMessageRecord
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.Role, &r.Content, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		records = append(records, r)
+	}
+	return records, rows.Err()
 }
 
 func (s *sqliteStore) LoadRequestLogs() ([]RequestLogRecord, error) {
