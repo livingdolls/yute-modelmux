@@ -3,6 +3,7 @@ package eval
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -96,10 +97,10 @@ func RunSuite(ctx context.Context, suite *Suite, cfg *config.Config) (*RunResult
 			if timeout <= 0 {
 				timeout = 30 * time.Second
 			}
-			ctx, cancel := context.WithTimeout(ctx, timeout)
-			defer cancel()
+			caseCtx, cancel := context.WithTimeout(ctx, timeout)
 
-			result := runCase(ctx, router, c, targetID)
+			result := runCase(caseCtx, router, c, targetID)
+			cancel()
 			result.TargetModel = target.Model
 			result.TargetGroup = target.Group
 			run.Results = append(run.Results, result)
@@ -113,7 +114,9 @@ func RunSuite(ctx context.Context, suite *Suite, cfg *config.Config) (*RunResult
 func runCase(ctx context.Context, router *service.RouterService, c Case, targetID string) CaseResult {
 	result := CaseResult{CaseName: c.Name}
 
-	body := fmt.Sprintf(`{"model":"%s","messages":[{"role":"user","content":"%s"}]}`, targetID, c.Input)
+	modelBytes, _ := json.Marshal(targetID)
+	inputBytes, _ := json.Marshal(c.Input)
+	body := fmt.Sprintf(`{"model":%s,"messages":[{"role":"user","content":%s}]}`, string(modelBytes), string(inputBytes))
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 

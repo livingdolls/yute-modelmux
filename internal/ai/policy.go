@@ -84,6 +84,14 @@ func matchCapabilities(required []string, profile domain.RequestProfile) bool {
 			if !profile.IsStreaming {
 				return false
 			}
+		case "json_mode":
+			if profile.TaskClass != "json_extraction" {
+				return false
+			}
+		case "chat":
+			return true
+		case "completions":
+			return true
 		}
 	}
 	return true

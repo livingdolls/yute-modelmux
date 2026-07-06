@@ -542,43 +542,67 @@ func (s *RouterService) handleOpenAIRequest(ctx context.Context, req *http.Reque
 
 	var traceID string
 	reroutedID := requestedID
+	var fallbackGroup string
 
-	if s.cfg.AI.Classifier.Enabled || s.cfg.AI.Guardrails.Enabled || len(s.cfg.AI.RoutingRules) > 0 {
-		requestID := GetRequestID(ctx)
-		trace := s.aiTracer.StartTrace(requestID, requestedID)
-		traceID = trace.ID
+	if s.cfg.AI.Enabled {
+		traceEnabled := s.cfg.AI.RouteTrace.Enabled
+		classifierEnabled := s.cfg.AI.Classifier.Enabled
+		guardrailsEnabled := s.cfg.AI.Guardrails.Enabled
+		hasRoutingRules := len(s.cfg.AI.RoutingRules) > 0
 
-		var profile domain.RequestProfile
+		if traceEnabled || classifierEnabled || guardrailsEnabled || hasRoutingRules {
+			requestID := GetRequestID(ctx)
+			var trace *domain.RouteTrace
+			if traceEnabled {
+				trace = s.aiTracer.StartTrace(requestID, requestedID)
+				traceID = trace.ID
+			}
 
-		if s.cfg.AI.Classifier.Enabled {
-			profile = s.aiClassifier.Classify(bodyBytes)
-			s.aiTracer.AddStep(traceID, "classifier", profile.TaskClass, "heuristic match", "")
-		}
+			var profile domain.RequestProfile
 
-		if s.cfg.AI.Guardrails.Enabled {
-			result := s.aiGuardrails.Check(s.cfg.AI.Guardrails, bodyBytes)
-			s.aiTracer.AddStep(traceID, "guardrails", result.Action, result.Reason, "")
-			if !result.Allowed {
-				s.aiTracer.FinalizeTrace(traceID, "")
-				return nil, &ProxyError{
-					HTTPStatus: http.StatusBadRequest,
-					Type:       "modelmux_guardrail_blocked",
-					Code:       "guardrail_" + result.Action,
-					Message:    result.Reason,
+			if classifierEnabled {
+				profile = s.aiClassifier.Classify(bodyBytes)
+				if trace != nil {
+					s.aiTracer.AddStep(traceID, "classifier", profile.TaskClass, "heuristic match", "")
 				}
 			}
-		}
 
-		if len(s.cfg.AI.RoutingRules) > 0 {
-			decision := s.aiPolicy.Evaluate(s.cfg.AI.RoutingRules, profile, apiPath)
-			if decision.Matched {
-				reroutedID = decision.ReroutedID
-				s.aiTracer.AddStep(traceID, "routing", decision.ReroutedID,
-					s.aiPolicy.RuleTraceSummary(decision), "")
+			if guardrailsEnabled {
+				result := s.aiGuardrails.Check(s.cfg.AI.Guardrails, bodyBytes)
+				if trace != nil {
+					s.aiTracer.AddStep(traceID, "guardrails", result.Action, result.Reason, "")
+				}
+				if !result.Allowed {
+					if trace != nil {
+						s.aiTracer.FinalizeTrace(traceID, "")
+						s.saveTraceIfEnabled(traceID)
+					}
+					return nil, &ProxyError{
+						HTTPStatus: http.StatusBadRequest,
+						Type:       "modelmux_guardrail_blocked",
+						Code:       "guardrail_" + result.Action,
+						Message:    result.Reason,
+					}
+				}
+			}
+
+			if hasRoutingRules {
+				decision := s.aiPolicy.Evaluate(s.cfg.AI.RoutingRules, profile, apiPath)
+				if decision.Matched {
+					reroutedID = decision.ReroutedID
+					fallbackGroup = decision.FallbackGroup
+					if trace != nil {
+						s.aiTracer.AddStep(traceID, "routing", decision.ReroutedID,
+							s.aiPolicy.RuleTraceSummary(decision), "")
+					}
+				}
+			}
+
+			if trace != nil {
+				s.aiTracer.FinalizeTrace(traceID, reroutedID)
+				s.saveTraceIfEnabled(traceID)
 			}
 		}
-
-		s.aiTracer.FinalizeTrace(traceID, reroutedID)
 	}
 
 	model, ok := s.modelByID(reroutedID)
@@ -586,7 +610,7 @@ func (s *RouterService) handleOpenAIRequest(ctx context.Context, req *http.Reque
 		if !model.Enabled {
 			return nil, DisabledError(fmt.Sprintf("model %s is disabled", reroutedID))
 		}
-		if traceID != "" {
+		if traceID != "" && s.cfg.AI.RouteTrace.IncludeResponseHeader {
 			ctx = setTraceID(ctx, traceID)
 			*req = *req.WithContext(ctx)
 		}
@@ -598,11 +622,22 @@ func (s *RouterService) handleOpenAIRequest(ctx context.Context, req *http.Reque
 		if !group.Enabled {
 			return nil, DisabledError(fmt.Sprintf("model group %s is disabled", reroutedID))
 		}
-		if traceID != "" {
+		if traceID != "" && s.cfg.AI.RouteTrace.IncludeResponseHeader {
 			ctx = setTraceID(ctx, traceID)
 			*req = *req.WithContext(ctx)
 		}
 		return s.handleGroupRequest(ctx, req, bodyBytes, group, apiPath)
+	}
+
+	if fallbackGroup != "" {
+		group, ok := s.groupByID(fallbackGroup)
+		if ok && group.Enabled {
+			if traceID != "" && s.cfg.AI.RouteTrace.IncludeResponseHeader {
+				ctx = setTraceID(ctx, traceID)
+				*req = *req.WithContext(ctx)
+			}
+			return s.handleGroupRequest(ctx, req, bodyBytes, group, apiPath)
+		}
 	}
 
 	return nil, NotFoundError(fmt.Sprintf("unknown model or model group %s", reroutedID))
@@ -971,6 +1006,25 @@ func (s *RouterService) FinalizeStreamResult(ctx context.Context, copyErr error)
 	s.mu.Unlock()
 
 	_ = s.MarkKeyResult(ctx, info.KeyID, result)
+}
+
+func (s *RouterService) saveTraceIfEnabled(traceID string) {
+	if s.store == nil {
+		return
+	}
+	trace, ok := s.aiTracer.GetTrace(traceID)
+	if !ok {
+		return
+	}
+	stepsBytes, _ := json.Marshal(trace.Steps)
+	_ = s.store.SaveRouteTrace(storage.RouteTraceRecord{
+		ID:            trace.ID,
+		RequestID:     trace.RequestID,
+		OriginalModel: trace.OriginalModel,
+		ReroutedModel: trace.ReroutedModel,
+		StepsJSON:     string(stepsBytes),
+		CreatedAt:     trace.CreatedAt.Format(time.RFC3339),
+	})
 }
 
 func (s *RouterService) TestKey(ctx context.Context, keyID string) error {

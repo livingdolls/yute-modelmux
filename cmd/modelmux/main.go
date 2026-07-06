@@ -1026,6 +1026,28 @@ func newRouterServiceWithSecret(cfg *config.Config, store storage.Storage, secSt
 	return service.NewRouterService(cfg)
 }
 
+func createFullRouter(cfg *config.Config) (*service.RouterService, storage.Storage, *secret.Store, error) {
+	store, err := createStorage(cfg)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	secStore, err := createSecretStore(cfg)
+	if err != nil {
+		if store != nil {
+			store.Close()
+		}
+		return nil, nil, nil, err
+	}
+	router, err := service.NewRouterServiceWithSecret(cfg, store, secStore)
+	if err != nil {
+		if store != nil {
+			store.Close()
+		}
+		return nil, nil, nil, err
+	}
+	return router, store, secStore, nil
+}
+
 func readPassword() (string, error) {
 	fd := int(syscall.Stdin)
 	bytePassword, err := term.ReadPassword(fd)
@@ -1239,9 +1261,12 @@ func promptCommands(configPath *string) *cobra.Command {
 				return fmt.Errorf("no model specified; use --model flag or set model in template")
 			}
 
-			router, err := service.NewRouterService(cfg)
+			router, store, _, err := createFullRouter(cfg)
 			if err != nil {
 				return err
+			}
+			if store != nil {
+				defer store.Close()
 			}
 			body := buildChatBody(model, rendered.System, rendered.User)
 			req, _ := http.NewRequestWithContext(cmd.Context(), http.MethodPost, "http://localhost/v1/chat/completions", strings.NewReader(body))
@@ -1263,9 +1288,15 @@ func promptCommands(configPath *string) *cobra.Command {
 
 func buildChatBody(model, system, user string) string {
 	if system != "" {
-		return fmt.Sprintf(`{"model":"%s","messages":[{"role":"system","content":"%s"},{"role":"user","content":"%s"}]}`, model, system, user)
+		return fmt.Sprintf(`{"model":%s,"messages":[{"role":"system","content":%s},{"role":"user","content":%s}]}`,
+			jsonString(model), jsonString(system), jsonString(user))
 	}
-	return fmt.Sprintf(`{"model":"%s","messages":[{"role":"user","content":"%s"}]}`, model, user)
+	return fmt.Sprintf(`{"model":%s,"messages":[{"role":"user","content":%s}]}`, jsonString(model), jsonString(user))
+}
+
+func jsonString(s string) string {
+	data, _ := json.Marshal(s)
+	return string(data)
 }
 
 func chatCommand(configPath *string) *cobra.Command {
@@ -1292,10 +1323,13 @@ func chatCommand(configPath *string) *cobra.Command {
 				return fmt.Errorf("no input; pipe a message to stdin")
 			}
 
-			body := fmt.Sprintf(`{"model":"%s","messages":[{"role":"user","content":"%s"}]}`, chatModel, string(bytes.TrimSpace(input)))
-			router, err := service.NewRouterService(cfg)
+			body := fmt.Sprintf(`{"model":%s,"messages":[{"role":"user","content":%s}]}`, jsonString(chatModel), jsonString(string(bytes.TrimSpace(input))))
+			router, store, _, err := createFullRouter(cfg)
 			if err != nil {
 				return err
+			}
+			if store != nil {
+				defer store.Close()
 			}
 
 			req, _ := http.NewRequestWithContext(cmd.Context(), http.MethodPost, "http://localhost/v1/chat/completions", strings.NewReader(body))
@@ -1310,18 +1344,11 @@ func chatCommand(configPath *string) *cobra.Command {
 				return err
 			}
 
-			if sessionName != "" {
-				store, err := createStorage(cfg)
-				if err != nil {
-					return err
-				}
-				if store != nil {
-					defer store.Close()
-					id, err := store.SaveChatSession(sessionName, chatModel)
-					if err == nil {
-						_ = store.SaveChatMessage(id, "user", string(bytes.TrimSpace(input)))
-						_ = store.SaveChatMessage(id, "assistant", string(respBody))
-					}
+			if sessionName != "" && store != nil {
+				id, err := store.SaveChatSession(sessionName, chatModel)
+				if err == nil {
+					_ = store.SaveChatMessage(id, "user", string(bytes.TrimSpace(input)))
+					_ = store.SaveChatMessage(id, "assistant", string(respBody))
 				}
 			}
 
