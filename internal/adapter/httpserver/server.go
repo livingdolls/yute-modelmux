@@ -54,6 +54,7 @@ func New(rs *service.RouterService, cfg *config.Config) *Server {
 	mux.HandleFunc("POST /admin/keys/{id}/disable", s.adminDisableKeyHandler)
 	mux.HandleFunc("POST /admin/keys/{id}/test", s.adminTestKeyHandler)
 	mux.HandleFunc("GET /admin/status", s.adminStatusHandler)
+	mux.HandleFunc("GET /admin/traces/{request_id}", s.adminTraceHandler)
 	s.srv = &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:      s.requestIDMiddleware(s.authMiddleware(mux)),
@@ -79,6 +80,10 @@ func (s *Server) loadConfig() *config.Config {
 	s.cfgMu.RLock()
 	defer s.cfgMu.RUnlock()
 	return s.cfg
+}
+
+func (s *Server) loadStore() storage.Storage {
+	return s.store
 }
 
 func expandHome(path string) string {
@@ -327,6 +332,39 @@ func isLocalAddr(remoteAddr string) bool {
 		return true
 	}
 	return false
+}
+
+func (s *Server) adminTraceHandler(w http.ResponseWriter, r *http.Request) {
+	requestID := r.PathValue("request_id")
+	if requestID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "missing request_id"})
+		return
+	}
+
+	store := s.loadStore()
+	if store == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "storage not configured"})
+		return
+	}
+
+	trace, err := store.GetRouteTraceByRequestID(requestID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if trace == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "trace not found"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":             trace.ID,
+		"request_id":     trace.RequestID,
+		"original_model": trace.OriginalModel,
+		"rerouted_model": trace.ReroutedModel,
+		"steps_json":     trace.StepsJSON,
+		"created_at":     trace.CreatedAt,
+	})
 }
 
 func (s *Server) requestIDMiddleware(next http.Handler) http.Handler {
