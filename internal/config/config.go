@@ -16,7 +16,8 @@ type Config struct {
 	Cooldown    CooldownConfig     `yaml:"cooldown"`
 	Retry       RetryConfig        `yaml:"retry"`
 	HealthCheck HealthCheckConfig  `yaml:"health_check"`
-	Providers   []ProviderConfig   `yaml:"providers"`
+	AI         AIConfig            `yaml:"ai"`
+	Providers  []ProviderConfig    `yaml:"providers"`
 	Models      []ModelConfig      `yaml:"models"`
 	ModelGroups []ModelGroupConfig `yaml:"model_groups"`
 	Keys        []KeyConfig        `yaml:"keys"`
@@ -58,6 +59,28 @@ type HealthCheckConfig struct {
 	Enabled         bool `yaml:"enabled"`
 	IntervalSeconds int  `yaml:"interval_seconds"`
 	TimeoutSeconds  int  `yaml:"timeout_seconds"`
+}
+
+type AIConfig struct {
+	Enabled        bool               `yaml:"enabled"`
+	Classifier     ClassifierConfig   `yaml:"classifier"`
+	Guardrails     GuardrailConfig    `yaml:"guardrails"`
+	RouteTrace     RouteTraceConfig   `yaml:"route_trace"`
+}
+
+type ClassifierConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Mode    string `yaml:"mode"`
+}
+
+type GuardrailConfig struct {
+	Enabled        bool `yaml:"enabled"`
+	MaxPromptChars int  `yaml:"max_prompt_chars"`
+}
+
+type RouteTraceConfig struct {
+	Enabled                  bool `yaml:"enabled"`
+	IncludeResponseHeader    bool `yaml:"include_response_header"`
 }
 
 type ProviderConfig struct {
@@ -148,6 +171,12 @@ func Default() *Config {
 		Cooldown:    CooldownConfig{RateLimitSeconds: 300, ServerErrorSeconds: 60, TimeoutSeconds: 60},
 		Retry:       RetryConfig{MaxRetryPerKey: 1, MaxTotalAttempts: 5, BackoffMilliseconds: []int{300, 700, 1500}},
 		HealthCheck: HealthCheckConfig{Enabled: false, IntervalSeconds: 300, TimeoutSeconds: 15},
+		AI: AIConfig{
+			Enabled:    false,
+			Classifier: ClassifierConfig{Enabled: false, Mode: "heuristic"},
+			Guardrails: GuardrailConfig{Enabled: false, MaxPromptChars: 0},
+			RouteTrace: RouteTraceConfig{Enabled: false, IncludeResponseHeader: false},
+		},
 		Providers:   []ProviderConfig{{ID: "mimo", Name: "Xiaomi MiMo", Type: "openai-compatible", BaseURL: "https://api.example.com/v1", AuthType: "bearer", TimeoutSeconds: 120, Enabled: true}},
 		Models:      []ModelConfig{{ID: "mimo-v2.5-pro", ProviderID: "mimo", ModelName: "mimo-v2.5-pro", Strategy: "failover", Enabled: true}},
 		ModelGroups: []ModelGroupConfig{{ID: "high-price", Name: "High Price Models", Strategy: "failover", Enabled: true, Members: []ModelGroupMemberConfig{{ModelID: "mimo-v2.5-pro", Priority: 1, Weight: 1, Enabled: true}}}},
