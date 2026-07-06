@@ -143,6 +143,7 @@ type RouterService struct {
 	aiClassifier *ai.Classifier
 	aiGuardrails *ai.Guardrails
 	aiTracer     *ai.RouteTracer
+	aiPolicy     *ai.RoutePolicy
 }
 
 func NewRouterService(cfg *config.Config) (*RouterService, error) {
@@ -168,6 +169,7 @@ func newRouterService(cfg *config.Config, store storage.Storage, secretStore *se
 		aiClassifier: ai.NewClassifier(),
 		aiGuardrails: ai.NewGuardrails(),
 		aiTracer:     ai.NewRouteTracer(),
+		aiPolicy:     ai.NewRoutePolicy(),
 	}
 	providerTypes := map[string]domain.ProviderType{}
 	for _, p := range cfg.Providers {
@@ -541,13 +543,15 @@ func (s *RouterService) handleOpenAIRequest(ctx context.Context, req *http.Reque
 	var traceID string
 	reroutedID := requestedID
 
-	if s.cfg.AI.Classifier.Enabled || s.cfg.AI.Guardrails.Enabled {
+	if s.cfg.AI.Classifier.Enabled || s.cfg.AI.Guardrails.Enabled || len(s.cfg.AI.RoutingRules) > 0 {
 		requestID := GetRequestID(ctx)
 		trace := s.aiTracer.StartTrace(requestID, requestedID)
 		traceID = trace.ID
 
+		var profile domain.RequestProfile
+
 		if s.cfg.AI.Classifier.Enabled {
-			profile := s.aiClassifier.Classify(bodyBytes)
+			profile = s.aiClassifier.Classify(bodyBytes)
 			s.aiTracer.AddStep(traceID, "classifier", profile.TaskClass, "heuristic match", "")
 		}
 
@@ -562,6 +566,15 @@ func (s *RouterService) handleOpenAIRequest(ctx context.Context, req *http.Reque
 					Code:       "guardrail_" + result.Action,
 					Message:    result.Reason,
 				}
+			}
+		}
+
+		if len(s.cfg.AI.RoutingRules) > 0 {
+			decision := s.aiPolicy.Evaluate(s.cfg.AI.RoutingRules, profile, apiPath)
+			if decision.Matched {
+				reroutedID = decision.ReroutedID
+				s.aiTracer.AddStep(traceID, "routing", decision.ReroutedID,
+					s.aiPolicy.RuleTraceSummary(decision), "")
 			}
 		}
 
