@@ -46,6 +46,12 @@ func (s *blockingLogStorage) QueryRequestLogs(storage.LogFilter) ([]storage.Requ
 }
 func (s *blockingLogStorage) Close() error { return nil }
 
+func (s *blockingLogStorage) SaveRouteTrace(storage.RouteTraceRecord) error { return nil }
+
+func (s *blockingLogStorage) GetRouteTraceByRequestID(string) (*storage.RouteTraceRecord, error) {
+	return nil, nil
+}
+
 func TestSelectKeyPrefersLowestPriority(t *testing.T) {
 	cfg := config.Default()
 	cfg.Keys = []config.KeyConfig{

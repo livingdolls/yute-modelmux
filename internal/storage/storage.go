@@ -51,12 +51,23 @@ type LogFilter struct {
 	Offset     int
 }
 
+type RouteTraceRecord struct {
+	ID            string
+	RequestID     string
+	OriginalModel string
+	ReroutedModel string
+	StepsJSON     string
+	CreatedAt     string
+}
+
 type Storage interface {
 	SaveKeyRuntime(record KeyRuntimeRecord) error
 	LoadKeyRuntime() ([]KeyRuntimeRecord, error)
 	SaveRequestLog(record RequestLogRecord) error
 	LoadRequestLogs() ([]RequestLogRecord, error)
 	QueryRequestLogs(filter LogFilter) ([]RequestLogRecord, int, error)
+	SaveRouteTrace(record RouteTraceRecord) error
+	GetRouteTraceByRequestID(requestID string) (*RouteTraceRecord, error)
 	Close() error
 }
 
@@ -139,6 +150,25 @@ func migrate(db *sql.DB) error {
 	}
 
 	_, err = db.Exec("CREATE INDEX IF NOT EXISTS idx_request_logs_model_id ON request_logs(model_id)")
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS route_traces (
+			id TEXT PRIMARY KEY,
+			request_id TEXT NOT NULL,
+			original_model TEXT NOT NULL DEFAULT '',
+			rerouted_model TEXT NOT NULL DEFAULT '',
+			steps_json TEXT NOT NULL DEFAULT '[]',
+			created_at TEXT NOT NULL DEFAULT ''
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec("CREATE INDEX IF NOT EXISTS idx_route_traces_request_id ON route_traces(request_id)")
 	if err != nil {
 		return err
 	}
@@ -273,6 +303,27 @@ func (s *sqliteStore) QueryRequestLogs(filter LogFilter) ([]RequestLogRecord, in
 		records = append(records, r)
 	}
 	return records, total, rows.Err()
+}
+
+func (s *sqliteStore) SaveRouteTrace(record RouteTraceRecord) error {
+	_, err := s.db.Exec(`
+		INSERT INTO route_traces (id, request_id, original_model, rerouted_model, steps_json, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, record.ID, record.RequestID, record.OriginalModel, record.ReroutedModel, record.StepsJSON, record.CreatedAt)
+	return err
+}
+
+func (s *sqliteStore) GetRouteTraceByRequestID(requestID string) (*RouteTraceRecord, error) {
+	row := s.db.QueryRow("SELECT id, request_id, original_model, rerouted_model, steps_json, created_at FROM route_traces WHERE request_id = ? ORDER BY created_at DESC LIMIT 1", requestID)
+	var r RouteTraceRecord
+	err := row.Scan(&r.ID, &r.RequestID, &r.OriginalModel, &r.ReroutedModel, &r.StepsJSON, &r.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &r, nil
 }
 
 func (s *sqliteStore) LoadRequestLogs() ([]RequestLogRecord, error) {
