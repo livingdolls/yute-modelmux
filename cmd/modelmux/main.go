@@ -17,6 +17,7 @@ import (
 	"github.com/livingdolls/yute-modelmux/internal/app/service"
 	"github.com/livingdolls/yute-modelmux/internal/config"
 	"github.com/livingdolls/yute-modelmux/internal/core/port/inbound"
+	plib "github.com/livingdolls/yute-modelmux/internal/prompt"
 	"github.com/livingdolls/yute-modelmux/internal/secret"
 	"github.com/livingdolls/yute-modelmux/internal/storage"
 	"github.com/spf13/cobra"
@@ -852,6 +853,7 @@ to the new key before running this command.`,
 		}
 	}))
 	rootCmd.AddCommand(aiCommands(&configPath))
+	rootCmd.AddCommand(promptCommands(&configPath))
 
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "start",
@@ -1125,4 +1127,139 @@ func aiCommands(configPath *string) *cobra.Command {
 	aiCmd.AddCommand(doctorCmd)
 
 	return aiCmd
+}
+
+func promptCommands(configPath *string) *cobra.Command {
+	var promptModel string
+
+	cmd := &cobra.Command{Use: "prompt", Short: "Prompt template management"}
+
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List available prompt templates",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(*configPath)
+			if err != nil {
+				return err
+			}
+			dir := cfg.AI.Prompts.Dir
+			if dir == "" {
+				return fmt.Errorf("ai.prompts.dir is not configured")
+			}
+			loader := plib.NewLoader(dir)
+			templates, err := loader.LoadAll()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-15s %s\n", "NAME", "MODEL", "DESCRIPTION")
+			fmt.Fprintln(cmd.OutOrStdout(), strings.Repeat("-", 80))
+			for _, tmpl := range templates {
+				model := tmpl.Model
+				if model == "" {
+					model = "(default)"
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-15s %s\n", tmpl.Name, model, tmpl.Description)
+			}
+			return nil
+		},
+	}
+	cmd.AddCommand(listCmd)
+
+	showCmd := &cobra.Command{
+		Use:   "show <name>",
+		Short: "Show a prompt template",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(*configPath)
+			if err != nil {
+				return err
+			}
+			dir := cfg.AI.Prompts.Dir
+			if dir == "" {
+				return fmt.Errorf("ai.prompts.dir is not configured")
+			}
+			loader := plib.NewLoader(dir)
+			tmpl, err := loader.FindByName(args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Name: %s\n", tmpl.Name)
+			fmt.Fprintf(cmd.OutOrStdout(), "Description: %s\n", tmpl.Description)
+			if tmpl.Model != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Model: %s\n", tmpl.Model)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "System: %s\n", tmpl.System)
+			fmt.Fprintf(cmd.OutOrStdout(), "Template: %s\n", tmpl.Template)
+			return nil
+		},
+	}
+	cmd.AddCommand(showCmd)
+
+	runCmd := &cobra.Command{
+		Use:   "run <name>",
+		Short: "Run a prompt template through the router",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(*configPath)
+			if err != nil {
+				return err
+			}
+			dir := cfg.AI.Prompts.Dir
+			if dir == "" {
+				return fmt.Errorf("ai.prompts.dir is not configured")
+			}
+			loader := plib.NewLoader(dir)
+			tmpl, err := loader.FindByName(args[0])
+			if err != nil {
+				return err
+			}
+
+			input, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return err
+			}
+			if len(input) == 0 {
+				return fmt.Errorf("no input data; pipe content to stdin")
+			}
+
+			rendered, err := tmpl.Render(string(input))
+			if err != nil {
+				return err
+			}
+
+			model := rendered.Model
+			if model == "" {
+				model = promptModel
+			}
+			if model == "" {
+				return fmt.Errorf("no model specified; use --model flag or set model in template")
+			}
+
+			router, err := service.NewRouterService(cfg)
+			if err != nil {
+				return err
+			}
+			body := buildChatBody(model, rendered.System, rendered.User)
+			req, _ := http.NewRequestWithContext(cmd.Context(), http.MethodPost, "http://localhost/v1/chat/completions", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := router.HandleChatCompletion(cmd.Context(), req)
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+			io.Copy(cmd.OutOrStdout(), resp.Body)
+			return nil
+		},
+	}
+	runCmd.Flags().StringVar(&promptModel, "model", "", "model ID or group to route request through")
+	cmd.AddCommand(runCmd)
+
+	return cmd
+}
+
+func buildChatBody(model, system, user string) string {
+	if system != "" {
+		return fmt.Sprintf(`{"model":"%s","messages":[{"role":"system","content":"%s"},{"role":"user","content":"%s"}]}`, model, system, user)
+	}
+	return fmt.Sprintf(`{"model":"%s","messages":[{"role":"user","content":"%s"}]}`, model, user)
 }
