@@ -612,6 +612,10 @@ func (s *RouterService) handleOpenAIRequest(ctx context.Context, req *http.Reque
 	model, ok := s.modelByID(reroutedID)
 	if ok {
 		if !model.Enabled {
+			if traceID != "" && s.cfg.AI.RouteTrace.IncludeResponseHeader {
+				ctx = setTraceID(ctx, traceID)
+				*req = *req.WithContext(ctx)
+			}
 			return nil, DisabledError(fmt.Sprintf("model %s is disabled", reroutedID))
 		}
 		if traceID != "" && s.cfg.AI.RouteTrace.IncludeResponseHeader {
@@ -624,6 +628,10 @@ func (s *RouterService) handleOpenAIRequest(ctx context.Context, req *http.Reque
 	group, ok := s.groupByID(reroutedID)
 	if ok {
 		if !group.Enabled {
+			if traceID != "" && s.cfg.AI.RouteTrace.IncludeResponseHeader {
+				ctx = setTraceID(ctx, traceID)
+				*req = *req.WithContext(ctx)
+			}
 			return nil, DisabledError(fmt.Sprintf("model group %s is disabled", reroutedID))
 		}
 		if traceID != "" && s.cfg.AI.RouteTrace.IncludeResponseHeader {
@@ -648,6 +656,10 @@ func (s *RouterService) handleOpenAIRequest(ctx context.Context, req *http.Reque
 		}
 	}
 
+	if traceID != "" && s.cfg.AI.RouteTrace.IncludeResponseHeader {
+		ctx = setTraceID(ctx, traceID)
+		*req = *req.WithContext(ctx)
+	}
 	return nil, NotFoundError(fmt.Sprintf("unknown model or model group %s", reroutedID))
 }
 
