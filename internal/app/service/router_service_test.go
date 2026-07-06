@@ -56,6 +56,10 @@ func (s *blockingLogStorage) SaveChatSession(string, string) (int, error) { retu
 func (s *blockingLogStorage) SaveChatMessage(int, string, string) error { return nil }
 func (s *blockingLogStorage) ListChatSessions() ([]storage.ChatSessionRecord, error) { return nil, nil }
 func (s *blockingLogStorage) GetChatMessages(int) ([]storage.ChatMessageRecord, error) { return nil, nil }
+func (s *blockingLogStorage) SaveEvalRun(storage.EvalRunRecord) error { return nil }
+func (s *blockingLogStorage) SaveEvalResult(storage.EvalResultRecord) error { return nil }
+func (s *blockingLogStorage) ListEvalRuns() ([]storage.EvalRunRecord, error) { return nil, nil }
+func (s *blockingLogStorage) GetEvalResults(string) ([]storage.EvalResultRecord, error) { return nil, nil }
 
 func TestSelectKeyPrefersLowestPriority(t *testing.T) {
 	cfg := config.Default()

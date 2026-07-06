@@ -76,6 +76,26 @@ type ChatMessageRecord struct {
 	CreatedAt string
 }
 
+type EvalRunRecord struct {
+	ID         string
+	SuiteName  string
+	StartedAt  string
+	FinishedAt string
+	TotalCases int
+}
+
+type EvalResultRecord struct {
+	ID           int
+	RunID        string
+	CaseName     string
+	TargetModel  string
+	TargetGroup  string
+	StatusCode   int
+	LatencyMs    int64
+	ResponseHash string
+	Error        string
+}
+
 type Storage interface {
 	SaveKeyRuntime(record KeyRuntimeRecord) error
 	LoadKeyRuntime() ([]KeyRuntimeRecord, error)
@@ -88,6 +108,10 @@ type Storage interface {
 	SaveChatMessage(sessionID int, role, content string) error
 	ListChatSessions() ([]ChatSessionRecord, error)
 	GetChatMessages(sessionID int) ([]ChatMessageRecord, error)
+	SaveEvalRun(record EvalRunRecord) error
+	SaveEvalResult(record EvalResultRecord) error
+	ListEvalRuns() ([]EvalRunRecord, error)
+	GetEvalResults(runID string) ([]EvalResultRecord, error)
 	Close() error
 }
 
@@ -212,6 +236,36 @@ func migrate(db *sql.DB) error {
 			role TEXT NOT NULL,
 			content TEXT NOT NULL,
 			created_at TEXT NOT NULL DEFAULT ''
+		)
+	`)
+		if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS eval_runs (
+			id TEXT PRIMARY KEY,
+			suite_name TEXT NOT NULL,
+			started_at TEXT NOT NULL DEFAULT '',
+			finished_at TEXT NOT NULL DEFAULT '',
+			total_cases INTEGER NOT NULL DEFAULT 0
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS eval_results (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			run_id TEXT NOT NULL,
+			case_name TEXT NOT NULL DEFAULT '',
+			target_model TEXT NOT NULL DEFAULT '',
+			target_group TEXT NOT NULL DEFAULT '',
+			status_code INTEGER NOT NULL DEFAULT 0,
+			latency_ms INTEGER NOT NULL DEFAULT 0,
+			response_hash TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT ''
 		)
 	`)
 	if err != nil {
@@ -432,6 +486,52 @@ func (s *sqliteStore) LoadRequestLogs() ([]RequestLogRecord, error) {
 	for rows.Next() {
 		var r RequestLogRecord
 		if err := rows.Scan(&r.ID, &r.GroupID, &r.ModelID, &r.ProviderID, &r.KeyID, &r.StatusCode, &r.Error, &r.LatencyMs, &r.TokenInput, &r.TokenOutput, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		records = append(records, r)
+	}
+	return records, rows.Err()
+}
+
+func (s *sqliteStore) SaveEvalRun(record EvalRunRecord) error {
+	_, err := s.db.Exec("INSERT INTO eval_runs (id, suite_name, started_at, finished_at, total_cases) VALUES (?, ?, ?, ?, ?)",
+		record.ID, record.SuiteName, record.StartedAt, record.FinishedAt, record.TotalCases)
+	return err
+}
+
+func (s *sqliteStore) SaveEvalResult(record EvalResultRecord) error {
+	_, err := s.db.Exec("INSERT INTO eval_results (run_id, case_name, target_model, target_group, status_code, latency_ms, response_hash, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		record.RunID, record.CaseName, record.TargetModel, record.TargetGroup, record.StatusCode, record.LatencyMs, record.ResponseHash, record.Error)
+	return err
+}
+
+func (s *sqliteStore) ListEvalRuns() ([]EvalRunRecord, error) {
+	rows, err := s.db.Query("SELECT id, suite_name, started_at, finished_at, total_cases FROM eval_runs ORDER BY id DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var records []EvalRunRecord
+	for rows.Next() {
+		var r EvalRunRecord
+		if err := rows.Scan(&r.ID, &r.SuiteName, &r.StartedAt, &r.FinishedAt, &r.TotalCases); err != nil {
+			return nil, err
+		}
+		records = append(records, r)
+	}
+	return records, rows.Err()
+}
+
+func (s *sqliteStore) GetEvalResults(runID string) ([]EvalResultRecord, error) {
+	rows, err := s.db.Query("SELECT id, run_id, case_name, target_model, target_group, status_code, latency_ms, response_hash, error FROM eval_results WHERE run_id = ? ORDER BY id ASC", runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var records []EvalResultRecord
+	for rows.Next() {
+		var r EvalResultRecord
+		if err := rows.Scan(&r.ID, &r.RunID, &r.CaseName, &r.TargetModel, &r.TargetGroup, &r.StatusCode, &r.LatencyMs, &r.ResponseHash, &r.Error); err != nil {
 			return nil, err
 		}
 		records = append(records, r)
