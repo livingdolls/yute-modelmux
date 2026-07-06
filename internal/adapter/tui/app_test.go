@@ -430,8 +430,8 @@ func TestConfigPageTabMovesMainMenu(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("expected no command when moving menu from config page")
 	}
-	if got.selected != pageProviders {
-		t.Fatalf("expected selected menu to move to providers, got %d", got.selected)
+	if got.selected != nextIndex(pageConfig, len(navItems)) {
+		t.Fatalf("expected menu to move to next page, got %d", got.selected)
 	}
 	if got.editor.selected != 0 {
 		t.Fatalf("expected config row selection to stay unchanged, got %d", got.editor.selected)

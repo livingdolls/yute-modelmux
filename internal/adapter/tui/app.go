@@ -26,6 +26,7 @@ const (
 	pageKeys
 	pageLogs
 	pageConfig
+	pageAI
 )
 
 type navItem struct {
@@ -41,6 +42,7 @@ var navItems = []navItem{
 	{label: "Keys", description: "live key state"},
 	{label: "Logs", description: "recent traffic"},
 	{label: "Config", description: "edit router"},
+	{label: "AI", description: "ai diagnostics"},
 }
 
 type Options struct {
@@ -635,6 +637,8 @@ func (m model) renderPage(maxHeight int) string {
 		body = m.renderLogs()
 	case pageConfig:
 		body = m.renderConfigEditor()
+	case pageAI:
+		body = m.renderAIPage()
 	case pageProviders:
 		body = m.renderProviders(m.cfg.Providers)
 	default:
@@ -753,6 +757,8 @@ func pageGlyph(page int) string {
 		return "[L]"
 	case pageConfig:
 		return "[CFG]"
+	case pageAI:
+		return "[AI]"
 	default:
 		return "[*]"
 	}
@@ -818,11 +824,16 @@ func (m model) renderHelpText() string {
 		lines = append(lines,
 			"logs: 1 latest, 2 errors, 3 slow, 4 rate-limit, 5 newest, 6 slowest",
 		)
-	case pageConfig:
+		case pageConfig:
 		lines = append(lines,
 			"config: enter edit, a add, delete remove, ctrl+s save, ctrl+r reload",
 			"config: left/right switch section, up/down move row, tab move menu",
 			"config: esc cancels forms/filters or returns to menu",
+		)
+	case pageAI:
+		lines = append(lines,
+			"ai: classifier, guardrails, routing rules, and route trace status",
+			"ai: enable via ai.enabled:true in config for full diagnostics",
 		)
 	}
 	return strings.Join(lines, "\n")
@@ -866,6 +877,8 @@ func (m model) pageSubtitle() string {
 		return "Recent request trail as a live activity feed with health hints."
 	case pageConfig:
 		return "Edit providers, models, groups, and keys from one control surface."
+	case pageAI:
+		return "AI diagnostics: classifier, guardrails, routing rules, and traces."
 	default:
 		return "Local router dashboard."
 	}
@@ -2369,6 +2382,75 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func (m model) renderAIPage() string {
+	aiCfg := m.cfg.AI
+	var b strings.Builder
+
+	b.WriteString(m.styles.panelTitle.Render("AI CONFIGURATION"))
+	b.WriteString("\n")
+	if !aiCfg.Enabled {
+		b.WriteString(m.styles.bad.Render("AI features are DISABLED"))
+		b.WriteString("\nSet ai.enabled: true in config to enable.\n\n")
+	}
+
+	b.WriteString(fmt.Sprintf("Classifier:     %s", enabledLabel(aiCfg.Classifier.Enabled)))
+	if aiCfg.Classifier.Enabled {
+		b.WriteString(fmt.Sprintf(" (mode: %s)", aiCfg.Classifier.Mode))
+	}
+	b.WriteString("\n")
+
+	b.WriteString(fmt.Sprintf("Guardrails:     %s", enabledLabel(aiCfg.Guardrails.Enabled)))
+	if aiCfg.Guardrails.Enabled && aiCfg.Guardrails.MaxPromptChars > 0 {
+		b.WriteString(fmt.Sprintf(" (max chars: %d)", aiCfg.Guardrails.MaxPromptChars))
+	}
+	b.WriteString("\n")
+
+	b.WriteString(fmt.Sprintf("Route trace:    %s", enabledLabel(aiCfg.RouteTrace.Enabled)))
+	if aiCfg.RouteTrace.IncludeResponseHeader {
+		b.WriteString(" (header: on)")
+	}
+	b.WriteString("\n")
+
+	b.WriteString(fmt.Sprintf("Routing rules:  %d configured", len(aiCfg.RoutingRules)))
+	b.WriteString("\n")
+
+	if aiCfg.Prompts.Dir != "" {
+		b.WriteString(fmt.Sprintf("Prompts dir:    %s", aiCfg.Prompts.Dir))
+		b.WriteString("\n")
+	}
+	b.WriteString(fmt.Sprintf("Memory:         %s", enabledLabel(aiCfg.Memory.Enabled)))
+	b.WriteString("\n\n")
+
+	if aiCfg.Enabled && len(aiCfg.RoutingRules) > 0 {
+		b.WriteString(m.styles.panelTitle.Render("ROUTING RULES"))
+		b.WriteString("\n")
+		for i, rule := range aiCfg.RoutingRules {
+			desc := rule.Description
+			if desc == "" {
+				desc = fmt.Sprintf("rule-%d", i+1)
+			}
+			target := rule.UseModel
+			if rule.UseGroup != "" {
+				target = "group:" + rule.UseGroup
+			}
+			fallback := ""
+			if rule.FallbackGroup != "" {
+				fallback = " fallback:" + rule.FallbackGroup
+			}
+			b.WriteString(fmt.Sprintf("[%d] %s → %s%s\n", i+1, desc, target, fallback))
+		}
+	}
+
+	return b.String()
+}
+
+func enabledLabel(enabled bool) string {
+	if enabled {
+		return "ON"
+	}
+	return "OFF"
 }
 
 func tickCmd() tea.Cmd {
