@@ -12,6 +12,7 @@ type RequestProfile struct {
 	HasSystemPrompt   bool
 	HasToolDefinition bool
 	HasImageContent   bool
+	HasJSONMode       bool
 }
 
 type GuardrailResult struct {

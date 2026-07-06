@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/livingdolls/yute-modelmux/internal/app/service"
 	"github.com/livingdolls/yute-modelmux/internal/config"
 )
 
@@ -47,6 +48,7 @@ func TestRunSuite(t *testing.T) {
 	cfg := config.Default()
 	cfg.Providers[0].BaseURL = server.URL + "/v1"
 	cfg.Models[0].ModelName = cfg.Models[0].ID
+	router, _ := service.NewRouterService(cfg)
 
 	suite := &Suite{
 		Name: "quick-test",
@@ -58,7 +60,7 @@ func TestRunSuite(t *testing.T) {
 		},
 	}
 
-	result, err := RunSuite(context.Background(), suite, cfg)
+	result, err := RunSuite(context.Background(), suite, router)
 	if err != nil {
 		t.Fatalf("RunSuite failed: %v", err)
 	}
@@ -83,6 +85,7 @@ func TestRunSuite(t *testing.T) {
 func TestRunSuiteHandlesError(t *testing.T) {
 	cfg := config.Default()
 	cfg.Providers[0].BaseURL = "https://localhost:1/v1"
+	router, _ := service.NewRouterService(cfg)
 
 	suite := &Suite{
 		Name: "error-test",
@@ -94,7 +97,7 @@ func TestRunSuiteHandlesError(t *testing.T) {
 		},
 	}
 
-	result, err := RunSuite(context.Background(), suite, cfg)
+	result, err := RunSuite(context.Background(), suite, router)
 	if err != nil {
 		t.Fatalf("RunSuite should not fail: %v", err)
 	}

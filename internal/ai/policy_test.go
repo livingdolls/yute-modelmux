@@ -139,3 +139,42 @@ func TestRoutePolicyRequireCapabilityTools(t *testing.T) {
 		t.Fatal("expected no match when required capability 'tools' is missing")
 	}
 }
+
+func TestRoutePolicyRequireJSONMode(t *testing.T) {
+	rp := NewRoutePolicy()
+	rules := []config.AIRoutingRuleConfig{
+		{When: config.AIRoutingRuleWhen{Task: "json_extraction"}, RequireCapability: []string{"json_mode"}, UseModel: "json-model"},
+	}
+	profile := domain.RequestProfile{TaskClass: "json_extraction", HasJSONMode: true}
+	if !rp.Evaluate(rules, profile, "/chat/completions").Matched {
+		t.Fatal("expected match when json_mode is present")
+	}
+	profileNoJSON := domain.RequestProfile{TaskClass: "json_extraction", HasJSONMode: false}
+	if rp.Evaluate(rules, profileNoJSON, "/chat/completions").Matched {
+		t.Fatal("expected no match when json_mode is missing")
+	}
+}
+
+func TestRoutePolicyChatVsCompletionCapability(t *testing.T) {
+	rp := NewRoutePolicy()
+	rChat := []config.AIRoutingRuleConfig{
+		{RequireCapability: []string{"chat"}, UseModel: "chat-model"},
+	}
+	rComp := []config.AIRoutingRuleConfig{
+		{RequireCapability: []string{"completions"}, UseModel: "compl-model"},
+	}
+	profile := domain.RequestProfile{}
+
+	if !rp.Evaluate(rChat, profile, "/chat/completions").Matched {
+		t.Fatal("expected match for require_capability 'chat' on /chat/completions")
+	}
+	if rp.Evaluate(rChat, profile, "/completions").Matched {
+		t.Fatal("expected no match for require_capability 'chat' on /completions")
+	}
+	if !rp.Evaluate(rComp, profile, "/completions").Matched {
+		t.Fatal("expected match for require_capability 'completions' on /completions")
+	}
+	if rp.Evaluate(rComp, profile, "/chat/completions").Matched {
+		t.Fatal("expected no match for require_capability 'completions' on /chat/completions")
+	}
+}

@@ -560,7 +560,7 @@ func (s *RouterService) handleOpenAIRequest(ctx context.Context, req *http.Reque
 
 			var profile domain.RequestProfile
 
-			if classifierEnabled {
+			if classifierEnabled || hasRoutingRules {
 				profile = s.aiClassifier.Classify(bodyBytes)
 				if trace != nil {
 					s.aiTracer.AddStep(traceID, "classifier", profile.TaskClass, "heuristic match", "")
@@ -576,6 +576,10 @@ func (s *RouterService) handleOpenAIRequest(ctx context.Context, req *http.Reque
 					if trace != nil {
 						s.aiTracer.FinalizeTrace(traceID, "")
 						s.saveTraceIfEnabled(traceID)
+					}
+					if traceID != "" && s.cfg.AI.RouteTrace.IncludeResponseHeader {
+						ctx = setTraceID(ctx, traceID)
+						*req = *req.WithContext(ctx)
 					}
 					return nil, &ProxyError{
 						HTTPStatus: http.StatusBadRequest,
@@ -632,6 +636,10 @@ func (s *RouterService) handleOpenAIRequest(ctx context.Context, req *http.Reque
 	if fallbackGroup != "" {
 		group, ok := s.groupByID(fallbackGroup)
 		if ok && group.Enabled {
+			if traceID != "" {
+				s.aiTracer.FinalizeTrace(traceID, fallbackGroup)
+				s.saveTraceIfEnabled(traceID)
+			}
 			if traceID != "" && s.cfg.AI.RouteTrace.IncludeResponseHeader {
 				ctx = setTraceID(ctx, traceID)
 				*req = *req.WithContext(ctx)

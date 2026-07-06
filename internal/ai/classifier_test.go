@@ -99,3 +99,12 @@ func TestClassifierDetectsLongContext(t *testing.T) {
 		t.Fatalf("expected long_context, got %s", profile.TaskClass)
 	}
 }
+
+func TestClassifierDetectsJSONMode(t *testing.T) {
+	c := NewClassifier()
+	body := []byte(`{"model":"gpt","messages":[],"response_format":{"type":"json_object"}}`)
+	profile := c.Classify(body)
+	if !profile.HasJSONMode {
+		t.Fatal("expected HasJSONMode to be true for json_object response_format")
+	}
+}

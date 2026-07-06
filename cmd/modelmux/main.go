@@ -1377,6 +1377,13 @@ func evalCommands(configPath *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			router, store, _, err := createFullRouter(cfg)
+			if err != nil {
+				return err
+			}
+			if store != nil {
+				defer store.Close()
+			}
 			suite, err := elib.LoadSuite(args[0])
 			if err != nil {
 				return err
@@ -1384,7 +1391,7 @@ func evalCommands(configPath *string) *cobra.Command {
 			fmt.Fprintf(c.OutOrStdout(), "Running suite %q (%d targets x %d cases)...\n",
 				suite.Name, len(suite.Targets), len(suite.Cases))
 
-			result, err := elib.RunSuite(c.Context(), suite, cfg)
+			result, err := elib.RunSuite(c.Context(), suite, router)
 			if err != nil {
 				return err
 			}
@@ -1407,12 +1414,7 @@ func evalCommands(configPath *string) *cobra.Command {
 				fmt.Fprintf(c.OutOrStdout(), "Saved to %s\n", runOutput)
 			}
 
-			store, err := createStorage(cfg)
-			if err != nil {
-				return err
-			}
 			if store != nil {
-				defer store.Close()
 				_ = store.SaveEvalRun(storage.EvalRunRecord{
 					ID: result.RunID, SuiteName: result.SuiteName,
 					StartedAt: result.StartedAt.Format(time.RFC3339),

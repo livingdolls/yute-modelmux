@@ -23,6 +23,7 @@ func (c *Classifier) Classify(body []byte) domain.RequestProfile {
 	profile.HasToolDefinition = strings.Contains(text, `"tools"`) || strings.Contains(text, `"functions"`)
 	profile.HasImageContent = strings.Contains(text, "image_url") || strings.Contains(text, `"image"`)
 	profile.IsStreaming = strings.Contains(text, `"stream":true`) || strings.Contains(text, `"stream": true`)
+	profile.HasJSONMode = strings.Contains(text, `"response_format"`) && strings.Contains(text, `"json_object"`)
 
 	if profile.HasSystemPrompt {
 		profile.DetectedCaps = append(profile.DetectedCaps, "chat")

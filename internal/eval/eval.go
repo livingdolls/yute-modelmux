@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/livingdolls/yute-modelmux/internal/app/service"
-	"github.com/livingdolls/yute-modelmux/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -75,12 +74,7 @@ func LoadSuite(path string) (*Suite, error) {
 	return &suite, nil
 }
 
-func RunSuite(ctx context.Context, suite *Suite, cfg *config.Config) (*RunResult, error) {
-	router, err := service.NewRouterService(cfg)
-	if err != nil {
-		return nil, err
-	}
-
+func RunSuite(ctx context.Context, suite *Suite, router *service.RouterService) (*RunResult, error) {
 	run := &RunResult{
 		RunID:     fmt.Sprintf("run-%d", time.Now().UnixNano()),
 		SuiteName: suite.Name,

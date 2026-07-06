@@ -28,7 +28,7 @@ func (rp *RoutePolicy) Evaluate(rules []config.AIRoutingRuleConfig, profile doma
 		if !matchWhen(rule.When, profile, isChat, isCompletion) {
 			continue
 		}
-		if !matchCapabilities(rule.RequireCapability, profile) {
+		if !matchCapabilities(rule.RequireCapability, profile, isChat, isCompletion) {
 			continue
 		}
 
@@ -69,7 +69,7 @@ func matchWhen(when config.AIRoutingRuleWhen, profile domain.RequestProfile, isC
 	return true
 }
 
-func matchCapabilities(required []string, profile domain.RequestProfile) bool {
+func matchCapabilities(required []string, profile domain.RequestProfile, isChat, isCompletion bool) bool {
 	for _, cap := range required {
 		switch cap {
 		case "tools":
@@ -85,13 +85,17 @@ func matchCapabilities(required []string, profile domain.RequestProfile) bool {
 				return false
 			}
 		case "json_mode":
-			if profile.TaskClass != "json_extraction" {
+			if !profile.HasJSONMode {
 				return false
 			}
 		case "chat":
-			return true
+			if !isChat {
+				return false
+			}
 		case "completions":
-			return true
+			if !isCompletion {
+				return false
+			}
 		}
 	}
 	return true
