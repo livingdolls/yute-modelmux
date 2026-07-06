@@ -62,10 +62,11 @@ type HealthCheckConfig struct {
 }
 
 type AIConfig struct {
-	Enabled        bool               `yaml:"enabled"`
-	Classifier     ClassifierConfig   `yaml:"classifier"`
-	Guardrails     GuardrailConfig    `yaml:"guardrails"`
-	RouteTrace     RouteTraceConfig   `yaml:"route_trace"`
+	Enabled        bool                  `yaml:"enabled"`
+	Classifier     ClassifierConfig      `yaml:"classifier"`
+	Guardrails     GuardrailConfig       `yaml:"guardrails"`
+	RouteTrace     RouteTraceConfig      `yaml:"route_trace"`
+	RoutingRules   []AIRoutingRuleConfig `yaml:"routing_rules"`
 }
 
 type ClassifierConfig struct {
@@ -81,6 +82,24 @@ type GuardrailConfig struct {
 type RouteTraceConfig struct {
 	Enabled                  bool `yaml:"enabled"`
 	IncludeResponseHeader    bool `yaml:"include_response_header"`
+}
+
+type AIRoutingRuleConfig struct {
+	Description       string             `yaml:"description"`
+	When              AIRoutingRuleWhen  `yaml:"when"`
+	UseModel          string             `yaml:"use_model"`
+	UseGroup          string             `yaml:"use_group"`
+	FallbackGroup     string             `yaml:"fallback_group"`
+	RequireCapability []string           `yaml:"require_capability"`
+}
+
+type AIRoutingRuleWhen struct {
+	Task        string `yaml:"task"`
+	HasTools    *bool  `yaml:"has_tools"`
+	HasVision   *bool  `yaml:"has_vision"`
+	HasStreaming *bool `yaml:"has_streaming"`
+	IsChat       *bool `yaml:"is_chat"`
+	IsCompletion *bool `yaml:"is_completion"`
 }
 
 type ProviderConfig struct {
@@ -395,6 +414,33 @@ func (c *Config) collectValidationErrors() ValidationErrors {
 			}
 			if _, ok := keyIDs[member.KeyID]; !ok {
 				errs = append(errs, "model group "+g.ID+" references unknown key "+member.KeyID)
+			}
+		}
+	}
+	for i, rule := range c.AI.RoutingRules {
+		prefix := fmt.Sprintf("ai.routing_rules[%d]", i)
+		if rule.UseModel != "" && rule.UseGroup != "" {
+			errs = append(errs, prefix+" must set at most one of use_model or use_group")
+		}
+		if rule.UseModel != "" {
+			if _, ok := modelIDs[rule.UseModel]; !ok {
+				errs = append(errs, prefix+" use_model references unknown model "+rule.UseModel)
+			}
+		}
+		if rule.UseGroup != "" {
+			if _, ok := groupIDs[rule.UseGroup]; !ok {
+				errs = append(errs, prefix+" use_group references unknown group "+rule.UseGroup)
+			}
+		}
+		if rule.FallbackGroup != "" {
+			if _, ok := groupIDs[rule.FallbackGroup]; !ok {
+				errs = append(errs, prefix+" fallback_group references unknown group "+rule.FallbackGroup)
+			}
+		}
+		validCaps := map[string]bool{"tools": true, "json_mode": true, "vision": true, "streaming": true, "chat": true, "completions": true}
+		for _, cap := range rule.RequireCapability {
+			if !validCaps[cap] {
+				errs = append(errs, prefix+" require_capability "+cap+" is not valid; must be one of: tools, json_mode, vision, streaming, chat, completions")
 			}
 		}
 	}
