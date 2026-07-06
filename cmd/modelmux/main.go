@@ -13,6 +13,7 @@ import (
 
 	"github.com/livingdolls/yute-modelmux/internal/adapter/httpserver"
 	"github.com/livingdolls/yute-modelmux/internal/adapter/tui"
+	"github.com/livingdolls/yute-modelmux/internal/ai"
 	"github.com/livingdolls/yute-modelmux/internal/app/service"
 	"github.com/livingdolls/yute-modelmux/internal/config"
 	"github.com/livingdolls/yute-modelmux/internal/core/port/inbound"
@@ -699,7 +700,7 @@ to the new key before running this command.`,
 			Use:   use,
 			Short: short,
 			RunE: func(cmd *cobra.Command, args []string) error {
-				cfg, err := config.Load(configPath)
+			cfg, err := config.Load(configPath)
 				if err != nil {
 					return err
 				}
@@ -850,6 +851,7 @@ to the new key before running this command.`,
 			fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-20s %-15s %-10s %-8d %s\n", k.ID, k.ProviderID, k.ModelID, k.Status, k.Priority, k.Name)
 		}
 	}))
+	rootCmd.AddCommand(aiCommands(&configPath))
 
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "start",
@@ -1025,4 +1027,102 @@ func readPassword() (string, error) {
 		return "", err
 	}
 	return string(bytePassword), nil
+}
+
+func aiCommands(configPath *string) *cobra.Command {
+	var classifyFile string
+	var explainRequestID string
+
+	aiCmd := &cobra.Command{Use: "ai", Short: "AI diagnostics commands"}
+
+	classifyCmd := &cobra.Command{
+		Use:   "classify",
+		Short: "Classify a request file using the heuristic classifier",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			data, err := os.ReadFile(classifyFile)
+			if err != nil {
+				return err
+			}
+			c := ai.NewClassifier()
+			profile := c.Classify(data)
+			fmt.Fprintf(cmd.OutOrStdout(), "Task: %s\n", profile.TaskClass)
+			fmt.Fprintf(cmd.OutOrStdout(), "Prompt size: %d\n", profile.PromptSize)
+			fmt.Fprintf(cmd.OutOrStdout(), "System prompt: %v\n", profile.HasSystemPrompt)
+			fmt.Fprintf(cmd.OutOrStdout(), "Tools: %v\n", profile.HasToolDefinition)
+			fmt.Fprintf(cmd.OutOrStdout(), "Vision: %v\n", profile.HasImageContent)
+			fmt.Fprintf(cmd.OutOrStdout(), "Streaming: %v\n", profile.IsStreaming)
+			if len(profile.DetectedCaps) > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "Capabilities: %s\n", strings.Join(profile.DetectedCaps, ", "))
+			}
+			return nil
+		},
+	}
+	classifyCmd.Flags().StringVar(&classifyFile, "file", "", "path to request JSON file")
+	classifyCmd.MarkFlagRequired("file")
+	aiCmd.AddCommand(classifyCmd)
+
+	explainCmd := &cobra.Command{
+		Use:   "explain",
+		Short: "Explain the route trace for a request ID",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(*configPath)
+			if err != nil {
+				return err
+			}
+			store, err := createStorage(cfg)
+			if err != nil {
+				return err
+			}
+			if store == nil {
+				return fmt.Errorf("storage must be enabled (set storage.type: sqlite)")
+			}
+			defer store.Close()
+
+			trace, err := store.GetRouteTraceByRequestID(explainRequestID)
+			if err != nil {
+				return err
+			}
+			if trace == nil {
+				return fmt.Errorf("no trace found for request %s", explainRequestID)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Trace ID: %s\n", trace.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "Request ID: %s\n", trace.RequestID)
+			fmt.Fprintf(cmd.OutOrStdout(), "Original model: %s\n", trace.OriginalModel)
+			fmt.Fprintf(cmd.OutOrStdout(), "Rerouted model: %s\n", trace.ReroutedModel)
+			fmt.Fprintf(cmd.OutOrStdout(), "Created: %s\n", trace.CreatedAt)
+			if trace.StepsJSON != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Steps: %s\n", trace.StepsJSON)
+			}
+			return nil
+		},
+	}
+	explainCmd.Flags().StringVar(&explainRequestID, "request-id", "", "request ID to explain")
+	explainCmd.MarkFlagRequired("request-id")
+	aiCmd.AddCommand(explainCmd)
+
+	doctorCmd := &cobra.Command{
+		Use:   "doctor-config",
+		Short: "Validate AI configuration and show diagnostics",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(*configPath)
+			if err != nil {
+				return err
+			}
+			aiCfg := cfg.AI
+			fmt.Fprintf(cmd.OutOrStdout(), "AI enabled: %v\n", aiCfg.Enabled)
+			fmt.Fprintf(cmd.OutOrStdout(), "Classifier enabled: %v\n", aiCfg.Classifier.Enabled)
+			fmt.Fprintf(cmd.OutOrStdout(), "Classifier mode: %s\n", aiCfg.Classifier.Mode)
+			fmt.Fprintf(cmd.OutOrStdout(), "Guardrails enabled: %v\n", aiCfg.Guardrails.Enabled)
+			fmt.Fprintf(cmd.OutOrStdout(), "Max prompt chars: %d\n", aiCfg.Guardrails.MaxPromptChars)
+			fmt.Fprintf(cmd.OutOrStdout(), "Route trace enabled: %v\n", aiCfg.RouteTrace.Enabled)
+			fmt.Fprintf(cmd.OutOrStdout(), "Trace response header: %v\n", aiCfg.RouteTrace.IncludeResponseHeader)
+			if !aiCfg.Enabled {
+				fmt.Fprintln(cmd.OutOrStdout(), "\nAI features are disabled. Set ai.enabled: true to enable.")
+			}
+			return nil
+		},
+	}
+	aiCmd.AddCommand(doctorCmd)
+
+	return aiCmd
 }
