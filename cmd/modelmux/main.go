@@ -18,6 +18,7 @@ import (
 	"github.com/livingdolls/yute-modelmux/internal/app/service"
 	"github.com/livingdolls/yute-modelmux/internal/config"
 	"github.com/livingdolls/yute-modelmux/internal/core/port/inbound"
+	elib "github.com/livingdolls/yute-modelmux/internal/eval"
 	plib "github.com/livingdolls/yute-modelmux/internal/prompt"
 	"github.com/livingdolls/yute-modelmux/internal/secret"
 	"github.com/livingdolls/yute-modelmux/internal/storage"
@@ -856,6 +857,7 @@ to the new key before running this command.`,
 	rootCmd.AddCommand(aiCommands(&configPath))
 	rootCmd.AddCommand(promptCommands(&configPath))
 	rootCmd.AddCommand(chatCommand(&configPath))
+	rootCmd.AddCommand(evalCommands(&configPath))
 
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "start",
@@ -1330,5 +1332,132 @@ func chatCommand(configPath *string) *cobra.Command {
 	cmd.Flags().StringVar(&sessionName, "session", "", "session name for persistence (requires SQLite)")
 	cmd.Flags().StringVar(&chatModel, "model", "", "model ID or group to use")
 	cmd.MarkFlagRequired("model")
+	return cmd
+}
+
+func evalCommands(configPath *string) *cobra.Command {
+	var runOutput string
+	var reportJSON bool
+
+	cmd := &cobra.Command{Use: "eval", Short: "Evaluation harness commands"}
+
+	runCmd := &cobra.Command{
+		Use:   "run <suite.yaml>",
+		Short: "Run an eval suite against configured models",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			cfg, err := config.Load(*configPath)
+			if err != nil {
+				return err
+			}
+			suite, err := elib.LoadSuite(args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(c.OutOrStdout(), "Running suite %q (%d targets x %d cases)...\n",
+				suite.Name, len(suite.Targets), len(suite.Cases))
+
+			result, err := elib.RunSuite(c.Context(), suite, cfg)
+			if err != nil {
+				return err
+			}
+
+			passed := 0
+			failed := 0
+			for _, r := range result.Results {
+				if r.Error == "" && r.StatusCode >= 200 && r.StatusCode < 400 {
+					passed++
+				} else {
+					failed++
+				}
+			}
+			fmt.Fprintf(c.OutOrStdout(), "Done: %d passed, %d failed (%.2fs)\n",
+				passed, failed, result.FinishedAt.Sub(result.StartedAt).Seconds())
+
+			if runOutput != "" {
+				data, _ := yaml.Marshal(result)
+				os.WriteFile(runOutput, data, 0o644)
+				fmt.Fprintf(c.OutOrStdout(), "Saved to %s\n", runOutput)
+			}
+
+			store, err := createStorage(cfg)
+			if err != nil {
+				return err
+			}
+			if store != nil {
+				defer store.Close()
+				_ = store.SaveEvalRun(storage.EvalRunRecord{
+					ID: result.RunID, SuiteName: result.SuiteName,
+					StartedAt: result.StartedAt.Format(time.RFC3339),
+					FinishedAt: result.FinishedAt.Format(time.RFC3339),
+					TotalCases: len(result.Results),
+				})
+				for _, r := range result.Results {
+					_ = store.SaveEvalResult(storage.EvalResultRecord{
+						RunID: result.RunID, CaseName: r.CaseName,
+						TargetModel: r.TargetModel, TargetGroup: r.TargetGroup,
+						StatusCode: r.StatusCode, LatencyMs: r.LatencyMs,
+						ResponseHash: r.ResponseHash, Error: r.Error,
+					})
+				}
+			}
+			return nil
+		},
+	}
+	runCmd.Flags().StringVar(&runOutput, "output", "", "save report to YAML file")
+	cmd.AddCommand(runCmd)
+
+	reportCmd := &cobra.Command{
+		Use:   "report <run-id>",
+		Short: "Show eval run report",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			cfg, err := config.Load(*configPath)
+			if err != nil {
+				return err
+			}
+			store, err := createStorage(cfg)
+			if err != nil {
+				return err
+			}
+			if store == nil {
+				return fmt.Errorf("storage required for eval reports")
+			}
+			defer store.Close()
+
+			results, err := store.GetEvalResults(args[0])
+			if err != nil {
+				return err
+			}
+			if len(results) == 0 {
+				return fmt.Errorf("no results for run %s", args[0])
+			}
+
+			if reportJSON {
+				enc := json.NewEncoder(c.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(results)
+			}
+
+			fmt.Fprintf(c.OutOrStdout(), "%-12s %-20s %-6s %-10s %s\n", "CASE", "TARGET", "STATUS", "LATENCY", "ERROR")
+			fmt.Fprintln(c.OutOrStdout(), strings.Repeat("-", 100))
+			for _, r := range results {
+				target := r.TargetModel
+				if target == "" {
+					target = r.TargetGroup
+				}
+				latency := fmt.Sprintf("%dms", r.LatencyMs)
+				errMsg := r.Error
+				if len(errMsg) > 50 {
+					errMsg = errMsg[:50] + "..."
+				}
+				fmt.Fprintf(c.OutOrStdout(), "%-12s %-20s %-6d %-10s %s\n", r.CaseName, target, r.StatusCode, latency, errMsg)
+			}
+			return nil
+		},
+	}
+	reportCmd.Flags().BoolVar(&reportJSON, "json", false, "output as JSON")
+	cmd.AddCommand(reportCmd)
+
 	return cmd
 }
