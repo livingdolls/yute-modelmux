@@ -57,6 +57,9 @@ func (s *Server) completionsHandler(w http.ResponseWriter, r *http.Request) {
 	rs := s.loadRouterService()
 	resp, err := rs.HandleCompletion(r.Context(), r)
 	if err != nil {
+		if traceID := service.GetTraceID(r.Context()); traceID != "" {
+			w.Header().Set("X-ModelMux-Route-Trace-ID", traceID)
+		}
 		writeProxyError(w, err)
 		return
 	}
@@ -90,6 +93,9 @@ func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) 
 	rs := s.loadRouterService()
 	resp, err := rs.HandleChatCompletion(r.Context(), r)
 	if err != nil {
+		if traceID := service.GetTraceID(r.Context()); traceID != "" {
+			w.Header().Set("X-ModelMux-Route-Trace-ID", traceID)
+		}
 		writeProxyError(w, err)
 		return
 	}

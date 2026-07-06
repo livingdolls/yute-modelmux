@@ -406,7 +406,7 @@ func (s *sqliteStore) QueryRequestLogs(filter LogFilter) ([]RequestLogRecord, in
 
 func (s *sqliteStore) SaveRouteTrace(record RouteTraceRecord) error {
 	_, err := s.db.Exec(`
-		INSERT INTO route_traces (id, request_id, original_model, rerouted_model, steps_json, created_at)
+		INSERT OR REPLACE INTO route_traces (id, request_id, original_model, rerouted_model, steps_json, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 	`, record.ID, record.RequestID, record.OriginalModel, record.ReroutedModel, record.StepsJSON, record.CreatedAt)
 	return err
