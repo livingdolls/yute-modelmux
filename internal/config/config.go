@@ -67,6 +67,16 @@ type AIConfig struct {
 	Guardrails     GuardrailConfig       `yaml:"guardrails"`
 	RouteTrace     RouteTraceConfig      `yaml:"route_trace"`
 	RoutingRules   []AIRoutingRuleConfig `yaml:"routing_rules"`
+	Prompts        PromptsConfig         `yaml:"prompts"`
+	Memory         MemoryConfig          `yaml:"memory"`
+}
+
+type PromptsConfig struct {
+	Dir string `yaml:"dir"`
+}
+
+type MemoryConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 type ClassifierConfig struct {
@@ -195,6 +205,8 @@ func Default() *Config {
 			Classifier: ClassifierConfig{Enabled: false, Mode: "heuristic"},
 			Guardrails: GuardrailConfig{Enabled: false, MaxPromptChars: 0},
 			RouteTrace: RouteTraceConfig{Enabled: false, IncludeResponseHeader: false},
+			Prompts:    PromptsConfig{Dir: ""},
+			Memory:     MemoryConfig{Enabled: false},
 		},
 		Providers:   []ProviderConfig{{ID: "mimo", Name: "Xiaomi MiMo", Type: "openai-compatible", BaseURL: "https://api.example.com/v1", AuthType: "bearer", TimeoutSeconds: 120, Enabled: true}},
 		Models:      []ModelConfig{{ID: "mimo-v2.5-pro", ProviderID: "mimo", ModelName: "mimo-v2.5-pro", Strategy: "failover", Enabled: true}},
