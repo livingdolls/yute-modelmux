@@ -308,3 +308,54 @@ func TestValidateAllowsDisabledProviderWithoutFullValidation(t *testing.T) {
 		t.Fatalf("disabled provider should skip strict validation: %v", err)
 	}
 }
+
+func TestValidateRoutingRuleReferencesUnknownModel(t *testing.T) {
+	cfg := Default()
+	cfg.AI.RoutingRules = []AIRoutingRuleConfig{
+		{UseModel: "nonexistent-model", When: AIRoutingRuleWhen{Task: "coding"}},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for unknown model in routing rule")
+	}
+}
+
+func TestValidateRoutingRuleReferencesUnknownGroup(t *testing.T) {
+	cfg := Default()
+	cfg.AI.RoutingRules = []AIRoutingRuleConfig{
+		{UseGroup: "nonexistent-group", When: AIRoutingRuleWhen{Task: "vision"}},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for unknown group in routing rule")
+	}
+}
+
+func TestValidateRoutingRuleBothModelAndGroup(t *testing.T) {
+	cfg := Default()
+	cfg.AI.RoutingRules = []AIRoutingRuleConfig{
+		{UseModel: "mimo-v2.5-pro", UseGroup: "high-price", When: AIRoutingRuleWhen{Task: "chat"}},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for ambiguous routing rule")
+	}
+}
+
+func TestValidateRoutingRuleValidReferences(t *testing.T) {
+	cfg := Default()
+	cfg.AI.RoutingRules = []AIRoutingRuleConfig{
+		{UseModel: "mimo-v2.5-pro", When: AIRoutingRuleWhen{Task: "coding"}},
+		{UseGroup: "high-price", FallbackGroup: "high-price", When: AIRoutingRuleWhen{Task: "vision"}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected valid routing rules: %v", err)
+	}
+}
+
+func TestValidateRoutingRuleInvalidCapability(t *testing.T) {
+	cfg := Default()
+	cfg.AI.RoutingRules = []AIRoutingRuleConfig{
+		{UseModel: "mimo-v2.5-pro", When: AIRoutingRuleWhen{Task: "chat"}, RequireCapability: []string{"nonexistent_cap"}},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for invalid capability")
+	}
+}
