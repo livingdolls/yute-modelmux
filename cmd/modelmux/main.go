@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -854,6 +855,7 @@ to the new key before running this command.`,
 	}))
 	rootCmd.AddCommand(aiCommands(&configPath))
 	rootCmd.AddCommand(promptCommands(&configPath))
+	rootCmd.AddCommand(chatCommand(&configPath))
 
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "start",
@@ -1262,4 +1264,71 @@ func buildChatBody(model, system, user string) string {
 		return fmt.Sprintf(`{"model":"%s","messages":[{"role":"system","content":"%s"},{"role":"user","content":"%s"}]}`, model, system, user)
 	}
 	return fmt.Sprintf(`{"model":"%s","messages":[{"role":"user","content":"%s"}]}`, model, user)
+}
+
+func chatCommand(configPath *string) *cobra.Command {
+	var sessionName string
+	var chatModel string
+
+	cmd := &cobra.Command{
+		Use:   "chat",
+		Short: "Chat with a model through the router",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if chatModel == "" {
+				return fmt.Errorf("--model is required")
+			}
+			cfg, err := config.Load(*configPath)
+			if err != nil {
+				return err
+			}
+
+			input, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return err
+			}
+			if len(bytes.TrimSpace(input)) == 0 {
+				return fmt.Errorf("no input; pipe a message to stdin")
+			}
+
+			body := fmt.Sprintf(`{"model":"%s","messages":[{"role":"user","content":"%s"}]}`, chatModel, string(bytes.TrimSpace(input)))
+			router, err := service.NewRouterService(cfg)
+			if err != nil {
+				return err
+			}
+
+			req, _ := http.NewRequestWithContext(cmd.Context(), http.MethodPost, "http://localhost/v1/chat/completions", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := router.HandleChatCompletion(cmd.Context(), req)
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+			respBody, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return err
+			}
+
+			if sessionName != "" {
+				store, err := createStorage(cfg)
+				if err != nil {
+					return err
+				}
+				if store != nil {
+					defer store.Close()
+					id, err := store.SaveChatSession(sessionName, chatModel)
+					if err == nil {
+						_ = store.SaveChatMessage(id, "user", string(bytes.TrimSpace(input)))
+						_ = store.SaveChatMessage(id, "assistant", string(respBody))
+					}
+				}
+			}
+
+			fmt.Fprintln(cmd.OutOrStdout(), string(respBody))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&sessionName, "session", "", "session name for persistence (requires SQLite)")
+	cmd.Flags().StringVar(&chatModel, "model", "", "model ID or group to use")
+	cmd.MarkFlagRequired("model")
+	return cmd
 }
