@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -28,11 +29,17 @@ type Target struct {
 }
 
 type Case struct {
-	Name           string   `yaml:"name"`
-	Input          string   `yaml:"input"`
-	ExpectedMode   string   `yaml:"expected_mode"`
-	TimeoutSeconds int      `yaml:"timeout_seconds"`
-	Tags           []string `yaml:"tags"`
+	Name            string   `yaml:"name"`
+	Input           string   `yaml:"input"`
+	ExpectedMode    string   `yaml:"expected_mode"`
+	TimeoutSeconds  int      `yaml:"timeout_seconds"`
+	Tags            []string `yaml:"tags"`
+	ExpectedStatus  *int     `yaml:"expected_status,omitempty"`
+	Contains        string   `yaml:"contains,omitempty"`
+	NotContains     string   `yaml:"not_contains,omitempty"`
+	Regex           string   `yaml:"regex,omitempty"`
+	JSONPath        string   `yaml:"json_path,omitempty"`
+	MaxLatencyMs    int64    `yaml:"max_latency_ms,omitempty"`
 }
 
 type RunResult struct {
@@ -51,6 +58,8 @@ type CaseResult struct {
 	LatencyMs    int64  `yaml:"latency_ms"`
 	ResponseHash string `yaml:"response_hash"`
 	Error        string `yaml:"error,omitempty"`
+	Pass         bool   `yaml:"pass"`
+	FailReason   string `yaml:"fail_reason,omitempty"`
 }
 
 func LoadSuite(path string) (*Suite, error) {
@@ -138,7 +147,49 @@ func runCase(ctx context.Context, router *service.RouterService, c Case, targetI
 		result.Error = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBody[:minInt(len(respBody), 200)]))
 	}
 
+	result.Pass, result.FailReason = evaluateAssertions(c, result.StatusCode, result.LatencyMs, string(respBody))
+
 	return result
+}
+
+func evaluateAssertions(c Case, statusCode int, latencyMs int64, body string) (bool, string) {
+	if c.ExpectedStatus != nil && statusCode != *c.ExpectedStatus {
+		return false, fmt.Sprintf("expected status %d, got %d", *c.ExpectedStatus, statusCode)
+	}
+	if c.MaxLatencyMs > 0 && latencyMs > c.MaxLatencyMs {
+		return false, fmt.Sprintf("latency %dms exceeds max %dms", latencyMs, c.MaxLatencyMs)
+	}
+	if c.Contains != "" && !strings.Contains(body, c.Contains) {
+		return false, fmt.Sprintf("body does not contain %q", c.Contains)
+	}
+	if c.NotContains != "" && strings.Contains(body, c.NotContains) {
+		return false, fmt.Sprintf("body contains excluded text %q", c.NotContains)
+	}
+	if c.Regex != "" {
+		matched, err := regexp.MatchString(c.Regex, body)
+		if err != nil {
+			return false, fmt.Sprintf("invalid regex: %v", err)
+		}
+		if !matched {
+			return false, fmt.Sprintf("body does not match regex %q", c.Regex)
+		}
+	}
+	if c.JSONPath != "" {
+		if !jsonPathContains(body, c.JSONPath) {
+			return false, fmt.Sprintf("json path %q not found or empty", c.JSONPath)
+		}
+	}
+	if c.ExpectedStatus == nil && c.MaxLatencyMs == 0 && c.Contains == "" && c.NotContains == "" && c.Regex == "" && c.JSONPath == "" {
+		if statusCode >= 200 && statusCode < 400 {
+			return true, ""
+		}
+		return false, fmt.Sprintf("HTTP %d", statusCode)
+	}
+	return true, ""
+}
+
+func jsonPathContains(body, path string) bool {
+	return strings.Contains(body, path)
 }
 
 func minInt(a, b int) int {
