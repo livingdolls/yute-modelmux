@@ -379,6 +379,57 @@ Text input modes do not use single-letter navigation shortcuts, so normal typing
 
 ---
 
+## AI Features
+
+ModelMux includes an AI diagnostics layer for request classification, guardrails, and policy routing. All features default to **off** for backward compatibility.
+
+Enable in config under `ai:`:
+
+```yaml
+ai:
+  enabled: true
+  classifier:
+    enabled: true
+    mode: heuristic
+  guardrails:
+    enabled: true
+  route_trace:
+    enabled: true
+    include_response_header: true
+  routing_rules:
+    - when:
+        task: coding
+      use_model: deepseek-coder
+```
+
+**Classifier**: heuristic task detection (coding, reasoning, summarization, translation, json_extraction, tool_use, vision, long_context).
+
+**Guardrails**: block requests containing API key patterns (sk-, sk-ant-, AIza, Bearer) or exceeding `max_prompt_chars`.
+
+**Route trace**: records classification + routing decisions. Traces stored in SQLite when enabled and surfaced via `X-ModelMux-Route-Trace-ID` header and `/admin/traces/{id}` endpoint.
+
+**Policy routing**: automatic model/group rerouting based on `when` conditions (task, tools, vision, streaming).
+
+CLI diagnostics:
+```bash
+modelmux ai classify --file request.json
+modelmux ai explain --request-id <id>
+modelmux ai doctor-config
+modelmux ai route --file request.json --json
+```
+
+---
+
+## E2E Tests
+
+End-to-end test suite with full proxy + mock upstream:
+
+```bash
+go test -tags=e2e ./internal/e2e/ -timeout 60s
+```
+
+---
+
 ## Architecture
 
 ```
