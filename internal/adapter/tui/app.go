@@ -2462,9 +2462,63 @@ func (m model) renderAIPage() string {
 			b.WriteString(m.styles.muted.Render("No recent route traces"))
 			b.WriteString("\n")
 		}
+
+		b.WriteString("\n")
+		b.WriteString(m.styles.panelTitle.Render("OPERATIONS"))
+		b.WriteString("\n")
+		keys := m.router.ListKeys()
+		logs := m.router.Logs()
+		active, cooldown, limited, invalid, disabled := 0, 0, 0, 0, 0
+		totalReqs, errors := 0, 0
+		for _, k := range keys {
+			switch k.Status {
+			case "active":
+				active++
+			case "cooldown":
+				cooldown++
+			case "limited":
+				limited++
+			case "invalid":
+				invalid++
+			case "disabled":
+				disabled++
+			}
+		}
+		for _, l := range logs {
+			totalReqs++
+			if l.Error != "" || l.StatusCode >= 400 {
+				errors++
+			}
+		}
+		b.WriteString(fmt.Sprintf("Requests: %d  Errors: %d\n", totalReqs, errors))
+		b.WriteString(fmt.Sprintf("Keys: a:%d c:%d l:%d i:%d o:%d\n", active, cooldown, limited, invalid, disabled))
 	}
 
+	b.WriteString("\n")
+	b.WriteString(m.styles.panelTitle.Render("CONFIG DOCTOR"))
+	b.WriteString("\n")
+	validateEntries(&b, aiCfg)
+
 	return b.String()
+}
+
+func validateEntries(b *strings.Builder, aiCfg config.AIConfig) {
+	issues := 0
+	if !aiCfg.Enabled {
+		if len(aiCfg.RoutingRules) > 0 {
+			b.WriteString("warn: routing rules configured but AI is disabled\n")
+			issues++
+		}
+	}
+	if aiCfg.Guardrails.Enabled && aiCfg.Guardrails.MaxPromptChars == 0 {
+		b.WriteString("info: guardrails enabled with no max prompt chars\n")
+	}
+	if aiCfg.RouteTrace.Enabled && !aiCfg.RouteTrace.IncludeResponseHeader {
+		b.WriteString("info: trace enabled without response header\n")
+	}
+	if issues == 0 {
+		b.WriteString("ok: no issues found\n")
+	}
 }
 
 func truncateTime(t time.Time) string {
