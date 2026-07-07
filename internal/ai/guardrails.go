@@ -34,9 +34,13 @@ func (g *Guardrails) Check(cfg config.GuardrailConfig, body []byte) domain.Guard
 		}
 	}
 
-	text := string(body)
+	req := ParseRequest(body)
+	scanText := req.AllText
+	if scanText == "" {
+		scanText = string(body)
+	}
 	for _, pattern := range secretPatterns {
-		if match := pattern.FindString(text); match != "" {
+		if match := pattern.FindString(scanText); match != "" {
 			return domain.GuardrailResult{
 				Allowed: false,
 				Action:  "block",

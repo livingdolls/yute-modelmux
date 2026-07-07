@@ -11,23 +11,23 @@ type Classifier struct{}
 func NewClassifier() *Classifier { return &Classifier{} }
 
 func (c *Classifier) Classify(body []byte) domain.RequestProfile {
+	return c.ClassifyRequest(ParseRequest(body))
+}
+
+func (c *Classifier) ClassifyRequest(req *ParsedRequest) domain.RequestProfile {
 	profile := domain.RequestProfile{TaskClass: "chat"}
-	profile.PromptSize = len(body)
-	text := strings.ToLower(string(body))
+	profile.PromptSize = len(req.RawBody)
 
 	if profile.PromptSize > 8000 {
 		profile.TaskClass = "long_context"
 	}
 
-	profile.HasSystemPrompt = c.detectSystemPrompt(text)
-	profile.HasToolDefinition = strings.Contains(text, `"tools"`) || strings.Contains(text, `"functions"`)
-	profile.HasImageContent = strings.Contains(text, "image_url") || strings.Contains(text, `"image"`)
-	profile.IsStreaming = strings.Contains(text, `"stream":true`) || strings.Contains(text, `"stream": true`)
-	profile.HasJSONMode = strings.Contains(text, `"response_format"`) && strings.Contains(text, `"json_object"`)
+	profile.HasSystemPrompt = req.SystemPrompt != ""
+	profile.HasToolDefinition = req.HasTools || req.HasFunctions
+	profile.HasImageContent = req.ImageCount > 0
+	profile.IsStreaming = req.Stream
+	profile.HasJSONMode = req.ResponseFormat == "json_object"
 
-	if profile.HasSystemPrompt {
-		profile.DetectedCaps = append(profile.DetectedCaps, "chat")
-	}
 	if profile.HasToolDefinition {
 		profile.TaskClass = "tool_use"
 		profile.DetectedCaps = append(profile.DetectedCaps, "tools")
@@ -43,6 +43,7 @@ func (c *Classifier) Classify(body []byte) domain.RequestProfile {
 	}
 
 	if profile.TaskClass == "chat" || profile.TaskClass == "long_context" {
+		text := strings.ToLower(req.AllText)
 		task := c.classifyText(text)
 		if task != "chat" {
 			profile.TaskClass = task
