@@ -858,6 +858,7 @@ to the new key before running this command.`,
 	rootCmd.AddCommand(promptCommands(&configPath))
 	rootCmd.AddCommand(chatCommand(&configPath))
 	rootCmd.AddCommand(evalCommands(&configPath))
+	rootCmd.AddCommand(storageCommands(&configPath))
 
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "start",
@@ -1590,6 +1591,106 @@ func evalCommands(configPath *string) *cobra.Command {
 	}
 	reportCmd.Flags().BoolVar(&reportJSON, "json", false, "output as JSON")
 	cmd.AddCommand(reportCmd)
+
+	return cmd
+}
+
+func storageCommands(configPath *string) *cobra.Command {
+	var pruneDays int
+
+	cmd := &cobra.Command{Use: "storage", Short: "Storage management"}
+
+	statsCmd := &cobra.Command{
+		Use:   "stats",
+		Short: "Show storage statistics",
+		RunE: func(c *cobra.Command, args []string) error {
+			cfg, err := config.Load(*configPath)
+			if err != nil {
+				return err
+			}
+			store, err := createStorage(cfg)
+			if err != nil {
+				return err
+			}
+			if store == nil {
+				fmt.Fprintln(c.OutOrStdout(), "Storage not configured (set storage.type: sqlite)")
+				return nil
+			}
+			defer store.Close()
+			stats, err := store.Stats()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(c.OutOrStdout(), "%-20s %s\n", "TABLE", "ROWS")
+			fmt.Fprintln(c.OutOrStdout(), strings.Repeat("-", 30))
+			for table, count := range stats {
+				fmt.Fprintf(c.OutOrStdout(), "%-20s %d\n", table, count)
+			}
+			return nil
+		},
+	}
+	cmd.AddCommand(statsCmd)
+
+	pruneCmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Prune old data",
+		RunE: func(c *cobra.Command, args []string) error {
+			cfg, err := config.Load(*configPath)
+			if err != nil {
+				return err
+			}
+			store, err := createStorage(cfg)
+			if err != nil {
+				return err
+			}
+			if store == nil {
+				return fmt.Errorf("storage not configured")
+			}
+			defer store.Close()
+
+			days := pruneDays
+			if days <= 0 {
+				days = cfg.Storage.RetentionDays
+			}
+			if days <= 0 {
+				days = 30
+			}
+			before := time.Now().AddDate(0, 0, -days).Format(time.RFC3339)
+			count, err := store.PruneBefore(before)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(c.OutOrStdout(), "Pruned %d rows older than %d days\n", count, days)
+			return nil
+		},
+	}
+	pruneCmd.Flags().IntVar(&pruneDays, "older-than", 0, "delete records older than N days (default: storage.retention_days or 30)")
+	cmd.AddCommand(pruneCmd)
+
+	vacuumCmd := &cobra.Command{
+		Use:   "vacuum",
+		Short: "Vacuum the SQLite database",
+		RunE: func(c *cobra.Command, args []string) error {
+			cfg, err := config.Load(*configPath)
+			if err != nil {
+				return err
+			}
+			store, err := createStorage(cfg)
+			if err != nil {
+				return err
+			}
+			if store == nil {
+				return fmt.Errorf("storage not configured")
+			}
+			defer store.Close()
+			if err := store.Vacuum(); err != nil {
+				return err
+			}
+			fmt.Fprintln(c.OutOrStdout(), "Vacuum complete")
+			return nil
+		},
+	}
+	cmd.AddCommand(vacuumCmd)
 
 	return cmd
 }

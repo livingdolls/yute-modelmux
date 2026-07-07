@@ -60,6 +60,9 @@ func (s *blockingLogStorage) SaveEvalRun(storage.EvalRunRecord) error { return n
 func (s *blockingLogStorage) SaveEvalResult(storage.EvalResultRecord) error { return nil }
 func (s *blockingLogStorage) ListEvalRuns() ([]storage.EvalRunRecord, error) { return nil, nil }
 func (s *blockingLogStorage) GetEvalResults(string) ([]storage.EvalResultRecord, error) { return nil, nil }
+func (s *blockingLogStorage) PruneBefore(string) (int, error) { return 0, nil }
+func (s *blockingLogStorage) Stats() (map[string]int, error) { return nil, nil }
+func (s *blockingLogStorage) Vacuum() error { return nil }
 
 func TestSelectKeyPrefersLowestPriority(t *testing.T) {
 	cfg := config.Default()

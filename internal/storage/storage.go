@@ -112,6 +112,9 @@ type Storage interface {
 	SaveEvalResult(record EvalResultRecord) error
 	ListEvalRuns() ([]EvalRunRecord, error)
 	GetEvalResults(runID string) ([]EvalResultRecord, error)
+	PruneBefore(before string) (int, error)
+	Stats() (map[string]int, error)
+	Vacuum() error
 	Close() error
 }
 
@@ -537,4 +540,41 @@ func (s *sqliteStore) GetEvalResults(runID string) ([]EvalResultRecord, error) {
 		records = append(records, r)
 	}
 	return records, rows.Err()
+}
+
+func (s *sqliteStore) PruneBefore(before string) (int, error) {
+	total := 0
+	tables := []string{"request_logs", "route_traces", "eval_runs"}
+	for _, table := range tables {
+		col := "created_at"
+		if table == "eval_runs" {
+			s.db.Exec("DELETE FROM eval_results WHERE run_id IN (SELECT id FROM eval_runs WHERE "+col+" < ?)", before)
+		}
+		result, err := s.db.Exec("DELETE FROM "+table+" WHERE "+col+" < ?", before)
+		if err != nil {
+			continue
+		}
+		ar, _ := result.RowsAffected()
+		total += int(ar)
+	}
+	return total, nil
+}
+
+func (s *sqliteStore) Stats() (map[string]int, error) {
+	stats := map[string]int{}
+	tables := []string{"request_logs", "route_traces", "eval_runs", "eval_results", "chat_sessions", "chat_messages"}
+	for _, table := range tables {
+		var count int
+		if err := s.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
+			stats[table] = -1
+		} else {
+			stats[table] = count
+		}
+	}
+	return stats, nil
+}
+
+func (s *sqliteStore) Vacuum() error {
+	_, err := s.db.Exec("VACUUM")
+	return err
 }

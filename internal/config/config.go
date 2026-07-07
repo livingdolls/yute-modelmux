@@ -39,8 +39,9 @@ type ServerConfig struct {
 }
 
 type StorageConfig struct {
-	Type string `yaml:"type"`
-	Path string `yaml:"path"`
+	Type          string `yaml:"type"`
+	Path          string `yaml:"path"`
+	RetentionDays int    `yaml:"retention_days"`
 }
 
 type CooldownConfig struct {
