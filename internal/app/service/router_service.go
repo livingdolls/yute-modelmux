@@ -318,17 +318,18 @@ func newRouterService(cfg *config.Config, store storage.Storage, secretStore *se
 					}
 				}
 				rs.logs = append(rs.logs, domain.RequestLog{
-					ID:          lr.ID,
-					GroupID:     lr.GroupID,
-					ModelID:     lr.ModelID,
-					ProviderID:  lr.ProviderID,
-					KeyID:       lr.KeyID,
-					StatusCode:  lr.StatusCode,
-					Error:       lr.Error,
-					LatencyMs:   lr.LatencyMs,
-					TokenInput:  lr.TokenInput,
-					TokenOutput: lr.TokenOutput,
-					CreatedAt:   createdAt,
+					ID:            lr.ID,
+					GroupID:       lr.GroupID,
+					ModelID:       lr.ModelID,
+					ProviderID:    lr.ProviderID,
+					KeyID:         lr.KeyID,
+					StatusCode:    lr.StatusCode,
+					Error:         lr.Error,
+					LatencyMs:     lr.LatencyMs,
+					TokenInput:    lr.TokenInput,
+					TokenOutput:   lr.TokenOutput,
+					EstimatedCost: lr.EstimatedCost,
+					CreatedAt:     createdAt,
 				})
 			}
 		}
@@ -408,17 +409,18 @@ func (s *RouterService) QueryLogs(filter storage.LogFilter) ([]domain.RequestLog
 					}
 				}
 				logs[i] = domain.RequestLog{
-					ID:          r.ID,
-					GroupID:     r.GroupID,
-					ModelID:     r.ModelID,
-					ProviderID:  r.ProviderID,
-					KeyID:       r.KeyID,
-					StatusCode:  r.StatusCode,
-					Error:       r.Error,
-					LatencyMs:   r.LatencyMs,
-					TokenInput:  r.TokenInput,
-					TokenOutput: r.TokenOutput,
-					CreatedAt:   createdAt,
+					ID:            r.ID,
+					GroupID:       r.GroupID,
+					ModelID:       r.ModelID,
+					ProviderID:    r.ProviderID,
+					KeyID:         r.KeyID,
+					StatusCode:    r.StatusCode,
+					Error:         r.Error,
+					LatencyMs:     r.LatencyMs,
+					TokenInput:    r.TokenInput,
+					TokenOutput:   r.TokenOutput,
+					EstimatedCost: r.EstimatedCost,
+					CreatedAt:     createdAt,
 				}
 			}
 			return logs, total

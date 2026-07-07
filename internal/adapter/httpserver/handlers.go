@@ -560,9 +560,10 @@ func (s *Server) logsHandler(w http.ResponseWriter, r *http.Request) {
 		StatusCode  int    `json:"status_code"`
 		Error       string `json:"error,omitempty"`
 		LatencyMs   int64  `json:"latency_ms"`
-		TokenInput  int    `json:"token_input"`
-		TokenOutput int    `json:"token_output"`
-		CreatedAt   string `json:"created_at"`
+		TokenInput    int     `json:"token_input"`
+		TokenOutput   int     `json:"token_output"`
+		EstimatedCost float64 `json:"estimated_cost"`
+		CreatedAt     string  `json:"created_at"`
 	}
 
 	items := make([]logItem, len(page))
@@ -572,16 +573,17 @@ func (s *Server) logsHandler(w http.ResponseWriter, r *http.Request) {
 			createdAt = log.CreatedAt.Format(time.RFC3339)
 		}
 		items[i] = logItem{
-			ID:          log.ID,
-			GroupID:     log.GroupID,
-			ModelID:     log.ModelID,
-			ProviderID:  log.ProviderID,
-			KeyID:       log.KeyID,
-			StatusCode:  log.StatusCode,
-			Error:       log.Error,
-			LatencyMs:   log.LatencyMs,
-			TokenInput:  log.TokenInput,
-			TokenOutput: log.TokenOutput,
+			ID:            log.ID,
+			GroupID:       log.GroupID,
+			ModelID:       log.ModelID,
+			ProviderID:    log.ProviderID,
+			KeyID:         log.KeyID,
+			StatusCode:    log.StatusCode,
+			Error:         log.Error,
+			LatencyMs:     log.LatencyMs,
+			TokenInput:    log.TokenInput,
+			TokenOutput:   log.TokenOutput,
+			EstimatedCost: log.EstimatedCost,
 			CreatedAt:   createdAt,
 		}
 	}

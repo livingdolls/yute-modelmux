@@ -1184,7 +1184,7 @@ func aiCommands(configPath *string) *cobra.Command {
 			var decision ai.RouteDecision
 			var apiPath string
 			parsed := ai.ParseRequest(data)
-			if parsed.UserPrompt != "" && parsed.SystemPrompt == "" && len(string(data)) < 500 && !strings.Contains(string(data), `"messages"`) {
+			if parsed.UserPrompt != "" && !strings.Contains(string(data), `"messages"`) {
 				apiPath = "/completions"
 			} else {
 				apiPath = "/chat/completions"
