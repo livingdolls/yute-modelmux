@@ -103,6 +103,17 @@ type model struct {
 	keyTestRunning   bool
 	keyTestInput     string
 	keyTestResult    string
+	showPromptPicker bool
+	promptPickerIdx  int
+	promptTemplates  []PromptTemplateInfo
+}
+
+type PromptTemplateInfo struct {
+	Name        string
+	Description string
+	Model       string
+	System      string
+	Template    string
 }
 
 type keyTestResultMsg struct {
@@ -288,6 +299,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showThemePicker {
 			return m.updateThemePicker(msg)
 		}
+		if m.showPromptPicker {
+			return m.updatePromptPicker(msg)
+		}
 		if m.keyTesting {
 			return m.updateKeyTest(msg)
 		}
@@ -397,8 +411,11 @@ func (m model) updateChatSessionPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+t":
 		m.cycleActiveChatTarget()
 		return m, nil
+	case "ctrl+p":
+		m.showPromptPicker = true
+		m.promptPickerIdx = 0
+		return m, nil
 	case "ctrl+f":
-		m.chatOpen = false
 		m.chatFiltering = true
 		return m, nil
 	}
@@ -438,8 +455,11 @@ func (m model) updateChatConversation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+t":
 		m.cycleActiveChatTarget()
 		return m, nil
+	case "ctrl+p":
+		m.showPromptPicker = true
+		m.promptPickerIdx = 0
+		return m, nil
 	case "ctrl+f":
-		m.chatOpen = false
 		m.chatFiltering = true
 		return m, nil
 	case "esc":
@@ -540,6 +560,9 @@ func (m model) View() string {
 	}
 	if m.showThemePicker {
 		return m.renderThemePicker(width, base)
+	}
+	if m.showPromptPicker {
+		return m.renderPromptPicker(width, base)
 	}
 	return base
 }
@@ -694,6 +717,32 @@ func (m model) updateThemePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) updatePromptPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "esc":
+		m.showPromptPicker = false
+		return m, nil
+	case "enter", " ":
+		if m.promptPickerIdx >= 0 && m.promptPickerIdx < len(m.promptTemplates) {
+			tmpl := m.promptTemplates[m.promptPickerIdx]
+			if m.activeChat >= 0 && m.activeChat < len(m.chats) {
+				m.chats[m.activeChat].Target = tmpl.Model
+				m.chatInput = tmpl.Template
+			}
+		}
+		m.showPromptPicker = false
+		return m, nil
+	case "up":
+		m.promptPickerIdx = previousIndex(m.promptPickerIdx, len(m.promptTemplates))
+		return m, nil
+	case "down":
+		m.promptPickerIdx = nextIndex(m.promptPickerIdx, len(m.promptTemplates))
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m model) updateKeyTest(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch key {
@@ -793,6 +842,36 @@ func (m model) renderThemePicker(width int, base string) string {
 	}
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		m.styles.panelTitle.Render("THEME PICKER"),
+		m.styles.subtitle.Render("up/down choose, enter apply, esc cancel"),
+		m.styles.muted.Render(strings.Repeat("-", boxWidth-4)),
+		strings.Join(items, "\n"),
+	)
+	box := m.styles.card.Width(boxWidth).Render(content)
+	return m.styles.app.Render(lipgloss.Place(width-2, 18, lipgloss.Center, lipgloss.Center, box))
+}
+
+func (m model) renderPromptPicker(width int, base string) string {
+	_ = base
+	boxWidth := minInt(maxInt(50, width-18), 78)
+	var items []string
+	if len(m.promptTemplates) == 0 {
+		items = append(items, m.styles.muted.Render("no prompt templates configured"))
+	} else {
+		for i, tmpl := range m.promptTemplates {
+			line := fmt.Sprintf("%d. %s", i+1, tmpl.Name)
+			if tmpl.Description != "" {
+				line += fmt.Sprintf(" - %s", tmpl.Description)
+			}
+			if i == m.promptPickerIdx {
+				line = m.styles.navActive.Render(line)
+			} else {
+				line = m.styles.nav.Render(line)
+			}
+			items = append(items, line)
+		}
+	}
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		m.styles.panelTitle.Render("PROMPT TEMPLATES"),
 		m.styles.subtitle.Render("up/down choose, enter apply, esc cancel"),
 		m.styles.muted.Render(strings.Repeat("-", boxWidth-4)),
 		strings.Join(items, "\n"),
@@ -942,7 +1021,7 @@ func (m model) chatFooterText() string {
 		return "CHAT FILTER type:search  enter/esc:close  ctrl+u:clear"
 	}
 	if !m.chatOpen {
-		return "CHAT SESSIONS up/down:choose  enter:open  ctrl+n:new  ctrl+t:target  ctrl+f:filter  esc:menu"
+		return "CHAT SESSIONS up/down:choose  enter:open  ctrl+n:new  ctrl+t:target  ctrl+p:prompt  ctrl+f:filter  esc:menu"
 	}
 	return "CHAT enter:send  pgup/pgdn:history  ctrl+n:new  ctrl+t:target  esc:sessions"
 }
