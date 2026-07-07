@@ -2443,7 +2443,32 @@ func (m model) renderAIPage() string {
 		}
 	}
 
+	if m.router != nil {
+		traces := m.router.ListRouteTraces()
+		if len(traces) > 0 {
+			b.WriteString(m.styles.panelTitle.Render("ROUTE TRACES"))
+			b.WriteString("\n")
+			for _, trace := range traces {
+				final := trace.ReroutedModel
+				if final == "" {
+					final = "(blocked)"
+				}
+				b.WriteString(fmt.Sprintf("%s %s → %s\n",
+					truncateTime(trace.CreatedAt),
+					trace.OriginalModel,
+					final))
+			}
+		} else {
+			b.WriteString(m.styles.muted.Render("No recent route traces"))
+			b.WriteString("\n")
+		}
+	}
+
 	return b.String()
+}
+
+func truncateTime(t time.Time) string {
+	return t.Format("15:04:05")
 }
 
 func enabledLabel(enabled bool) string {

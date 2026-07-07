@@ -1080,6 +1080,10 @@ func (s *RouterService) TestKey(ctx context.Context, keyID string) error {
 	return client.TestKey(ctx, provider, model, key)
 }
 
+func (s *RouterService) ListRouteTraces() []domain.RouteTrace {
+	return s.aiTracer.ListTraces()
+}
+
 func (s *RouterService) SetKeyStatus(keyID string, status string) {
 	s.mu.Lock()
 	for i := range s.keys {

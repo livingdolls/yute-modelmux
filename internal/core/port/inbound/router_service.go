@@ -13,6 +13,7 @@ type RouterService interface {
 	SelectKey(ctx context.Context, modelID string) (*domain.APIKey, error)
 	MarkKeyResult(ctx context.Context, keyID string, result KeyResult) error
 	TestKey(ctx context.Context, keyID string) error
+	ListRouteTraces() []domain.RouteTrace
 	ListProviders() []domain.Provider
 	ListModels() []domain.Model
 	ListModelGroups() []domain.ModelGroup

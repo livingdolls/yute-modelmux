@@ -41,6 +41,8 @@ func (stubRouter) Logs() []domain.RequestLog { return nil }
 
 func (stubRouter) TestKey(context.Context, string) error { return nil }
 
+func (stubRouter) ListRouteTraces() []domain.RouteTrace { return nil }
+
 func TestUpdateTypesQInChatInsteadOfQuitting(t *testing.T) {
 	m := model{
 		page:           pageChat,

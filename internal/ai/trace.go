@@ -80,3 +80,13 @@ func traceID() string {
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
+
+func (t *RouteTracer) ListTraces() []domain.RouteTrace {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	traces := make([]domain.RouteTrace, 0, len(t.traces))
+	for _, trace := range t.traces {
+		traces = append(traces, *trace)
+	}
+	return traces
+}
