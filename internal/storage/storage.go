@@ -29,17 +29,18 @@ type KeyRuntimeRecord struct {
 }
 
 type RequestLogRecord struct {
-	ID          string
-	GroupID     string
-	ModelID     string
-	ProviderID  string
-	KeyID       string
-	StatusCode  int
-	Error       string
-	LatencyMs   int64
-	TokenInput  int
-	TokenOutput int
-	CreatedAt   string
+	ID            string
+	GroupID       string
+	ModelID       string
+	ProviderID    string
+	KeyID         string
+	StatusCode    int
+	Error         string
+	LatencyMs     int64
+	TokenInput    int
+	TokenOutput   int
+	EstimatedCost float64
+	CreatedAt     string
 }
 
 type LogFilter struct {
@@ -94,6 +95,8 @@ type EvalResultRecord struct {
 	LatencyMs    int64
 	ResponseHash string
 	Error        string
+	Pass         bool
+	FailReason   string
 }
 
 type Storage interface {
@@ -283,6 +286,9 @@ func migrate(db *sql.DB) error {
 		"ALTER TABLE keys_runtime ADD COLUMN daily_date TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE keys_runtime ADD COLUMN daily_request_limit INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE keys_runtime ADD COLUMN daily_token_limit INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE eval_results ADD COLUMN pass INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE eval_results ADD COLUMN fail_reason TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE request_logs ADD COLUMN estimated_cost REAL NOT NULL DEFAULT 0",
 	)
 
 	return nil
@@ -339,9 +345,9 @@ func (s *sqliteStore) LoadKeyRuntime() ([]KeyRuntimeRecord, error) {
 
 func (s *sqliteStore) SaveRequestLog(record RequestLogRecord) error {
 	_, err := s.db.Exec(`
-		INSERT INTO request_logs (id, group_id, model_id, provider_id, key_id, status_code, error, latency_ms, token_input, token_output, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, record.ID, record.GroupID, record.ModelID, record.ProviderID, record.KeyID, record.StatusCode, record.Error, record.LatencyMs, record.TokenInput, record.TokenOutput, record.CreatedAt)
+		INSERT INTO request_logs (id, group_id, model_id, provider_id, key_id, status_code, error, latency_ms, token_input, token_output, estimated_cost, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, record.ID, record.GroupID, record.ModelID, record.ProviderID, record.KeyID, record.StatusCode, record.Error, record.LatencyMs, record.TokenInput, record.TokenOutput, record.EstimatedCost, record.CreatedAt)
 	return err
 }
 
@@ -388,7 +394,7 @@ func (s *sqliteStore) QueryRequestLogs(filter LogFilter) ([]RequestLogRecord, in
 	}
 
 	queryArgs := append(args, limit, offset)
-	query := "SELECT id, group_id, model_id, provider_id, key_id, status_code, error, latency_ms, token_input, token_output, created_at FROM request_logs " + where + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	query := "SELECT id, group_id, model_id, provider_id, key_id, status_code, error, latency_ms, token_input, token_output, estimated_cost, created_at FROM request_logs " + where + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
 
 	rows, err := s.db.Query(query, queryArgs...)
 	if err != nil {
@@ -399,7 +405,7 @@ func (s *sqliteStore) QueryRequestLogs(filter LogFilter) ([]RequestLogRecord, in
 	var records []RequestLogRecord
 	for rows.Next() {
 		var r RequestLogRecord
-		if err := rows.Scan(&r.ID, &r.GroupID, &r.ModelID, &r.ProviderID, &r.KeyID, &r.StatusCode, &r.Error, &r.LatencyMs, &r.TokenInput, &r.TokenOutput, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.GroupID, &r.ModelID, &r.ProviderID, &r.KeyID, &r.StatusCode, &r.Error, &r.LatencyMs, &r.TokenInput, &r.TokenOutput, &r.EstimatedCost, &r.CreatedAt); err != nil {
 			return nil, 0, err
 		}
 		records = append(records, r)
@@ -479,7 +485,7 @@ func (s *sqliteStore) GetChatMessages(sessionID int) ([]ChatMessageRecord, error
 }
 
 func (s *sqliteStore) LoadRequestLogs() ([]RequestLogRecord, error) {
-	rows, err := s.db.Query("SELECT id, group_id, model_id, provider_id, key_id, status_code, error, latency_ms, token_input, token_output, created_at FROM request_logs ORDER BY created_at DESC LIMIT 200")
+	rows, err := s.db.Query("SELECT id, group_id, model_id, provider_id, key_id, status_code, error, latency_ms, token_input, token_output, estimated_cost, created_at FROM request_logs ORDER BY created_at DESC LIMIT 200")
 	if err != nil {
 		return nil, err
 	}
@@ -488,7 +494,7 @@ func (s *sqliteStore) LoadRequestLogs() ([]RequestLogRecord, error) {
 	var records []RequestLogRecord
 	for rows.Next() {
 		var r RequestLogRecord
-		if err := rows.Scan(&r.ID, &r.GroupID, &r.ModelID, &r.ProviderID, &r.KeyID, &r.StatusCode, &r.Error, &r.LatencyMs, &r.TokenInput, &r.TokenOutput, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.GroupID, &r.ModelID, &r.ProviderID, &r.KeyID, &r.StatusCode, &r.Error, &r.LatencyMs, &r.TokenInput, &r.TokenOutput, &r.EstimatedCost, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		records = append(records, r)
@@ -503,8 +509,12 @@ func (s *sqliteStore) SaveEvalRun(record EvalRunRecord) error {
 }
 
 func (s *sqliteStore) SaveEvalResult(record EvalResultRecord) error {
-	_, err := s.db.Exec("INSERT INTO eval_results (run_id, case_name, target_model, target_group, status_code, latency_ms, response_hash, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		record.RunID, record.CaseName, record.TargetModel, record.TargetGroup, record.StatusCode, record.LatencyMs, record.ResponseHash, record.Error)
+	passVal := 0
+	if record.Pass {
+		passVal = 1
+	}
+	_, err := s.db.Exec("INSERT INTO eval_results (run_id, case_name, target_model, target_group, status_code, latency_ms, response_hash, error, pass, fail_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		record.RunID, record.CaseName, record.TargetModel, record.TargetGroup, record.StatusCode, record.LatencyMs, record.ResponseHash, record.Error, passVal, record.FailReason)
 	return err
 }
 
@@ -526,7 +536,7 @@ func (s *sqliteStore) ListEvalRuns() ([]EvalRunRecord, error) {
 }
 
 func (s *sqliteStore) GetEvalResults(runID string) ([]EvalResultRecord, error) {
-	rows, err := s.db.Query("SELECT id, run_id, case_name, target_model, target_group, status_code, latency_ms, response_hash, error FROM eval_results WHERE run_id = ? ORDER BY id ASC", runID)
+	rows, err := s.db.Query("SELECT id, run_id, case_name, target_model, target_group, status_code, latency_ms, response_hash, error, COALESCE(pass,0), COALESCE(fail_reason,'') FROM eval_results WHERE run_id = ? ORDER BY id ASC", runID)
 	if err != nil {
 		return nil, err
 	}
@@ -534,9 +544,11 @@ func (s *sqliteStore) GetEvalResults(runID string) ([]EvalResultRecord, error) {
 	var records []EvalResultRecord
 	for rows.Next() {
 		var r EvalResultRecord
-		if err := rows.Scan(&r.ID, &r.RunID, &r.CaseName, &r.TargetModel, &r.TargetGroup, &r.StatusCode, &r.LatencyMs, &r.ResponseHash, &r.Error); err != nil {
+		var passInt int
+		if err := rows.Scan(&r.ID, &r.RunID, &r.CaseName, &r.TargetModel, &r.TargetGroup, &r.StatusCode, &r.LatencyMs, &r.ResponseHash, &r.Error, &passInt, &r.FailReason); err != nil {
 			return nil, err
 		}
+		r.Pass = passInt != 0
 		records = append(records, r)
 	}
 	return records, rows.Err()

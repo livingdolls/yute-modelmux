@@ -1183,7 +1183,8 @@ func aiCommands(configPath *string) *cobra.Command {
 
 			var decision ai.RouteDecision
 			var apiPath string
-			if strings.Contains(string(data), `"prompt"`) && !strings.Contains(string(data), `"messages"`) {
+			parsed := ai.ParseRequest(data)
+			if parsed.UserPrompt != "" && parsed.SystemPrompt == "" && len(string(data)) < 500 && !strings.Contains(string(data), `"messages"`) {
 				apiPath = "/completions"
 			} else {
 				apiPath = "/chat/completions"
@@ -1531,6 +1532,7 @@ func evalCommands(configPath *string) *cobra.Command {
 						TargetModel: r.TargetModel, TargetGroup: r.TargetGroup,
 						StatusCode: r.StatusCode, LatencyMs: r.LatencyMs,
 						ResponseHash: r.ResponseHash, Error: r.Error,
+						Pass: r.Pass, FailReason: r.FailReason,
 					})
 				}
 			}
@@ -1572,19 +1574,26 @@ func evalCommands(configPath *string) *cobra.Command {
 				return enc.Encode(results)
 			}
 
-			fmt.Fprintf(c.OutOrStdout(), "%-12s %-20s %-6s %-10s %s\n", "CASE", "TARGET", "STATUS", "LATENCY", "ERROR")
-			fmt.Fprintln(c.OutOrStdout(), strings.Repeat("-", 100))
+			fmt.Fprintf(c.OutOrStdout(), "%-12s %-20s %-6s %-10s %-8s %s\n", "CASE", "TARGET", "STATUS", "LATENCY", "RESULT", "ERROR")
+			fmt.Fprintln(c.OutOrStdout(), strings.Repeat("-", 110))
 			for _, r := range results {
 				target := r.TargetModel
 				if target == "" {
 					target = r.TargetGroup
 				}
 				latency := fmt.Sprintf("%dms", r.LatencyMs)
-				errMsg := r.Error
-				if len(errMsg) > 50 {
-					errMsg = errMsg[:50] + "..."
+				result := "PASS"
+				if !r.Pass {
+					result = "FAIL"
 				}
-				fmt.Fprintf(c.OutOrStdout(), "%-12s %-20s %-6d %-10s %s\n", r.CaseName, target, r.StatusCode, latency, errMsg)
+				errMsg := r.Error
+				if r.FailReason != "" {
+					errMsg = r.FailReason
+				}
+				if len(errMsg) > 40 {
+					errMsg = errMsg[:40] + "..."
+				}
+				fmt.Fprintf(c.OutOrStdout(), "%-12s %-20s %-6d %-10s %-8s %s\n", r.CaseName, target, r.StatusCode, latency, result, errMsg)
 			}
 			return nil
 		},

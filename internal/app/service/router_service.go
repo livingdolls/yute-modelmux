@@ -1142,9 +1142,10 @@ func (s *RouterService) appendLogLocked(log domain.RequestLog) *storage.RequestL
 		StatusCode:  log.StatusCode,
 		Error:       log.Error,
 		LatencyMs:   log.LatencyMs,
-		TokenInput:  log.TokenInput,
-		TokenOutput: log.TokenOutput,
-		CreatedAt:   createdAt,
+		TokenInput:    log.TokenInput,
+		TokenOutput:   log.TokenOutput,
+		EstimatedCost: log.EstimatedCost,
+		CreatedAt:     createdAt,
 	}
 }
 

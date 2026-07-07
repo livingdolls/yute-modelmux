@@ -190,6 +190,11 @@ func evaluateAssertions(c Case, statusCode int, latencyMs int64, body string) (b
 }
 
 func jsonPathContains(body, path string) bool {
+	path = strings.TrimPrefix(path, "$.")
+	path = strings.TrimPrefix(path, "$")
+	if path == "" {
+		return false
+	}
 	var data any
 	if err := json.Unmarshal([]byte(body), &data); err != nil {
 		return false
