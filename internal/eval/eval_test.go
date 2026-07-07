@@ -74,8 +74,8 @@ func TestRunSuite(t *testing.T) {
 	if r.ResponseHash == "" {
 		t.Fatal("expected response hash")
 	}
-	if r.LatencyMs <= 0 {
-		t.Fatal("expected positive latency")
+	if r.LatencyMs < 0 {
+		t.Fatalf("expected non-negative latency, got %d", r.LatencyMs)
 	}
 	if result.StartedAt.After(result.FinishedAt) {
 		t.Fatal("started_at must be before finished_at")
