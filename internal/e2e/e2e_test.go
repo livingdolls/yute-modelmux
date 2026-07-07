@@ -224,7 +224,7 @@ func TestE2EAdminTracesWithoutReload(t *testing.T) {
 	}
 	defer store.Close()
 
-	router, err := service.NewRouterService(loadedCfg)
+	router, err := service.NewRouterServiceWithStorage(loadedCfg, store)
 	if err != nil {
 		t.Fatalf("create router: %v", err)
 	}
@@ -258,11 +258,11 @@ func TestE2EAdminTracesWithoutReload(t *testing.T) {
 	}
 	defer traceResp.Body.Close()
 
-	if traceResp.StatusCode != http.StatusOK && traceResp.StatusCode != http.StatusNotFound {
+	if traceResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(traceResp.Body)
-		t.Fatalf("expected 200 or 404, got %d: %s", traceResp.StatusCode, string(body))
+		t.Fatalf("expected 200 for admin trace, got %d: %s", traceResp.StatusCode, string(body))
 	}
-	t.Logf("trace endpoint returned %d, trace exists: %v", traceResp.StatusCode, traceResp.StatusCode == http.StatusOK)
+	t.Logf("trace endpoint returned 200, trace restored after startup")
 }
 
 func TestE2EPrometheusMetrics(t *testing.T) {

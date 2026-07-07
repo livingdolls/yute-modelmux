@@ -26,6 +26,7 @@ func ParseRequest(body []byte) *ParsedRequest {
 	var raw struct {
 		Model    string          `json:"model"`
 		Messages []ParsedMessage `json:"messages"`
+		Prompt   string          `json:"prompt"`
 		Stream   *bool           `json:"stream"`
 		Tools    json.RawMessage `json:"tools"`
 		Functions json.RawMessage `json:"functions"`
@@ -48,6 +49,10 @@ func ParseRequest(body []byte) *ParsedRequest {
 	}
 
 	var allText []string
+	if raw.Prompt != "" {
+		req.UserPrompt = raw.Prompt
+		allText = append(allText, raw.Prompt)
+	}
 	for _, msg := range raw.Messages {
 		switch msg.Role {
 		case "system":

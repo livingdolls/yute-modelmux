@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -189,7 +190,45 @@ func evaluateAssertions(c Case, statusCode int, latencyMs int64, body string) (b
 }
 
 func jsonPathContains(body, path string) bool {
-	return strings.Contains(body, path)
+	var data any
+	if err := json.Unmarshal([]byte(body), &data); err != nil {
+		return false
+	}
+	parts := strings.Split(path, ".")
+	if len(parts) == 0 {
+		return false
+	}
+	current := data
+	for _, part := range parts {
+		index := -1
+		key := part
+		if idx := strings.IndexByte(part, '['); idx > 0 {
+			key = part[:idx]
+			if end := strings.IndexByte(part[idx:], ']'); end > 0 {
+				if n, err := strconv.Atoi(part[idx+1 : idx+end]); err == nil {
+					index = n
+				}
+			}
+		}
+		m, ok := current.(map[string]any)
+		if !ok {
+			return false
+		}
+		val, ok := m[key]
+		if !ok {
+			return false
+		}
+		if index >= 0 {
+			arr, ok := val.([]any)
+			if !ok || index >= len(arr) {
+				return false
+			}
+			current = arr[index]
+		} else {
+			current = val
+		}
+	}
+	return current != nil
 }
 
 func minInt(a, b int) int {

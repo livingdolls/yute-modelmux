@@ -60,6 +60,8 @@ type streamResultInfo struct {
 	Error      string
 	StartedAt  time.Time
 	ModelIdx   int
+	InputCost  float64
+	OutputCost float64
 }
 
 func SetStreamResultContext(ctx context.Context, info streamResultInfo) context.Context {
@@ -187,7 +189,11 @@ func newRouterService(cfg *config.Config, store storage.Storage, secretStore *se
 	}
 	for _, m := range cfg.Models {
 		caps := defaultCapabilitiesForType(providerTypes[m.ProviderID], m.Capabilities)
-		rs.models = append(rs.models, domain.Model{ID: m.ID, ProviderID: m.ProviderID, ModelName: m.ModelName, Strategy: domain.RotationStrategy(m.Strategy), Enabled: m.Enabled, RequestsPerMinute: m.RequestsPerMinute, MaxConcurrentRequests: m.MaxConcurrentRequests, Capabilities: caps})
+		cost := domain.CostConfig{}
+		if m.Cost != nil {
+			cost = domain.CostConfig{InputPer1M: m.Cost.InputPer1M, OutputPer1M: m.Cost.OutputPer1M}
+		}
+		rs.models = append(rs.models, domain.Model{ID: m.ID, ProviderID: m.ProviderID, ModelName: m.ModelName, Strategy: domain.RotationStrategy(m.Strategy), Enabled: m.Enabled, RequestsPerMinute: m.RequestsPerMinute, MaxConcurrentRequests: m.MaxConcurrentRequests, Capabilities: caps, Cost: cost})
 	}
 	for _, g := range cfg.ModelGroups {
 		strategy := domain.GroupStrategy(g.Strategy)
@@ -819,12 +825,6 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 		result.ProviderID = provider.ID
 		result.LatencyMs = time.Since(startedAt).Milliseconds()
 
-		if model.Cost.InputPer1M > 0 || model.Cost.OutputPer1M > 0 {
-			ic := float64(result.TokenInput) / 1000000 * model.Cost.InputPer1M
-			oc := float64(result.TokenOutput) / 1000000 * model.Cost.OutputPer1M
-			result.EstimatedCost = ic + oc
-		}
-
 		if result.Success && !isStreamRequest(bodyBytes) && resp != nil {
 			respBodyBytes, readErr := io.ReadAll(resp.Body)
 			resp.Body.Close()
@@ -832,6 +832,12 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 				result.TokenInput, result.TokenOutput = parseTokenUsage(respBodyBytes)
 				resp.Body = io.NopCloser(bytes.NewReader(respBodyBytes))
 			}
+		}
+
+		if model.Cost.InputPer1M > 0 || model.Cost.OutputPer1M > 0 {
+			ic := float64(result.TokenInput) / 1000000 * model.Cost.InputPer1M
+			oc := float64(result.TokenOutput) / 1000000 * model.Cost.OutputPer1M
+			result.EstimatedCost = ic + oc
 		}
 
 		if isStreamRequest(bodyBytes) && result.Success {
@@ -845,6 +851,8 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 				Error:      result.Error,
 				StartedAt:  startedAt,
 				ModelIdx:   modelIdx,
+				InputCost:  model.Cost.InputPer1M,
+				OutputCost: model.Cost.OutputPer1M,
 			})
 			if resp != nil && resp.Body != nil {
 				if tracker, ok := resp.Body.(providerclient.StreamUsageTracker); ok {
@@ -1023,6 +1031,12 @@ func (s *RouterService) FinalizeStreamResult(ctx context.Context, copyErr error)
 	}
 	if tracker, ok := ctx.Value(ctxKeyTokenTracker).(*providerclient.StreamUsage); ok {
 		result.TokenInput, result.TokenOutput = tracker.Tokens()
+	}
+
+	if info.InputCost > 0 || info.OutputCost > 0 {
+		ic := float64(result.TokenInput) / 1000000 * info.InputCost
+		oc := float64(result.TokenOutput) / 1000000 * info.OutputCost
+		result.EstimatedCost = ic + oc
 	}
 
 	s.mu.Lock()

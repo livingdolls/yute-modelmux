@@ -544,18 +544,26 @@ func (s *sqliteStore) GetEvalResults(runID string) ([]EvalResultRecord, error) {
 
 func (s *sqliteStore) PruneBefore(before string) (int, error) {
 	total := 0
+	var errs []string
 	tables := []string{"request_logs", "route_traces", "eval_runs"}
 	for _, table := range tables {
 		col := "created_at"
 		if table == "eval_runs" {
-			s.db.Exec("DELETE FROM eval_results WHERE run_id IN (SELECT id FROM eval_runs WHERE "+col+" < ?)", before)
+			_, err := s.db.Exec("DELETE FROM eval_results WHERE run_id IN (SELECT id FROM eval_runs WHERE "+col+" < ?)", before)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("eval_results: %v", err))
+			}
 		}
 		result, err := s.db.Exec("DELETE FROM "+table+" WHERE "+col+" < ?", before)
 		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", table, err))
 			continue
 		}
 		ar, _ := result.RowsAffected()
 		total += int(ar)
+	}
+	if len(errs) > 0 {
+		return total, fmt.Errorf("prune errors: %s", strings.Join(errs, "; "))
 	}
 	return total, nil
 }

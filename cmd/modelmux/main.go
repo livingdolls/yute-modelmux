@@ -1183,8 +1183,8 @@ func aiCommands(configPath *string) *cobra.Command {
 
 			var decision ai.RouteDecision
 			var apiPath string
-			if strings.Contains(string(data), `"/v1/chat/completions"`) {
-				apiPath = "/chat/completions"
+			if strings.Contains(string(data), `"prompt"`) && !strings.Contains(string(data), `"messages"`) {
+				apiPath = "/completions"
 			} else {
 				apiPath = "/chat/completions"
 			}
@@ -1503,7 +1503,7 @@ func evalCommands(configPath *string) *cobra.Command {
 			passed := 0
 			failed := 0
 			for _, r := range result.Results {
-				if r.Error == "" && r.StatusCode >= 200 && r.StatusCode < 400 {
+				if r.Pass {
 					passed++
 				} else {
 					failed++
