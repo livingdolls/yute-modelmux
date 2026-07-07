@@ -819,6 +819,12 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 		result.ProviderID = provider.ID
 		result.LatencyMs = time.Since(startedAt).Milliseconds()
 
+		if model.Cost.InputPer1M > 0 || model.Cost.OutputPer1M > 0 {
+			ic := float64(result.TokenInput) / 1000000 * model.Cost.InputPer1M
+			oc := float64(result.TokenOutput) / 1000000 * model.Cost.OutputPer1M
+			result.EstimatedCost = ic + oc
+		}
+
 		if result.Success && !isStreamRequest(bodyBytes) && resp != nil {
 			respBodyBytes, readErr := io.ReadAll(resp.Body)
 			resp.Body.Close()
@@ -880,7 +886,7 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 		s.keys[i].LastUsedAt = &now
 		s.checkDailyResetLocked(i)
 		s.recordKeyPerMinuteUsageLocked(i, result.TokenInput+result.TokenOutput)
-		log := domain.RequestLog{ID: fmt.Sprintf("log-%d", now.UnixNano()), RequestID: GetRequestID(ctx), GroupID: result.GroupID, ModelID: result.ModelID, ProviderID: result.ProviderID, KeyID: keyID, StatusCode: result.StatusCode, Error: result.Error, LatencyMs: result.LatencyMs, TokenInput: result.TokenInput, TokenOutput: result.TokenOutput, CreatedAt: now}
+		log := domain.RequestLog{ID: fmt.Sprintf("log-%d", now.UnixNano()), RequestID: GetRequestID(ctx), GroupID: result.GroupID, ModelID: result.ModelID, ProviderID: result.ProviderID, KeyID: keyID, StatusCode: result.StatusCode, Error: result.Error, LatencyMs: result.LatencyMs, TokenInput: result.TokenInput, TokenOutput: result.TokenOutput, EstimatedCost: result.EstimatedCost, CreatedAt: now}
 		if result.Success {
 			s.keys[i].ErrorCount = 0
 			if s.keys[i].Status != domain.KeyStatusLimited {

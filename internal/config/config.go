@@ -132,6 +132,12 @@ type ModelConfig struct {
 	RequestsPerMinute     int                    `yaml:"requests_per_minute"`
 	MaxConcurrentRequests int                    `yaml:"max_concurrent_requests"`
 	Capabilities          *ModelCapabilityConfig `yaml:"capabilities,omitempty"`
+	Cost                  *CostConfig            `yaml:"cost,omitempty"`
+}
+
+type CostConfig struct {
+	InputPer1M  float64 `yaml:"input_per_1m"`
+	OutputPer1M float64 `yaml:"output_per_1m"`
 }
 
 type ModelCapabilityConfig struct {

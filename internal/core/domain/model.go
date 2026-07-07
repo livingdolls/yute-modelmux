@@ -23,6 +23,12 @@ type Model struct {
 	MinuteWindowStart     time.Time
 	MinuteRequestCount    int
 	Capabilities          Capabilities
+	Cost                  CostConfig
+}
+
+type CostConfig struct {
+	InputPer1M  float64
+	OutputPer1M float64
 }
 
 type Capabilities struct {

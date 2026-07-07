@@ -33,4 +33,5 @@ type KeyResult struct {
 	CooldownSeconds int
 	TokenInput      int
 	TokenOutput     int
+	EstimatedCost   float64
 }
