@@ -1153,6 +1153,97 @@ func aiCommands(configPath *string) *cobra.Command {
 	}
 	aiCmd.AddCommand(doctorCmd)
 
+	var routeFile string
+	var routeJSON bool
+	routeCmd := &cobra.Command{
+		Use:   "route",
+		Short: "Simulate AI routing for a request file (dry-run)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			data, err := os.ReadFile(routeFile)
+			if err != nil {
+				return err
+			}
+			cfg, err := config.Load(*configPath)
+			if err != nil {
+				return err
+			}
+			aiCfg := cfg.AI
+			if !aiCfg.Enabled {
+				fmt.Fprintln(cmd.OutOrStdout(), "AI features are disabled. Enable ai.enabled: true to use routing rules.")
+				return nil
+			}
+
+			c := ai.NewClassifier()
+			g := ai.NewGuardrails()
+			rp := ai.NewRoutePolicy()
+
+			profile := c.Classify(data)
+			guardResult := g.Check(aiCfg.Guardrails, data)
+
+			var decision ai.RouteDecision
+			var apiPath string
+			if strings.Contains(string(data), `"/v1/chat/completions"`) {
+				apiPath = "/chat/completions"
+			} else {
+				apiPath = "/chat/completions"
+			}
+
+			if len(aiCfg.RoutingRules) > 0 {
+				decision = rp.Evaluate(aiCfg.RoutingRules, profile, apiPath)
+			}
+
+			if routeJSON {
+				out := map[string]any{
+					"original_model":   extractModelRaw(data),
+					"request_profile": map[string]any{
+						"task_class":     profile.TaskClass,
+						"prompt_size":    profile.PromptSize,
+						"has_tools":      profile.HasToolDefinition,
+						"has_vision":     profile.HasImageContent,
+						"has_streaming":  profile.IsStreaming,
+						"has_json_mode":  profile.HasJSONMode,
+						"system_prompt":  profile.HasSystemPrompt,
+					},
+					"guardrail": map[string]any{
+						"allowed": guardResult.Allowed,
+						"action":  guardResult.Action,
+						"reason":  guardResult.Reason,
+					},
+					"route_decision": map[string]any{
+						"matched":       decision.Matched,
+						"rerouted_id":   decision.ReroutedID,
+						"fallback_group": decision.FallbackGroup,
+						"rule_index":    decision.RuleIndex,
+					},
+				}
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(out)
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Original model: %s\n", extractModelRaw(data))
+			fmt.Fprintf(cmd.OutOrStdout(), "Task class:    %s\n", profile.TaskClass)
+			fmt.Fprintf(cmd.OutOrStdout(), "Has tools:     %v\n", profile.HasToolDefinition)
+			fmt.Fprintf(cmd.OutOrStdout(), "Has vision:    %v\n", profile.HasImageContent)
+			fmt.Fprintf(cmd.OutOrStdout(), "Streaming:     %v\n", profile.IsStreaming)
+			fmt.Fprintf(cmd.OutOrStdout(), "Guardrail:     %s (%s)\n", guardResult.Action, guardResult.Reason)
+			if decision.Matched {
+				fmt.Fprintf(cmd.OutOrStdout(), "Rule:          #%d matched\n", decision.RuleIndex)
+				fmt.Fprintf(cmd.OutOrStdout(), "Rerouted to:   %s\n", decision.ReroutedID)
+				if decision.FallbackGroup != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "Fallback:      %s\n", decision.FallbackGroup)
+				}
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "Rule:          no matching rule")
+			}
+			return nil
+		},
+	}
+	routeCmd.Flags().StringVar(&routeFile, "file", "", "path to request JSON file")
+	routeCmd.Flags().BoolVar(&routeJSON, "json", false, "output as JSON")
+	routeCmd.MarkFlagRequired("file")
+	aiCmd.AddCommand(routeCmd)
+
 	return aiCmd
 }
 
@@ -1298,6 +1389,17 @@ func buildChatBody(model, system, user string) string {
 func jsonString(s string) string {
 	data, _ := json.Marshal(s)
 	return string(data)
+}
+
+func extractModelRaw(body []byte) string {
+	var payload struct {
+		Model string `json:"model"`
+	}
+	json.Unmarshal(body, &payload)
+	if payload.Model == "" {
+		return "(none)"
+	}
+	return payload.Model
 }
 
 func chatCommand(configPath *string) *cobra.Command {
