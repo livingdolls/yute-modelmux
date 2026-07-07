@@ -70,6 +70,10 @@ func (s *Server) SetHealthChecker(checker *service.HealthChecker) {
 	s.healthChecker = checker
 }
 
+func (s *Server) SetStore(store storage.Storage) {
+	s.store = store
+}
+
 func (s *Server) loadRouterService() *service.RouterService {
 	s.rsMu.RLock()
 	defer s.rsMu.RUnlock()

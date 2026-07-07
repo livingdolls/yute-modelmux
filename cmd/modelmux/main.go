@@ -892,6 +892,7 @@ to the new key before running this command.`,
 			}
 			srv := httpserver.New(router, cfg)
 			srv.SetConfigPath(configPath)
+			srv.SetStore(store)
 
 			healthChecker := service.NewHealthChecker(router, cfg.HealthCheck)
 			srv.SetHealthChecker(healthChecker)
