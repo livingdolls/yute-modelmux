@@ -160,7 +160,13 @@ func (s *sqliteStore) Close() error {
 }
 
 func migrate(db *sql.DB) error {
-	_, err := db.Exec(`
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		CREATE TABLE IF NOT EXISTS keys_runtime (
 			key_id TEXT PRIMARY KEY,
 			status TEXT NOT NULL DEFAULT 'active',
@@ -175,7 +181,7 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 
-	_, err = db.Exec(`
+	_, err = tx.Exec(`
 		CREATE TABLE IF NOT EXISTS request_logs (
 			id TEXT PRIMARY KEY,
 			group_id TEXT NOT NULL DEFAULT '',
@@ -194,17 +200,17 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 
-	_, err = db.Exec("CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at)")
+	_, err = tx.Exec("CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at)")
 	if err != nil {
 		return err
 	}
 
-	_, err = db.Exec("CREATE INDEX IF NOT EXISTS idx_request_logs_model_id ON request_logs(model_id)")
+	_, err = tx.Exec("CREATE INDEX IF NOT EXISTS idx_request_logs_model_id ON request_logs(model_id)")
 	if err != nil {
 		return err
 	}
 
-	_, err = db.Exec(`
+	_, err = tx.Exec(`
 		CREATE TABLE IF NOT EXISTS route_traces (
 			id TEXT PRIMARY KEY,
 			request_id TEXT NOT NULL,
@@ -218,12 +224,12 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 
-	_, err = db.Exec("CREATE INDEX IF NOT EXISTS idx_route_traces_request_id ON route_traces(request_id)")
+	_, err = tx.Exec("CREATE INDEX IF NOT EXISTS idx_route_traces_request_id ON route_traces(request_id)")
 	if err != nil {
 		return err
 	}
 
-	_, err = db.Exec(`
+	_, err = tx.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,
@@ -235,7 +241,7 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 
-	_, err = db.Exec(`
+	_, err = tx.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_messages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_id INTEGER NOT NULL,
@@ -244,11 +250,11 @@ func migrate(db *sql.DB) error {
 			created_at TEXT NOT NULL DEFAULT ''
 		)
 	`)
-		if err != nil {
+	if err != nil {
 		return err
 	}
 
-	_, err = db.Exec(`
+	_, err = tx.Exec(`
 		CREATE TABLE IF NOT EXISTS eval_runs (
 			id TEXT PRIMARY KEY,
 			suite_name TEXT NOT NULL,
@@ -261,7 +267,7 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 
-	_, err = db.Exec(`
+	_, err = tx.Exec(`
 		CREATE TABLE IF NOT EXISTS eval_results (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			run_id TEXT NOT NULL,
@@ -278,29 +284,82 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 
-	alterColumns(db,
-		"ALTER TABLE keys_runtime ADD COLUMN last_used_at TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE keys_runtime ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE keys_runtime ADD COLUMN daily_request_count INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE keys_runtime ADD COLUMN daily_token_count INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE keys_runtime ADD COLUMN daily_date TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE keys_runtime ADD COLUMN daily_request_limit INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE keys_runtime ADD COLUMN daily_token_limit INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE eval_results ADD COLUMN pass INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE eval_results ADD COLUMN fail_reason TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE request_logs ADD COLUMN estimated_cost REAL NOT NULL DEFAULT 0",
-	)
+	_, err = tx.Exec(`
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version INTEGER PRIMARY KEY,
+			applied_at TEXT NOT NULL DEFAULT ''
+		)
+	`)
+	if err != nil {
+		return err
+	}
 
+	if err := ensureColumns(tx,
+		columnMigration{"keys_runtime", "last_used_at", "ALTER TABLE keys_runtime ADD COLUMN last_used_at TEXT NOT NULL DEFAULT ''"},
+		columnMigration{"keys_runtime", "updated_at", "ALTER TABLE keys_runtime ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''"},
+		columnMigration{"keys_runtime", "daily_request_count", "ALTER TABLE keys_runtime ADD COLUMN daily_request_count INTEGER NOT NULL DEFAULT 0"},
+		columnMigration{"keys_runtime", "daily_token_count", "ALTER TABLE keys_runtime ADD COLUMN daily_token_count INTEGER NOT NULL DEFAULT 0"},
+		columnMigration{"keys_runtime", "daily_date", "ALTER TABLE keys_runtime ADD COLUMN daily_date TEXT NOT NULL DEFAULT ''"},
+		columnMigration{"keys_runtime", "daily_request_limit", "ALTER TABLE keys_runtime ADD COLUMN daily_request_limit INTEGER NOT NULL DEFAULT 0"},
+		columnMigration{"keys_runtime", "daily_token_limit", "ALTER TABLE keys_runtime ADD COLUMN daily_token_limit INTEGER NOT NULL DEFAULT 0"},
+		columnMigration{"eval_results", "pass", "ALTER TABLE eval_results ADD COLUMN pass INTEGER NOT NULL DEFAULT 0"},
+		columnMigration{"eval_results", "fail_reason", "ALTER TABLE eval_results ADD COLUMN fail_reason TEXT NOT NULL DEFAULT ''"},
+		columnMigration{"request_logs", "estimated_cost", "ALTER TABLE request_logs ADD COLUMN estimated_cost REAL NOT NULL DEFAULT 0"},
+	); err != nil {
+		return err
+	}
+
+	_, err = tx.Exec("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)", 1, time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+type columnMigration struct {
+	table  string
+	column string
+	stmt   string
+}
+
+func ensureColumns(tx *sql.Tx, migrations ...columnMigration) error {
+	for _, migration := range migrations {
+		exists, err := columnExists(tx, migration.table, migration.column)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := tx.Exec(migration.stmt); err != nil {
+			return fmt.Errorf("%s.%s: %w", migration.table, migration.column, err)
+		}
+	}
 	return nil
 }
 
-func alterColumns(db *sql.DB, stmts ...string) {
-	for _, stmt := range stmts {
-		_, err := db.Exec(stmt)
-		if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-			fmt.Fprintf(os.Stderr, "storage: migration warning: %v\n", err)
+func columnExists(tx *sql.Tx, table, column string) (bool, error) {
+	rows, err := tx.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name string
+		var typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
 		}
 	}
+	return false, rows.Err()
 }
 
 func (s *sqliteStore) SaveKeyRuntime(record KeyRuntimeRecord) error {

@@ -31,13 +31,26 @@ type Server struct {
 	rsMu          sync.RWMutex
 	cfg           *config.Config
 	cfgMu         sync.RWMutex
+	configFileMu  sync.Mutex
 	configPath    string
 	store         storage.Storage
-	retiredStores []storage.Storage
+	storeMu       sync.RWMutex
+	retiredStores []*retiredStore
 	retiredMu     sync.Mutex
 	healthChecker *service.HealthChecker
 	mux           *http.ServeMux
 	srv           *http.Server
+}
+
+const retiredStoreCloseDelay = 30 * time.Second
+
+type retiredStore struct {
+	store storage.Storage
+	once  sync.Once
+}
+
+func (r *retiredStore) Close() {
+	r.once.Do(func() { _ = r.store.Close() })
 }
 
 func New(rs *service.RouterService, cfg *config.Config) *Server {
@@ -71,6 +84,8 @@ func (s *Server) SetHealthChecker(checker *service.HealthChecker) {
 }
 
 func (s *Server) SetStore(store storage.Storage) {
+	s.storeMu.Lock()
+	defer s.storeMu.Unlock()
 	s.store = store
 }
 
@@ -87,7 +102,16 @@ func (s *Server) loadConfig() *config.Config {
 }
 
 func (s *Server) loadStore() storage.Storage {
+	s.storeMu.RLock()
+	defer s.storeMu.RUnlock()
 	return s.store
+}
+
+func (s *Server) configFilePath() string {
+	if s.configPath != "" {
+		return s.configPath
+	}
+	return config.DefaultConfigPath()
 }
 
 func expandHome(path string) string {
@@ -113,10 +137,9 @@ func resolveSecretPath(cfg *config.Config) string {
 }
 
 func (s *Server) adminReloadHandler(w http.ResponseWriter, r *http.Request) {
-	path := s.configPath
-	if path == "" {
-		path = config.DefaultConfigPath()
-	}
+	path := s.configFilePath()
+	oldRS := s.loadRouterService()
+	oldMetrics := oldRS.MetricsSnapshot()
 	cfg, err := config.Load(path)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to load config: " + err.Error()})
@@ -157,12 +180,16 @@ func (s *Server) adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to create router: " + err.Error()})
 		return
 	}
+	newRS.RestoreMetrics(oldMetrics)
 
 	s.rsMu.Lock()
-	oldStore := s.store
 	s.rs = newRS
-	s.store = newStore
 	s.rsMu.Unlock()
+
+	s.storeMu.Lock()
+	oldStore := s.store
+	s.store = newStore
+	s.storeMu.Unlock()
 
 	s.cfgMu.Lock()
 	s.cfg = cfg
@@ -173,12 +200,28 @@ func (s *Server) adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if oldStore != nil {
-		s.retiredMu.Lock()
-		s.retiredStores = append(s.retiredStores, oldStore)
-		s.retiredMu.Unlock()
+		s.retireStore(oldStore)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "reloaded"})
+}
+
+func (s *Server) updateKeyStatusInConfig(id, status string) error {
+	s.configFileMu.Lock()
+	defer s.configFileMu.Unlock()
+
+	path := s.configFilePath()
+	cfg, err := config.Load(path)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	for i := range cfg.Keys {
+		if cfg.Keys[i].ID == id {
+			cfg.Keys[i].Status = status
+			return config.Save(path, cfg)
+		}
+	}
+	return os.ErrNotExist
 }
 
 func (s *Server) adminEnableKeyHandler(w http.ResponseWriter, r *http.Request) {
@@ -187,29 +230,12 @@ func (s *Server) adminEnableKeyHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "missing key id"})
 		return
 	}
-	path := s.configPath
-	if path == "" {
-		path = config.DefaultConfigPath()
-	}
-	cfg, err := config.Load(path)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to load config: " + err.Error()})
-		return
-	}
-	found := false
-	for i := range cfg.Keys {
-		if cfg.Keys[i].ID == id {
-			cfg.Keys[i].Status = "active"
-			found = true
-			break
+	if err := s.updateKeyStatusInConfig(id, "active"); err != nil {
+		if os.IsNotExist(err) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "key not found"})
+			return
 		}
-	}
-	if !found {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "key not found"})
-		return
-	}
-	if err := config.Save(path, cfg); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to save config: " + err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
 	rs := s.loadRouterService()
@@ -223,29 +249,12 @@ func (s *Server) adminDisableKeyHandler(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "missing key id"})
 		return
 	}
-	path := s.configPath
-	if path == "" {
-		path = config.DefaultConfigPath()
-	}
-	cfg, err := config.Load(path)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to load config: " + err.Error()})
-		return
-	}
-	found := false
-	for i := range cfg.Keys {
-		if cfg.Keys[i].ID == id {
-			cfg.Keys[i].Status = "disabled"
-			found = true
-			break
+	if err := s.updateKeyStatusInConfig(id, "disabled"); err != nil {
+		if os.IsNotExist(err) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "key not found"})
+			return
 		}
-	}
-	if !found {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "key not found"})
-		return
-	}
-	if err := config.Save(path, cfg); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to save config: " + err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
 	rs := s.loadRouterService()
@@ -420,9 +429,36 @@ func (s *Server) closeRetired() {
 		store.Close()
 	}
 	s.retiredStores = nil
-	s.rsMu.RLock()
-	if s.store != nil {
-		s.store.Close()
+	s.storeMu.RLock()
+	current := s.store
+	s.storeMu.RUnlock()
+	if current != nil {
+		current.Close()
 	}
-	s.rsMu.RUnlock()
+}
+
+func (s *Server) retireStore(store storage.Storage) {
+	retired := &retiredStore{store: store}
+	s.retiredMu.Lock()
+	s.retiredStores = append(s.retiredStores, retired)
+	s.retiredMu.Unlock()
+
+	go func() {
+		timer := time.NewTimer(retiredStoreCloseDelay)
+		defer timer.Stop()
+		<-timer.C
+		retired.Close()
+		s.removeRetiredStore(retired)
+	}()
+}
+
+func (s *Server) removeRetiredStore(retired *retiredStore) {
+	s.retiredMu.Lock()
+	defer s.retiredMu.Unlock()
+	for i, candidate := range s.retiredStores {
+		if candidate == retired {
+			s.retiredStores = append(s.retiredStores[:i], s.retiredStores[i+1:]...)
+			return
+		}
+	}
 }

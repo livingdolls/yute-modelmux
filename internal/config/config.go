@@ -16,8 +16,8 @@ type Config struct {
 	Cooldown    CooldownConfig     `yaml:"cooldown"`
 	Retry       RetryConfig        `yaml:"retry"`
 	HealthCheck HealthCheckConfig  `yaml:"health_check"`
-	AI         AIConfig            `yaml:"ai"`
-	Providers  []ProviderConfig    `yaml:"providers"`
+	AI          AIConfig           `yaml:"ai"`
+	Providers   []ProviderConfig   `yaml:"providers"`
 	Models      []ModelConfig      `yaml:"models"`
 	ModelGroups []ModelGroupConfig `yaml:"model_groups"`
 	Keys        []KeyConfig        `yaml:"keys"`
@@ -29,13 +29,18 @@ type AppConfig struct {
 }
 
 type ServerConfig struct {
-	Host               string `yaml:"host"`
-	Port               int    `yaml:"port"`
-	ReadTimeoutSecond  int    `yaml:"read_timeout_seconds"`
-	WriteTimeoutSecond int    `yaml:"write_timeout_seconds"`
-	RequireAuth        bool   `yaml:"require_auth"`
-	AuthTokenEnv       string `yaml:"auth_token_env"`
-	MaxRequestBodyMB   int    `yaml:"max_request_body_mb"`
+	Host               string      `yaml:"host"`
+	Port               int         `yaml:"port"`
+	ReadTimeoutSecond  int         `yaml:"read_timeout_seconds"`
+	WriteTimeoutSecond int         `yaml:"write_timeout_seconds"`
+	RequireAuth        bool        `yaml:"require_auth"`
+	AuthTokenEnv       string      `yaml:"auth_token_env"`
+	MaxRequestBodyMB   int         `yaml:"max_request_body_mb"`
+	Admin              AdminConfig `yaml:"admin,omitempty"`
+}
+
+type AdminConfig struct {
+	RequireAuth *bool `yaml:"require_auth,omitempty"`
 }
 
 type StorageConfig struct {
@@ -63,13 +68,13 @@ type HealthCheckConfig struct {
 }
 
 type AIConfig struct {
-	Enabled        bool                  `yaml:"enabled"`
-	Classifier     ClassifierConfig      `yaml:"classifier"`
-	Guardrails     GuardrailConfig       `yaml:"guardrails"`
-	RouteTrace     RouteTraceConfig      `yaml:"route_trace"`
-	RoutingRules   []AIRoutingRuleConfig `yaml:"routing_rules"`
-	Prompts        PromptsConfig         `yaml:"prompts"`
-	Memory         MemoryConfig          `yaml:"memory"`
+	Enabled      bool                  `yaml:"enabled"`
+	Classifier   ClassifierConfig      `yaml:"classifier"`
+	Guardrails   GuardrailConfig       `yaml:"guardrails"`
+	RouteTrace   RouteTraceConfig      `yaml:"route_trace"`
+	RoutingRules []AIRoutingRuleConfig `yaml:"routing_rules"`
+	Prompts      PromptsConfig         `yaml:"prompts"`
+	Memory       MemoryConfig          `yaml:"memory"`
 }
 
 type PromptsConfig struct {
@@ -91,26 +96,26 @@ type GuardrailConfig struct {
 }
 
 type RouteTraceConfig struct {
-	Enabled                  bool `yaml:"enabled"`
-	IncludeResponseHeader    bool `yaml:"include_response_header"`
+	Enabled               bool `yaml:"enabled"`
+	IncludeResponseHeader bool `yaml:"include_response_header"`
 }
 
 type AIRoutingRuleConfig struct {
-	Description       string             `yaml:"description"`
-	When              AIRoutingRuleWhen  `yaml:"when"`
-	UseModel          string             `yaml:"use_model"`
-	UseGroup          string             `yaml:"use_group"`
-	FallbackGroup     string             `yaml:"fallback_group"`
-	RequireCapability []string           `yaml:"require_capability"`
+	Description       string            `yaml:"description"`
+	When              AIRoutingRuleWhen `yaml:"when"`
+	UseModel          string            `yaml:"use_model"`
+	UseGroup          string            `yaml:"use_group"`
+	FallbackGroup     string            `yaml:"fallback_group"`
+	RequireCapability []string          `yaml:"require_capability"`
 }
 
 type AIRoutingRuleWhen struct {
-	Task        string `yaml:"task"`
-	HasTools    *bool  `yaml:"has_tools"`
-	HasVision   *bool  `yaml:"has_vision"`
-	HasStreaming *bool `yaml:"has_streaming"`
-	IsChat       *bool `yaml:"is_chat"`
-	IsCompletion *bool `yaml:"is_completion"`
+	Task         string `yaml:"task"`
+	HasTools     *bool  `yaml:"has_tools"`
+	HasVision    *bool  `yaml:"has_vision"`
+	HasStreaming *bool  `yaml:"has_streaming"`
+	IsChat       *bool  `yaml:"is_chat"`
+	IsCompletion *bool  `yaml:"is_completion"`
 }
 
 type ProviderConfig struct {
@@ -248,10 +253,45 @@ func Save(path string, cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o600)
+	tmp, err := os.CreateTemp(dir, ".modelmux-config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	removeTmp := true
+	defer func() {
+		if removeTmp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	removeTmp = false
+	if dirFile, err := os.Open(dir); err == nil {
+		_ = dirFile.Sync()
+		_ = dirFile.Close()
+	}
+	return nil
 }
 
 func WriteDefault(path string) error {
@@ -303,8 +343,49 @@ func (c *Config) collectValidationErrors() ValidationErrors {
 	if c.Server.Port <= 0 {
 		errs = append(errs, "server.port must be greater than zero")
 	}
+	if c.Server.ReadTimeoutSecond < 0 {
+		errs = append(errs, "server.read_timeout_seconds must be non-negative")
+	}
+	if c.Server.WriteTimeoutSecond < 0 {
+		errs = append(errs, "server.write_timeout_seconds must be non-negative")
+	}
+	if c.Server.MaxRequestBodyMB < 0 {
+		errs = append(errs, "server.max_request_body_mb must be non-negative")
+	}
 	if c.Server.RequireAuth && c.Server.AuthTokenEnv == "" {
 		errs = append(errs, "server.auth_token_env is required when server.require_auth is true")
+	}
+	if c.Storage.RetentionDays < 0 {
+		errs = append(errs, "storage.retention_days must be non-negative")
+	}
+	if c.Cooldown.RateLimitSeconds < 0 {
+		errs = append(errs, "cooldown.rate_limit_seconds must be non-negative")
+	}
+	if c.Cooldown.ServerErrorSeconds < 0 {
+		errs = append(errs, "cooldown.server_error_seconds must be non-negative")
+	}
+	if c.Cooldown.TimeoutSeconds < 0 {
+		errs = append(errs, "cooldown.timeout_seconds must be non-negative")
+	}
+	if c.Retry.MaxRetryPerKey < 0 {
+		errs = append(errs, "retry.max_retry_per_key must be non-negative")
+	}
+	if c.Retry.MaxTotalAttempts < 0 {
+		errs = append(errs, "retry.max_total_attempts must be non-negative")
+	}
+	for i, backoff := range c.Retry.BackoffMilliseconds {
+		if backoff < 0 {
+			errs = append(errs, fmt.Sprintf("retry.backoff_milliseconds[%d] must be non-negative", i))
+		}
+	}
+	if c.HealthCheck.IntervalSeconds < 0 {
+		errs = append(errs, "health_check.interval_seconds must be non-negative")
+	}
+	if c.HealthCheck.TimeoutSeconds < 0 {
+		errs = append(errs, "health_check.timeout_seconds must be non-negative")
+	}
+	if c.AI.Guardrails.MaxPromptChars < 0 {
+		errs = append(errs, "ai.guardrails.max_prompt_chars must be non-negative")
 	}
 	providerIDs := map[string]struct{}{}
 	for _, p := range c.Providers {
@@ -362,6 +443,20 @@ func (c *Config) collectValidationErrors() ValidationErrors {
 				errs = append(errs, "model "+m.ID+" strategy "+m.Strategy+" is not valid; must be one of: failover, round_robin, least_error, least_used")
 			}
 		}
+		if m.RequestsPerMinute < 0 {
+			errs = append(errs, "model "+m.ID+" requests_per_minute must be non-negative")
+		}
+		if m.MaxConcurrentRequests < 0 {
+			errs = append(errs, "model "+m.ID+" max_concurrent_requests must be non-negative")
+		}
+		if m.Cost != nil {
+			if m.Cost.InputPer1M < 0 {
+				errs = append(errs, "model "+m.ID+" cost.input_per_1m must be non-negative")
+			}
+			if m.Cost.OutputPer1M < 0 {
+				errs = append(errs, "model "+m.ID+" cost.output_per_1m must be non-negative")
+			}
+		}
 	}
 	groupIDs := map[string]struct{}{}
 	for _, g := range c.ModelGroups {
@@ -408,6 +503,28 @@ func (c *Config) collectValidationErrors() ValidationErrors {
 		if _, ok := modelIDs[k.ModelID]; !ok && k.ModelID != "" {
 			errs = append(errs, "key "+k.ID+" references unknown model "+k.ModelID)
 		}
+		validStatuses := map[string]bool{"": true, "active": true, "cooldown": true, "invalid": true, "limited": true, "disabled": true}
+		if !validStatuses[k.Status] {
+			errs = append(errs, "key "+k.ID+" status "+k.Status+" is not valid; must be one of: active, cooldown, invalid, limited, disabled")
+		}
+		if k.Priority < 0 {
+			errs = append(errs, "key "+k.ID+" priority must be non-negative")
+		}
+		if k.DailyRequestLimit < 0 {
+			errs = append(errs, "key "+k.ID+" daily_request_limit must be non-negative")
+		}
+		if k.DailyTokenLimit < 0 {
+			errs = append(errs, "key "+k.ID+" daily_token_limit must be non-negative")
+		}
+		if k.RequestsPerMinute < 0 {
+			errs = append(errs, "key "+k.ID+" requests_per_minute must be non-negative")
+		}
+		if k.TokensPerMinute < 0 {
+			errs = append(errs, "key "+k.ID+" tokens_per_minute must be non-negative")
+		}
+		if k.MaxConcurrentRequests < 0 {
+			errs = append(errs, "key "+k.ID+" max_concurrent_requests must be non-negative")
+		}
 		if k.ProviderID != "" && k.ModelID != "" {
 			if modelProviderID := modelByProviderID[k.ModelID]; modelProviderID != k.ProviderID {
 				errs = append(errs, "key "+k.ID+" provider "+k.ProviderID+" does not match model "+k.ModelID+" provider "+modelProviderID)
@@ -419,6 +536,12 @@ func (c *Config) collectValidationErrors() ValidationErrors {
 	}
 	for _, g := range c.ModelGroups {
 		for _, member := range g.Members {
+			if member.Priority < 0 {
+				errs = append(errs, "model group "+g.ID+" member priority must be non-negative")
+			}
+			if member.Weight < 0 {
+				errs = append(errs, "model group "+g.ID+" member weight must be non-negative")
+			}
 			hasModel := member.ModelID != ""
 			hasKey := member.KeyID != ""
 			if hasModel == hasKey {
@@ -471,6 +594,13 @@ func (c *Config) AuthToken() string {
 		return ""
 	}
 	return os.Getenv(c.Server.AuthTokenEnv)
+}
+
+func (c *Config) AdminRequireAuth() bool {
+	if c.Server.Admin.RequireAuth == nil {
+		return true
+	}
+	return *c.Server.Admin.RequireAuth
 }
 
 func NormalizeBaseURL(base string) string {

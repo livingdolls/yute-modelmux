@@ -54,6 +54,9 @@ server:
   host: "127.0.0.1"
   port: 8787
   require_auth: false # set true + auth_token_env for network exposure
+  auth_token_env: MODELMUX_AUTH_TOKEN
+  admin:
+    require_auth: true
   max_request_body_mb: 10
 
 storage:
@@ -205,7 +208,7 @@ Reference secrets in config via `keys[].secret_ref`.
 
 ## Admin API
 
-When the server is running, admin endpoints are available. Requires auth if `server.require_auth=true`; otherwise `/admin/*` is allowed only from localhost.
+When the server is running, admin endpoints are available. `/admin/*` requires `Authorization: Bearer <token>` by default through `server.admin.require_auth=true`, using the token from `server.auth_token_env`. Do not expose `/admin/*` through a reverse proxy without auth; proxy traffic can appear to ModelMux as localhost.
 
 ```
 POST /admin/reload                    Reload config without restart

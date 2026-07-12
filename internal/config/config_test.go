@@ -359,3 +359,41 @@ func TestValidateRoutingRuleInvalidCapability(t *testing.T) {
 		t.Fatal("expected validation error for invalid capability")
 	}
 }
+
+func TestValidateRejectsUnsafeNumericValuesAndKeyStatus(t *testing.T) {
+	cfg := Default()
+	cfg.Storage.RetentionDays = -1
+	cfg.Retry.BackoffMilliseconds = []int{100, -1}
+	cfg.Models[0].RequestsPerMinute = -1
+	cfg.Models[0].MaxConcurrentRequests = -1
+	cfg.Models[0].Cost = &CostConfig{InputPer1M: -0.1, OutputPer1M: -0.2}
+	cfg.Keys[0].Status = "paused"
+	cfg.Keys[0].DailyRequestLimit = -1
+	cfg.Keys[0].DailyTokenLimit = -1
+	cfg.Keys[0].RequestsPerMinute = -1
+	cfg.Keys[0].TokensPerMinute = -1
+	cfg.Keys[0].MaxConcurrentRequests = -1
+	cfg.ModelGroups[0].Members[0].Priority = -1
+	cfg.ModelGroups[0].Members[0].Weight = -1
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation errors")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"storage.retention_days must be non-negative",
+		"retry.backoff_milliseconds[1] must be non-negative",
+		"model mimo-v2.5-pro requests_per_minute must be non-negative",
+		"model mimo-v2.5-pro max_concurrent_requests must be non-negative",
+		"model mimo-v2.5-pro cost.input_per_1m must be non-negative",
+		"key mimo-key-1 status paused is not valid",
+		"key mimo-key-1 daily_request_limit must be non-negative",
+		"key mimo-key-1 max_concurrent_requests must be non-negative",
+		"model group high-price member priority must be non-negative",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("expected validation error %q in %q", want, msg)
+		}
+	}
+}

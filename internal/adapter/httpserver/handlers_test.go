@@ -16,6 +16,8 @@ import (
 	"github.com/livingdolls/yute-modelmux/internal/core/port/inbound"
 )
 
+func boolPtr(v bool) *bool { return &v }
+
 func TestMetricsDoesNotExposeAPIKeyValue(t *testing.T) {
 	cfg := config.Default()
 	cfg.Keys[0].Value = "provider-secret"
@@ -66,6 +68,28 @@ func TestPrometheusMetricsLatencyHistogramUsesMilliseconds(t *testing.T) {
 	}
 	if strings.Contains(body, `le="0.1"`) {
 		t.Fatalf("latency bucket labels should be milliseconds, got:\n%s", body)
+	}
+}
+
+func TestCopyProxyHeadersDropsHopByHopHeaders(t *testing.T) {
+	src := http.Header{}
+	src.Set("Connection", "X-Provider-Internal, keep-alive")
+	src.Set("Keep-Alive", "timeout=5")
+	src.Set("Transfer-Encoding", "chunked")
+	src.Set("Content-Length", "123")
+	src.Set("X-Provider-Internal", "secret")
+	src.Set("X-Request-Provider", "upstream")
+
+	dst := http.Header{}
+	copyProxyHeaders(dst, src)
+
+	for _, header := range []string{"Connection", "Keep-Alive", "Transfer-Encoding", "Content-Length", "X-Provider-Internal"} {
+		if dst.Get(header) != "" {
+			t.Fatalf("expected %s to be dropped, got %q", header, dst.Get(header))
+		}
+	}
+	if got := dst.Get("X-Request-Provider"); got != "upstream" {
+		t.Fatalf("expected end-to-end header to be copied, got %q", got)
 	}
 }
 
@@ -494,6 +518,7 @@ func NewTestRouterService(cfg *config.Config) (*service.RouterService, error) {
 func TestAdminBlockedFromNonLocalWhenAuthOff(t *testing.T) {
 	cfg := config.Default()
 	cfg.Server.RequireAuth = false
+	cfg.Server.Admin.RequireAuth = boolPtr(false)
 	cfg.Providers[0].BaseURL = "https://example.com/v1"
 	cfg.Keys[0].Value = "test-key"
 	rs, _ := NewTestRouterService(cfg)
@@ -512,6 +537,7 @@ func TestAdminBlockedFromNonLocalWhenAuthOff(t *testing.T) {
 func TestAdminAllowedFromLocalWhenAuthOff(t *testing.T) {
 	cfg := config.Default()
 	cfg.Server.RequireAuth = false
+	cfg.Server.Admin.RequireAuth = boolPtr(false)
 	cfg.Providers[0].BaseURL = "https://example.com/v1"
 	cfg.Keys[0].Value = "test-key"
 	rs, _ := NewTestRouterService(cfg)
@@ -527,11 +553,43 @@ func TestAdminAllowedFromLocalWhenAuthOff(t *testing.T) {
 	}
 }
 
+func TestAdminRequiresTokenFromLocalWhenPublicAuthOff(t *testing.T) {
+	t.Setenv("MUX_ADMIN_TOKEN", "admin-token")
+	cfg := config.Default()
+	cfg.Server.RequireAuth = false
+	cfg.Server.AuthTokenEnv = "MUX_ADMIN_TOKEN"
+	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	cfg.Keys[0].Value = "test-key"
+	rs, _ := NewTestRouterService(cfg)
+	s := New(rs, cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	w := httptest.NewRecorder()
+	s.authMiddleware(s.mux).ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for local admin without token, got %d", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/admin/status", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("Authorization", "Bearer admin-token")
+	w = httptest.NewRecorder()
+	s.authMiddleware(s.mux).ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for local admin with token, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestAdminFullChainIncludesRequestID(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("MUX_ADMIN_FULL_CHAIN", "full-chain-token")
 	cfg := config.Default()
 	cfg.Server.RequireAuth = false
+	cfg.Server.AuthTokenEnv = "MUX_ADMIN_FULL_CHAIN"
 	cfg.Providers[0].BaseURL = "https://example.com/v1"
 	cfg.Keys = []config.KeyConfig{
 		{ID: "k1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "v", Status: "active", Priority: 1},
@@ -546,6 +604,7 @@ func TestAdminFullChainIncludesRequestID(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
+	req.Header.Set("Authorization", "Bearer full-chain-token")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -561,6 +620,7 @@ func TestAdminFullChainIncludesRequestID(t *testing.T) {
 func TestAdminFullChainBlocksNonLocal(t *testing.T) {
 	cfg := config.Default()
 	cfg.Server.RequireAuth = false
+	cfg.Server.Admin.RequireAuth = boolPtr(false)
 	cfg.Providers[0].BaseURL = "https://example.com/v1"
 	cfg.Keys[0].Value = "test-key"
 	rs, _ := NewTestRouterService(cfg)

@@ -135,6 +135,8 @@ type RouterService struct {
 	store        storage.Storage
 	secretStore  *secret.Store
 	mu           sync.Mutex
+	metricsMu    sync.RWMutex
+	metrics      RuntimeMetrics
 	rrIndex      map[string]int
 	groupRRIndex map[string]int
 	logs         []domain.RequestLog
@@ -146,6 +148,24 @@ type RouterService struct {
 	aiGuardrails *ai.Guardrails
 	aiTracer     *ai.RouteTracer
 	aiPolicy     *ai.RoutePolicy
+}
+
+type RuntimeMetricSeries struct {
+	Requests      int
+	Errors        int
+	RateLimits    int
+	Latencies     []int64
+	StatusClasses map[string]int
+}
+
+type RuntimeMetrics struct {
+	Requests   int
+	Errors     int
+	RateLimits int
+	Latencies  []int64
+	Models     map[string]RuntimeMetricSeries
+	Keys       map[string]RuntimeMetricSeries
+	Groups     map[string]RuntimeMetricSeries
 }
 
 func NewRouterService(cfg *config.Config) (*RouterService, error) {
@@ -166,6 +186,7 @@ func newRouterService(cfg *config.Config, store storage.Storage, secretStore *se
 		clientReg:    providerclient.NewClientRegistry(),
 		store:        store,
 		secretStore:  secretStore,
+		metrics:      newRuntimeMetrics(),
 		rrIndex:      map[string]int{},
 		groupRRIndex: map[string]int{},
 		aiClassifier: ai.NewClassifier(),
@@ -332,6 +353,7 @@ func newRouterService(cfg *config.Config, store storage.Storage, secretStore *se
 					CreatedAt:     createdAt,
 				})
 			}
+			rs.rebuildMetricsFromLogs(rs.logs)
 		}
 	}
 
@@ -364,71 +386,49 @@ func (s *RouterService) Logs() []domain.RequestLog {
 	return append([]domain.RequestLog(nil), s.logs...)
 }
 
+func (s *RouterService) MetricsSnapshot() RuntimeMetrics {
+	s.metricsMu.RLock()
+	defer s.metricsMu.RUnlock()
+	return cloneRuntimeMetrics(s.metrics)
+}
+
+func (s *RouterService) RestoreMetrics(metrics RuntimeMetrics) {
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	s.metrics = cloneRuntimeMetrics(metrics)
+}
+
 func (s *RouterService) LogsForMetrics() []domain.RequestLog {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	store := s.store
+	fallbackLogs := append([]domain.RequestLog(nil), s.logs...)
+	s.mu.Unlock()
 
-	if s.store != nil {
-		records, _, err := s.store.QueryRequestLogs(storage.LogFilter{Limit: 10000})
-		if err == nil {
-			logs := make([]domain.RequestLog, len(records))
-			for i, r := range records {
-				createdAt := time.Now()
-				if r.CreatedAt != "" {
-					if t, err := time.Parse(time.RFC3339, r.CreatedAt); err == nil {
-						createdAt = t
-					}
-				}
-				logs[i] = domain.RequestLog{
-					ID: r.ID, GroupID: r.GroupID, ModelID: r.ModelID,
-					ProviderID: r.ProviderID, KeyID: r.KeyID,
-					StatusCode: r.StatusCode, Error: r.Error,
-					LatencyMs: r.LatencyMs, TokenInput: r.TokenInput,
-					TokenOutput: r.TokenOutput, CreatedAt: createdAt,
-				}
-			}
-			return logs
-		}
+	if store == nil {
+		return fallbackLogs
 	}
-	return append([]domain.RequestLog(nil), s.logs...)
+	records, _, err := store.QueryRequestLogs(storage.LogFilter{Limit: 10000})
+	if err != nil {
+		return fallbackLogs
+	}
+	return requestLogRecordsToDomain(records)
 }
 
 func (s *RouterService) QueryLogs(filter storage.LogFilter) ([]domain.RequestLog, int) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	store := s.store
+	fallbackLogs := append([]domain.RequestLog(nil), s.logs...)
+	s.mu.Unlock()
 
-	if s.store != nil {
-		records, total, err := s.store.QueryRequestLogs(filter)
+	if store != nil {
+		records, total, err := store.QueryRequestLogs(filter)
 		if err == nil {
-			logs := make([]domain.RequestLog, len(records))
-			for i, r := range records {
-				createdAt := time.Now()
-				if r.CreatedAt != "" {
-					if t, err := time.Parse(time.RFC3339, r.CreatedAt); err == nil {
-						createdAt = t
-					}
-				}
-				logs[i] = domain.RequestLog{
-					ID:            r.ID,
-					GroupID:       r.GroupID,
-					ModelID:       r.ModelID,
-					ProviderID:    r.ProviderID,
-					KeyID:         r.KeyID,
-					StatusCode:    r.StatusCode,
-					Error:         r.Error,
-					LatencyMs:     r.LatencyMs,
-					TokenInput:    r.TokenInput,
-					TokenOutput:   r.TokenOutput,
-					EstimatedCost: r.EstimatedCost,
-					CreatedAt:     createdAt,
-				}
-			}
-			return logs, total
+			return requestLogRecordsToDomain(records), total
 		}
 	}
 
 	var filtered []domain.RequestLog
-	for _, log := range s.logs {
+	for _, log := range fallbackLogs {
 		if filter.ModelID != "" && log.ModelID != filter.ModelID {
 			continue
 		}
@@ -461,6 +461,144 @@ func (s *RouterService) QueryLogs(filter storage.LogFilter) ([]domain.RequestLog
 		end = total
 	}
 	return filtered[offset:end], total
+}
+
+func requestLogRecordsToDomain(records []storage.RequestLogRecord) []domain.RequestLog {
+	logs := make([]domain.RequestLog, len(records))
+	for i, r := range records {
+		createdAt := time.Now()
+		if r.CreatedAt != "" {
+			if t, err := time.Parse(time.RFC3339, r.CreatedAt); err == nil {
+				createdAt = t
+			}
+		}
+		logs[i] = domain.RequestLog{
+			ID:            r.ID,
+			GroupID:       r.GroupID,
+			ModelID:       r.ModelID,
+			ProviderID:    r.ProviderID,
+			KeyID:         r.KeyID,
+			StatusCode:    r.StatusCode,
+			Error:         r.Error,
+			LatencyMs:     r.LatencyMs,
+			TokenInput:    r.TokenInput,
+			TokenOutput:   r.TokenOutput,
+			EstimatedCost: r.EstimatedCost,
+			CreatedAt:     createdAt,
+		}
+	}
+	return logs
+}
+
+func newRuntimeMetrics() RuntimeMetrics {
+	return RuntimeMetrics{
+		Models: map[string]RuntimeMetricSeries{},
+		Keys:   map[string]RuntimeMetricSeries{},
+		Groups: map[string]RuntimeMetricSeries{},
+	}
+}
+
+func cloneRuntimeMetrics(src RuntimeMetrics) RuntimeMetrics {
+	dst := RuntimeMetrics{
+		Requests:   src.Requests,
+		Errors:     src.Errors,
+		RateLimits: src.RateLimits,
+		Latencies:  append([]int64(nil), src.Latencies...),
+		Models:     make(map[string]RuntimeMetricSeries, len(src.Models)),
+		Keys:       make(map[string]RuntimeMetricSeries, len(src.Keys)),
+		Groups:     make(map[string]RuntimeMetricSeries, len(src.Groups)),
+	}
+	for k, v := range src.Models {
+		dst.Models[k] = cloneRuntimeMetricSeries(v)
+	}
+	for k, v := range src.Keys {
+		dst.Keys[k] = cloneRuntimeMetricSeries(v)
+	}
+	for k, v := range src.Groups {
+		dst.Groups[k] = cloneRuntimeMetricSeries(v)
+	}
+	return dst
+}
+
+func cloneRuntimeMetricSeries(src RuntimeMetricSeries) RuntimeMetricSeries {
+	dst := RuntimeMetricSeries{
+		Requests:      src.Requests,
+		Errors:        src.Errors,
+		RateLimits:    src.RateLimits,
+		Latencies:     append([]int64(nil), src.Latencies...),
+		StatusClasses: make(map[string]int, len(src.StatusClasses)),
+	}
+	for k, v := range src.StatusClasses {
+		dst.StatusClasses[k] = v
+	}
+	return dst
+}
+
+func (s *RouterService) rebuildMetricsFromLogs(logs []domain.RequestLog) {
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	s.metrics = newRuntimeMetrics()
+	for _, log := range logs {
+		recordRuntimeMetric(&s.metrics, log)
+	}
+}
+
+func (s *RouterService) recordRuntimeMetric(log domain.RequestLog) {
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	recordRuntimeMetric(&s.metrics, log)
+}
+
+func recordRuntimeMetric(metrics *RuntimeMetrics, log domain.RequestLog) {
+	metrics.Requests++
+	if log.StatusCode >= 400 || log.Error != "" {
+		metrics.Errors++
+	}
+	if log.StatusCode == http.StatusTooManyRequests {
+		metrics.RateLimits++
+	}
+	if log.LatencyMs > 0 {
+		metrics.Latencies = append(metrics.Latencies, log.LatencyMs)
+	}
+	if log.ModelID != "" {
+		series := metrics.Models[log.ModelID]
+		updateRuntimeMetricSeries(&series, log)
+		metrics.Models[log.ModelID] = series
+	}
+	if log.KeyID != "" {
+		series := metrics.Keys[log.KeyID]
+		updateRuntimeMetricSeries(&series, log)
+		metrics.Keys[log.KeyID] = series
+	}
+	if log.GroupID != "" {
+		series := metrics.Groups[log.GroupID]
+		updateRuntimeMetricSeries(&series, log)
+		metrics.Groups[log.GroupID] = series
+	}
+}
+
+func updateRuntimeMetricSeries(series *RuntimeMetricSeries, log domain.RequestLog) {
+	series.Requests++
+	if log.StatusCode >= 400 || log.Error != "" {
+		series.Errors++
+	}
+	if log.StatusCode == http.StatusTooManyRequests {
+		series.RateLimits++
+	}
+	if log.LatencyMs > 0 {
+		series.Latencies = append(series.Latencies, log.LatencyMs)
+	}
+	if series.StatusClasses == nil {
+		series.StatusClasses = map[string]int{}
+	}
+	switch {
+	case log.StatusCode >= 200 && log.StatusCode < 300:
+		series.StatusClasses["2xx"]++
+	case log.StatusCode >= 400 && log.StatusCode < 500:
+		series.StatusClasses["4xx"]++
+	case log.StatusCode >= 500:
+		series.StatusClasses["5xx"]++
+	}
 }
 
 func (s *RouterService) SelectKey(ctx context.Context, modelID string) (*domain.APIKey, error) {
@@ -784,12 +922,10 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 			}
 			continue
 		}
-		skipCount = 0
-		retried[key.ID]++
-		totalAttempts++
+		attemptNum := retried[key.ID] + 1
 
-		if retried[key.ID] > 1 {
-			backoffIdx := retried[key.ID] - 2
+		if attemptNum > 1 {
+			backoffIdx := attemptNum - 2
 			if backoffIdx < len(s.cfg.Retry.BackoffMilliseconds) {
 				select {
 				case <-ctx.Done():
@@ -811,8 +947,15 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 		}
 		s.mu.Unlock()
 		if !slotAcquired {
+			skipCount++
+			if skipCount > totalKeys*2 || skipCount > 100 {
+				return nil, AllKeysUnavailableError(model.ID)
+			}
 			continue
 		}
+		skipCount = 0
+		retried[key.ID] = attemptNum
+		totalAttempts++
 
 		clonedReq := cloneRequestWithBody(req, bodyBytes)
 		startedAt := time.Now()
@@ -907,6 +1050,7 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 			logRecord := s.appendLogLocked(log)
 			keyRecord := s.keyRuntimeRecord(s.keys[i])
 			s.mu.Unlock()
+			s.recordRuntimeMetric(log)
 			s.persistRequestLog(logRecord)
 			s.persistKeyRuntime(keyRecord)
 			return nil
@@ -921,6 +1065,7 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 			logRecord := s.appendLogLocked(log)
 			keyRecord := s.keyRuntimeRecord(s.keys[i])
 			s.mu.Unlock()
+			s.recordRuntimeMetric(log)
 			s.persistRequestLog(logRecord)
 			s.persistKeyRuntime(keyRecord)
 			return nil
@@ -933,6 +1078,7 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 		logRecord := s.appendLogLocked(log)
 		keyRecord := s.keyRuntimeRecord(s.keys[i])
 		s.mu.Unlock()
+		s.recordRuntimeMetric(log)
 		s.persistRequestLog(logRecord)
 		s.persistKeyRuntime(keyRecord)
 		return nil
@@ -1059,14 +1205,16 @@ func (s *RouterService) saveTraceIfEnabled(traceID string) {
 		return
 	}
 	stepsBytes, _ := json.Marshal(trace.Steps)
-	_ = s.store.SaveRouteTrace(storage.RouteTraceRecord{
+	if err := s.store.SaveRouteTrace(storage.RouteTraceRecord{
 		ID:            trace.ID,
 		RequestID:     trace.RequestID,
 		OriginalModel: trace.OriginalModel,
 		ReroutedModel: trace.ReroutedModel,
 		StepsJSON:     string(stepsBytes),
 		CreatedAt:     trace.CreatedAt.Format(time.RFC3339),
-	})
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "modelmux: route trace write error: %v\n", err)
+	}
 }
 
 func (s *RouterService) TestKey(ctx context.Context, keyID string) error {
@@ -1136,14 +1284,14 @@ func (s *RouterService) appendLogLocked(log domain.RequestLog) *storage.RequestL
 		createdAt = log.CreatedAt.Format(time.RFC3339)
 	}
 	return &storage.RequestLogRecord{
-		ID:          log.ID,
-		GroupID:     log.GroupID,
-		ModelID:     log.ModelID,
-		ProviderID:  log.ProviderID,
-		KeyID:       log.KeyID,
-		StatusCode:  log.StatusCode,
-		Error:       log.Error,
-		LatencyMs:   log.LatencyMs,
+		ID:            log.ID,
+		GroupID:       log.GroupID,
+		ModelID:       log.ModelID,
+		ProviderID:    log.ProviderID,
+		KeyID:         log.KeyID,
+		StatusCode:    log.StatusCode,
+		Error:         log.Error,
+		LatencyMs:     log.LatencyMs,
 		TokenInput:    log.TokenInput,
 		TokenOutput:   log.TokenOutput,
 		EstimatedCost: log.EstimatedCost,

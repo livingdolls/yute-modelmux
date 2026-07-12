@@ -64,11 +64,7 @@ func (s *Server) completionsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	for k, values := range resp.Header {
-		for _, v := range values {
-			w.Header().Add(k, v)
-		}
-	}
+	copyProxyHeaders(w.Header(), resp.Header)
 	if traceID := service.GetTraceID(r.Context()); traceID != "" {
 		w.Header().Set("X-ModelMux-Route-Trace-ID", traceID)
 	}
@@ -100,11 +96,7 @@ func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer resp.Body.Close()
-	for k, values := range resp.Header {
-		for _, v := range values {
-			w.Header().Add(k, v)
-		}
-	}
+	copyProxyHeaders(w.Header(), resp.Header)
 	if traceID := service.GetTraceID(r.Context()); traceID != "" {
 		w.Header().Set("X-ModelMux-Route-Trace-ID", traceID)
 	}
@@ -138,15 +130,51 @@ func copyWithFlush(dst io.Writer, src io.Reader) error {
 	}
 }
 
+var hopByHopHeaders = []string{
+	"Connection",
+	"Keep-Alive",
+	"Proxy-Authenticate",
+	"Proxy-Authorization",
+	"TE",
+	"Trailer",
+	"Transfer-Encoding",
+	"Upgrade",
+	"Content-Length",
+}
+
+func copyProxyHeaders(dst, src http.Header) {
+	blocked := make(map[string]struct{}, len(hopByHopHeaders))
+	for _, h := range hopByHopHeaders {
+		blocked[http.CanonicalHeaderKey(h)] = struct{}{}
+	}
+	for _, connectionHeader := range src.Values("Connection") {
+		for _, token := range strings.Split(connectionHeader, ",") {
+			token = strings.TrimSpace(token)
+			if token != "" {
+				blocked[http.CanonicalHeaderKey(token)] = struct{}{}
+			}
+		}
+	}
+	for k, values := range src {
+		if _, ok := blocked[http.CanonicalHeaderKey(k)]; ok {
+			continue
+		}
+		for _, v := range values {
+			dst.Add(k, v)
+		}
+	}
+}
+
 type metricSnapshot struct {
-	requests     int
-	errors       int
-	rateLimits   int
-	latencies    []int64
-	activeKeys   int
-	cooldownKeys int
-	invalidKeys  int
-	limitedKeys  int
+	requests      int
+	errors        int
+	rateLimits    int
+	latencies     []int64
+	statusClasses map[string]int
+	activeKeys    int
+	cooldownKeys  int
+	invalidKeys   int
+	limitedKeys   int
 }
 
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
@@ -154,14 +182,13 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	rs := s.loadRouterService()
 	keys := rs.ListKeys()
-	logs := rs.LogsForMetrics()
+	metrics := rs.MetricsSnapshot()
 	models := rs.ListModels()
-	providers := rs.ListProviders()
 	groups := rs.ListModelGroups()
 
 	modelMetrics := map[string]*metricSnapshot{}
 	for _, model := range models {
-		modelMetrics[model.ID] = &metricSnapshot{}
+		modelMetrics[model.ID] = metricSnapshotFromRuntime(metrics.Models[model.ID])
 	}
 	for _, key := range keys {
 		m, ok := modelMetrics[key.ModelID]
@@ -179,21 +206,9 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 			m.limitedKeys++
 		}
 	}
-	for _, log := range logs {
-		m, ok := modelMetrics[log.ModelID]
-		if !ok {
-			continue
-		}
-		m.requests++
-		if log.StatusCode >= 400 || log.Error != "" {
-			m.errors++
-		}
-		if log.StatusCode == http.StatusTooManyRequests {
-			m.rateLimits++
-		}
-		if log.LatencyMs > 0 {
-			m.latencies = append(m.latencies, log.LatencyMs)
-		}
+	groupMetrics := map[string]*metricSnapshot{}
+	for _, group := range groups {
+		groupMetrics[group.ID] = metricSnapshotFromRuntime(metrics.Groups[group.ID])
 	}
 
 	providerModelMap := map[string]string{}
@@ -202,14 +217,24 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if format == "prometheus" {
-		s.writePrometheusMetrics(w, models, groups, keys, providers, logs, modelMetrics, providerModelMap)
+		s.writePrometheusMetrics(w, models, groups, keys, metrics, modelMetrics, groupMetrics, providerModelMap)
 		return
 	}
 
-	s.writeJSONMetrics(w, models, groups, keys, logs, modelMetrics)
+	s.writeJSONMetrics(w, models, groups, keys, modelMetrics, groupMetrics)
 }
 
-func (s *Server) writeJSONMetrics(w http.ResponseWriter, models []domain.Model, groups []domain.ModelGroup, keys []domain.APIKey, logs []domain.RequestLog, modelMetrics map[string]*metricSnapshot) {
+func metricSnapshotFromRuntime(src service.RuntimeMetricSeries) *metricSnapshot {
+	return &metricSnapshot{
+		requests:      src.Requests,
+		errors:        src.Errors,
+		rateLimits:    src.RateLimits,
+		latencies:     append([]int64(nil), src.Latencies...),
+		statusClasses: src.StatusClasses,
+	}
+}
+
+func (s *Server) writeJSONMetrics(w http.ResponseWriter, models []domain.Model, groups []domain.ModelGroup, keys []domain.APIKey, modelMetrics map[string]*metricSnapshot, groupMetrics map[string]*metricSnapshot) {
 	type modelMetric struct {
 		ID           string  `json:"id"`
 		Requests     int     `json:"requests"`
@@ -270,6 +295,10 @@ func (s *Server) writeJSONMetrics(w http.ResponseWriter, models []domain.Model, 
 	gm := make([]groupMetric, 0, len(groups))
 	for _, group := range groups {
 		metric := groupMetric{ID: group.ID}
+		if gs := groupMetrics[group.ID]; gs != nil {
+			metric.Requests = gs.requests
+			metric.Errors = gs.errors
+		}
 		for _, member := range group.Members {
 			active := false
 			for _, model := range models {
@@ -284,40 +313,16 @@ func (s *Server) writeJSONMetrics(w http.ResponseWriter, models []domain.Model, 
 				metric.UnavailableModels++
 			}
 		}
-		for _, log := range logs {
-			if log.GroupID != group.ID {
-				continue
-			}
-			metric.Requests++
-			if log.StatusCode >= 400 || log.Error != "" {
-				metric.Errors++
-			}
-		}
 		gm = append(gm, metric)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"models": mm, "groups": gm})
 }
 
-func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.Model, groups []domain.ModelGroup, keys []domain.APIKey, providers []domain.Provider, logs []domain.RequestLog, modelMetrics map[string]*metricSnapshot, providerModelMap map[string]string) {
+func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.Model, groups []domain.ModelGroup, keys []domain.APIKey, metrics service.RuntimeMetrics, modelMetrics map[string]*metricSnapshot, groupMetrics map[string]*metricSnapshot, providerModelMap map[string]string) {
 	var b strings.Builder
 
-	totalRequests := 0
-	totalErrors := 0
-	totalRateLimits := 0
-	allLatencies := []int64{}
-	for _, log := range logs {
-		totalRequests++
-		if log.StatusCode >= 400 || log.Error != "" {
-			totalErrors++
-		}
-		if log.StatusCode == http.StatusTooManyRequests {
-			totalRateLimits++
-		}
-		if log.LatencyMs > 0 {
-			allLatencies = append(allLatencies, log.LatencyMs)
-		}
-	}
+	allLatencies := append([]int64(nil), metrics.Latencies...)
 
 	activeKeys := 0
 	cooldownKeys := 0
@@ -338,15 +343,15 @@ func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.M
 
 	b.WriteString("# HELP modelmux_requests_total Total number of requests\n")
 	b.WriteString("# TYPE modelmux_requests_total counter\n")
-	b.WriteString(fmt.Sprintf("modelmux_requests_total %d\n", totalRequests))
+	b.WriteString(fmt.Sprintf("modelmux_requests_total %d\n", metrics.Requests))
 
 	b.WriteString("# HELP modelmux_errors_total Total number of errors\n")
 	b.WriteString("# TYPE modelmux_errors_total counter\n")
-	b.WriteString(fmt.Sprintf("modelmux_errors_total %d\n", totalErrors))
+	b.WriteString(fmt.Sprintf("modelmux_errors_total %d\n", metrics.Errors))
 
 	b.WriteString("# HELP modelmux_rate_limits_total Total number of rate limit responses\n")
 	b.WriteString("# TYPE modelmux_rate_limits_total counter\n")
-	b.WriteString(fmt.Sprintf("modelmux_rate_limits_total %d\n", totalRateLimits))
+	b.WriteString(fmt.Sprintf("modelmux_rate_limits_total %d\n", metrics.RateLimits))
 
 	if len(allLatencies) > 0 {
 		sort.Slice(allLatencies, func(i, j int) bool { return allLatencies[i] < allLatencies[j] })
@@ -444,58 +449,30 @@ func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.M
 			b.WriteString(fmt.Sprintf("modelmux_latency_ms_count{%s} %d\n", labels, len(sorted)))
 		}
 
-		statusClasses := map[string]int{"2xx": 0, "4xx": 0, "5xx": 0}
-		for _, log := range logs {
-			if log.ModelID != model.ID {
-				continue
-			}
-			switch {
-			case log.StatusCode >= 200 && log.StatusCode < 300:
-				statusClasses["2xx"]++
-			case log.StatusCode >= 400 && log.StatusCode < 500:
-				statusClasses["4xx"]++
-			case log.StatusCode >= 500:
-				statusClasses["5xx"]++
-			}
-		}
-		for class, count := range statusClasses {
+		for class, count := range ms.statusClasses {
 			if count > 0 {
 				b.WriteString(fmt.Sprintf("modelmux_status_total{%s,status_class=\"%s\"} %d\n", labels, class, count))
 			}
 		}
 	}
 	for _, key := range keys {
-		keyRequests := 0
-		keyErrors := 0
-		for _, log := range logs {
-			if log.KeyID != key.ID {
-				continue
-			}
-			keyRequests++
-			if log.StatusCode >= 400 || log.Error != "" {
-				keyErrors++
-			}
-		}
+		keyMetric := metrics.Keys[key.ID]
 		labels := fmt.Sprintf(`model="%s",provider="%s",key="%s"`, escapeLabelValue(key.ModelID), escapeLabelValue(key.ProviderID), escapeLabelValue(key.ID))
-		b.WriteString(fmt.Sprintf("modelmux_requests_total{%s} %d\n", labels, keyRequests))
-		b.WriteString(fmt.Sprintf("modelmux_errors_total{%s} %d\n", labels, keyErrors))
+		b.WriteString(fmt.Sprintf("modelmux_requests_total{%s} %d\n", labels, keyMetric.Requests))
+		b.WriteString(fmt.Sprintf("modelmux_errors_total{%s} %d\n", labels, keyMetric.Errors))
 	}
 
 	for _, group := range groups {
-		groupRequests := 0
-		groupErrors := 0
-		for _, log := range logs {
-			if log.GroupID != group.ID {
-				continue
-			}
-			groupRequests++
-			if log.StatusCode >= 400 || log.Error != "" {
-				groupErrors++
-			}
-		}
+		groupMetric := groupMetrics[group.ID]
 		labels := fmt.Sprintf(`group="%s"`, escapeLabelValue(group.ID))
-		b.WriteString(fmt.Sprintf("modelmux_requests_total{%s} %d\n", labels, groupRequests))
-		b.WriteString(fmt.Sprintf("modelmux_errors_total{%s} %d\n", labels, groupErrors))
+		requests := 0
+		errors := 0
+		if groupMetric != nil {
+			requests = groupMetric.requests
+			errors = groupMetric.errors
+		}
+		b.WriteString(fmt.Sprintf("modelmux_requests_total{%s} %d\n", labels, requests))
+		b.WriteString(fmt.Sprintf("modelmux_errors_total{%s} %d\n", labels, errors))
 	}
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
@@ -552,14 +529,14 @@ func (s *Server) logsHandler(w http.ResponseWriter, r *http.Request) {
 	page, total := s.loadRouterService().QueryLogs(filter)
 
 	type logItem struct {
-		ID          string `json:"id"`
-		GroupID     string `json:"group_id"`
-		ModelID     string `json:"model_id"`
-		ProviderID  string `json:"provider_id"`
-		KeyID       string `json:"key_id"`
-		StatusCode  int    `json:"status_code"`
-		Error       string `json:"error,omitempty"`
-		LatencyMs   int64  `json:"latency_ms"`
+		ID            string  `json:"id"`
+		GroupID       string  `json:"group_id"`
+		ModelID       string  `json:"model_id"`
+		ProviderID    string  `json:"provider_id"`
+		KeyID         string  `json:"key_id"`
+		StatusCode    int     `json:"status_code"`
+		Error         string  `json:"error,omitempty"`
+		LatencyMs     int64   `json:"latency_ms"`
 		TokenInput    int     `json:"token_input"`
 		TokenOutput   int     `json:"token_output"`
 		EstimatedCost float64 `json:"estimated_cost"`
@@ -584,7 +561,7 @@ func (s *Server) logsHandler(w http.ResponseWriter, r *http.Request) {
 			TokenInput:    log.TokenInput,
 			TokenOutput:   log.TokenOutput,
 			EstimatedCost: log.EstimatedCost,
-			CreatedAt:   createdAt,
+			CreatedAt:     createdAt,
 		}
 	}
 
@@ -609,25 +586,44 @@ func writeProxyError(w http.ResponseWriter, err error) {
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg := s.loadConfig()
-		if !cfg.Server.RequireAuth {
-			if strings.HasPrefix(r.URL.Path, "/admin/") && !isLocalAddr(r.RemoteAddr) {
+		isAdmin := strings.HasPrefix(r.URL.Path, "/admin/")
+		if isAdmin {
+			if cfg.AdminRequireAuth() {
+				if !authorized(r, cfg.AuthToken()) {
+					writeAuthError(w, cfg.AuthToken(), "admin auth token is not configured")
+					return
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
+			if !isLocalAddr(r.RemoteAddr) {
 				writeJSON(w, http.StatusForbidden, map[string]any{"error": "admin endpoints require auth or local bind"})
 				return
 			}
+		}
+		if !cfg.Server.RequireAuth {
 			next.ServeHTTP(w, r)
 			return
 		}
 		expected := cfg.AuthToken()
-		if expected == "" {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "server auth token is not configured"})
-			return
-		}
-		if r.Header.Get("Authorization") != "Bearer "+expected {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		if !authorized(r, expected) {
+			writeAuthError(w, expected, "server auth token is not configured")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func authorized(r *http.Request, expected string) bool {
+	return expected != "" && r.Header.Get("Authorization") == "Bearer "+expected
+}
+
+func writeAuthError(w http.ResponseWriter, expected string, missingMessage string) {
+	if expected == "" {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": missingMessage})
+		return
+	}
+	writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 }
 
 func escapeLabelValue(s string) string {
