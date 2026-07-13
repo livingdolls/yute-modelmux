@@ -149,7 +149,7 @@ type RouterService struct {
 	aiPolicy     *ai.RoutePolicy
 }
 
-var RuntimeLatencyBucketsMs = [...]int64{50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000}
+var RuntimeLatencyBucketsMs = [...]int64{50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 120000, 300000}
 
 const RuntimeLatencyInfBucket = len(RuntimeLatencyBucketsMs)
 
@@ -313,7 +313,9 @@ func newRouterServiceWithMetrics(cfg *config.Config, store storage.Storage, secr
 		}
 		if rt, ok := runtimeMap[k.ID]; ok {
 			if rt.Status != "" {
-				key.Status = domain.APIKeyStatus(rt.Status)
+				if key.Status != domain.KeyStatusDisabled {
+					key.Status = domain.APIKeyStatus(rt.Status)
+				}
 			}
 			key.UsedCount = rt.UsedCount
 			key.ErrorCount = rt.ErrorCount
@@ -378,9 +380,7 @@ func newRouterServiceWithMetrics(cfg *config.Config, store storage.Storage, secr
 					CreatedAt:     createdAt,
 				})
 			}
-			if metrics.IsEmpty() {
-				metrics.RebuildFromLogs(rs.logs)
-			}
+			metrics.RebuildFromLogsIfEmpty(rs.logs)
 		}
 	}
 
@@ -529,13 +529,17 @@ func (r *RuntimeMetricsRegistry) IsEmpty() bool {
 	return r.metrics.Requests == 0
 }
 
-func (r *RuntimeMetricsRegistry) RebuildFromLogs(logs []domain.RequestLog) {
+func (r *RuntimeMetricsRegistry) RebuildFromLogsIfEmpty(logs []domain.RequestLog) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.metrics = newRuntimeMetrics()
-	for _, log := range logs {
-		recordRuntimeMetric(&r.metrics, log)
+	if r.metrics.Requests != 0 {
+		return
 	}
+	rebuilt := newRuntimeMetrics()
+	for _, log := range logs {
+		recordRuntimeMetric(&rebuilt, log)
+	}
+	r.metrics = rebuilt
 }
 
 func (r *RuntimeMetricsRegistry) Record(log domain.RequestLog) {
@@ -1097,14 +1101,17 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 		s.keys[i].LastUsedAt = &now
 		s.checkDailyResetLocked(i)
 		s.recordKeyPerMinuteUsageLocked(i, result.TokenInput+result.TokenOutput)
+		administrativelyDisabled := s.keys[i].Status == domain.KeyStatusDisabled
 		log := domain.RequestLog{ID: fmt.Sprintf("log-%d", now.UnixNano()), RequestID: GetRequestID(ctx), GroupID: result.GroupID, ModelID: result.ModelID, ProviderID: result.ProviderID, KeyID: keyID, StatusCode: result.StatusCode, Error: result.Error, LatencyMs: result.LatencyMs, TokenInput: result.TokenInput, TokenOutput: result.TokenOutput, EstimatedCost: result.EstimatedCost, CreatedAt: now}
 		if result.Success {
 			s.keys[i].ErrorCount = 0
-			if s.keys[i].Status != domain.KeyStatusLimited {
+			if !administrativelyDisabled && s.keys[i].Status != domain.KeyStatusLimited {
 				s.keys[i].Status = domain.KeyStatusActive
 			}
-			s.keys[i].CooldownEnd = nil
-			s.applyDailyLimitsLocked(i, result.TokenInput, result.TokenOutput)
+			if !administrativelyDisabled {
+				s.keys[i].CooldownEnd = nil
+				s.applyDailyLimitsLocked(i, result.TokenInput, result.TokenOutput)
+			}
 			logRecord := s.appendLogLocked(log)
 			keyRecord := s.keyRuntimeRecord(s.keys[i])
 			s.mu.Unlock()
@@ -1114,6 +1121,15 @@ func (s *RouterService) MarkKeyResult(ctx context.Context, keyID string, result 
 			return nil
 		}
 		s.keys[i].ErrorCount++
+		if administrativelyDisabled {
+			logRecord := s.appendLogLocked(log)
+			keyRecord := s.keyRuntimeRecord(s.keys[i])
+			s.mu.Unlock()
+			s.recordRuntimeMetric(log)
+			s.persistRequestLog(logRecord)
+			s.persistKeyRuntime(keyRecord)
+			return nil
+		}
 		if s.keys[i].Status != domain.KeyStatusLimited {
 			s.keys[i].Status = domain.KeyStatusActive
 		}

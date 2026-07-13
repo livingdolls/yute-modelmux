@@ -24,14 +24,15 @@ import (
 )
 
 type blockingLogStorage struct {
-	started chan struct{}
-	unblock chan struct{}
-	once    sync.Once
+	started        chan struct{}
+	unblock        chan struct{}
+	once           sync.Once
+	runtimeRecords []storage.KeyRuntimeRecord
 }
 
 func (s *blockingLogStorage) SaveKeyRuntime(storage.KeyRuntimeRecord) error { return nil }
 func (s *blockingLogStorage) LoadKeyRuntime() ([]storage.KeyRuntimeRecord, error) {
-	return nil, nil
+	return append([]storage.KeyRuntimeRecord(nil), s.runtimeRecords...), nil
 }
 func (s *blockingLogStorage) SaveRequestLog(storage.RequestLogRecord) error {
 	s.once.Do(func() { close(s.started) })
@@ -52,17 +53,42 @@ func (s *blockingLogStorage) GetRouteTraceByRequestID(string) (*storage.RouteTra
 	return nil, nil
 }
 
-func (s *blockingLogStorage) SaveChatSession(string, string) (int, error) { return 0, nil }
-func (s *blockingLogStorage) SaveChatMessage(int, string, string) error { return nil }
+func (s *blockingLogStorage) SaveChatSession(string, string) (int, error)            { return 0, nil }
+func (s *blockingLogStorage) SaveChatMessage(int, string, string) error              { return nil }
 func (s *blockingLogStorage) ListChatSessions() ([]storage.ChatSessionRecord, error) { return nil, nil }
-func (s *blockingLogStorage) GetChatMessages(int) ([]storage.ChatMessageRecord, error) { return nil, nil }
-func (s *blockingLogStorage) SaveEvalRun(storage.EvalRunRecord) error { return nil }
-func (s *blockingLogStorage) SaveEvalResult(storage.EvalResultRecord) error { return nil }
+func (s *blockingLogStorage) GetChatMessages(int) ([]storage.ChatMessageRecord, error) {
+	return nil, nil
+}
+func (s *blockingLogStorage) SaveEvalRun(storage.EvalRunRecord) error        { return nil }
+func (s *blockingLogStorage) SaveEvalResult(storage.EvalResultRecord) error  { return nil }
 func (s *blockingLogStorage) ListEvalRuns() ([]storage.EvalRunRecord, error) { return nil, nil }
-func (s *blockingLogStorage) GetEvalResults(string) ([]storage.EvalResultRecord, error) { return nil, nil }
+func (s *blockingLogStorage) GetEvalResults(string) ([]storage.EvalResultRecord, error) {
+	return nil, nil
+}
 func (s *blockingLogStorage) PruneBefore(string) (int, error) { return 0, nil }
-func (s *blockingLogStorage) Stats() (map[string]int, error) { return nil, nil }
-func (s *blockingLogStorage) Vacuum() error { return nil }
+func (s *blockingLogStorage) Stats() (map[string]int, error)  { return nil, nil }
+func (s *blockingLogStorage) Vacuum() error                   { return nil }
+
+type blockingProviderClient struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (c *blockingProviderClient) Forward(context.Context, domain.Provider, domain.Model, domain.APIKey, *http.Request, string) (*http.Response, error) {
+	return nil, nil
+}
+
+func (c *blockingProviderClient) TestKey(ctx context.Context, _ domain.Provider, _ domain.Model, _ domain.APIKey) error {
+	c.once.Do(func() { close(c.started) })
+	select {
+	case <-c.release:
+		return nil
+	case <-ctx.Done():
+		<-c.release
+		return ctx.Err()
+	}
+}
 
 func TestSelectKeyPrefersLowestPriority(t *testing.T) {
 	cfg := config.Default()
@@ -106,6 +132,140 @@ func TestMarkKeyResultCooldown(t *testing.T) {
 	}
 	if rs.keys[0].Status != domain.KeyStatusCooldown {
 		t.Fatalf("expected cooldown status, got %s", rs.keys[0].Status)
+	}
+}
+
+func TestMarkKeyResultPreservesAdministrativelyDisabledKey(t *testing.T) {
+	cfg := config.Default()
+	rs, _ := NewRouterService(cfg)
+
+	rs.SetKeyStatus("mimo-key-1", "disabled")
+	if err := rs.MarkKeyResult(context.Background(), "mimo-key-1", inbound.KeyResult{Success: true, ModelID: "mimo-v2.5-pro", ProviderID: "mimo", StatusCode: http.StatusOK}); err != nil {
+		t.Fatalf("mark key result failed: %v", err)
+	}
+
+	keys := rs.ListKeys()
+	if got := keys[0].Status; got != domain.KeyStatusDisabled {
+		t.Fatalf("expected disabled key to stay disabled after success, got %s", got)
+	}
+
+	if err := rs.MarkKeyResult(context.Background(), "mimo-key-1", inbound.KeyResult{StatusCode: http.StatusTooManyRequests, CooldownSeconds: 300}); err != nil {
+		t.Fatalf("mark key result failed: %v", err)
+	}
+	keys = rs.ListKeys()
+	if got := keys[0].Status; got != domain.KeyStatusDisabled {
+		t.Fatalf("expected disabled key to stay disabled after failure, got %s", got)
+	}
+}
+
+func TestRuntimeStatusDoesNotOverrideDisabledConfigStatus(t *testing.T) {
+	cfg := config.Default()
+	cfg.Keys[0].Status = "disabled"
+	store := &blockingLogStorage{
+		runtimeRecords: []storage.KeyRuntimeRecord{{KeyID: "mimo-key-1", Status: "active"}},
+	}
+
+	rs, err := NewRouterServiceWithStorage(cfg, store)
+	if err != nil {
+		t.Fatalf("create router: %v", err)
+	}
+
+	keys := rs.ListKeys()
+	if got := keys[0].Status; got != domain.KeyStatusDisabled {
+		t.Fatalf("expected config disabled status to win over runtime active status, got %s", got)
+	}
+}
+
+func TestRuntimeMetricsRegistryRebuildFromLogsIfEmptyDoesNotResetExistingMetrics(t *testing.T) {
+	registry := NewRuntimeMetricsRegistry()
+	registry.Record(domain.RequestLog{ModelID: "mimo-v2.5-pro", KeyID: "mimo-key-1", StatusCode: http.StatusOK, LatencyMs: 60000})
+
+	registry.RebuildFromLogsIfEmpty([]domain.RequestLog{
+		{ModelID: "mimo-v2.5-pro", KeyID: "mimo-key-1", StatusCode: http.StatusOK, LatencyMs: 75},
+	})
+
+	snapshot := registry.Snapshot()
+	if snapshot.Requests != 1 {
+		t.Fatalf("expected existing metrics to be preserved, got %d requests", snapshot.Requests)
+	}
+	if snapshot.LatencySumMs != 60000 {
+		t.Fatalf("expected existing latency sum to be preserved, got %d", snapshot.LatencySumMs)
+	}
+}
+
+func TestRuntimeLatencyBucketsIncludeLongLLMTimeouts(t *testing.T) {
+	want := []int64{60000, 120000, 300000}
+	for _, bucket := range want {
+		found := false
+		for _, got := range RuntimeLatencyBucketsMs {
+			if got == bucket {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected latency bucket %dms", bucket)
+		}
+	}
+}
+
+func TestHealthCheckerUpdateWaitsForPreviousWorker(t *testing.T) {
+	cfg := config.Default()
+	cfg.HealthCheck.Enabled = true
+	cfg.HealthCheck.IntervalSeconds = 1
+	cfg.HealthCheck.TimeoutSeconds = 30
+
+	rs, err := NewRouterService(cfg)
+	if err != nil {
+		t.Fatalf("create router: %v", err)
+	}
+	client := &blockingProviderClient{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	released := false
+	defer func() {
+		if !released {
+			close(client.release)
+		}
+	}()
+	rs.clientReg.Register(domain.ProviderTypeOpenAICompatible, client)
+
+	checker := NewHealthChecker(rs, cfg.HealthCheck)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	checker.Start(ctx)
+	defer checker.Stop()
+
+	select {
+	case <-client.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for health check worker to start key test")
+	}
+
+	newRS, err := NewRouterService(cfg)
+	if err != nil {
+		t.Fatalf("create replacement router: %v", err)
+	}
+	updateDone := make(chan struct{})
+	go func() {
+		checker.Update(newRS, config.HealthCheckConfig{Enabled: false})
+		close(updateDone)
+	}()
+
+	select {
+	case <-updateDone:
+		t.Fatal("health checker update returned before previous worker finished")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(client.release)
+	released = true
+
+	select {
+	case <-updateDone:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for health checker update")
 	}
 }
 

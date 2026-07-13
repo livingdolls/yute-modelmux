@@ -161,12 +161,13 @@ func (s *Server) generationMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.genMu.RLock()
 		gen := s.gen
-		s.genMu.RUnlock()
 		if gen == nil {
+			s.genMu.RUnlock()
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "router not configured"})
 			return
 		}
 		rs, release, ok := gen.acquire()
+		s.genMu.RUnlock()
 		if !ok {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "router is reloading"})
 			return

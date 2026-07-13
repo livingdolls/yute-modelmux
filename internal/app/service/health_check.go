@@ -16,6 +16,7 @@ type HealthChecker struct {
 	cfg       config.HealthCheckConfig
 	parentCtx context.Context
 	cancel    context.CancelFunc
+	wg        sync.WaitGroup
 }
 
 func NewHealthChecker(rs *RouterService, cfg config.HealthCheckConfig) *HealthChecker {
@@ -60,8 +61,12 @@ func (h *HealthChecker) startLocked() {
 	interval := time.Duration(h.cfg.IntervalSeconds) * time.Second
 	ctx, cancel := context.WithCancel(h.parentCtx)
 	h.cancel = cancel
+	rs := h.rs
+	cfg := h.cfg
 
+	h.wg.Add(1)
 	go func() {
+		defer h.wg.Done()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
@@ -70,7 +75,7 @@ func (h *HealthChecker) startLocked() {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				h.runCheck(ctx)
+				h.runCheck(ctx, rs, cfg)
 			}
 		}
 	}()
@@ -81,6 +86,7 @@ func (h *HealthChecker) stopLocked() {
 		h.cancel()
 		h.cancel = nil
 	}
+	h.wg.Wait()
 }
 
 func (h *HealthChecker) snapshot() (*RouterService, config.HealthCheckConfig) {
@@ -89,8 +95,7 @@ func (h *HealthChecker) snapshot() (*RouterService, config.HealthCheckConfig) {
 	return h.rs, h.cfg
 }
 
-func (h *HealthChecker) runCheck(ctx context.Context) {
-	rs, cfg := h.snapshot()
+func (h *HealthChecker) runCheck(ctx context.Context, rs *RouterService, cfg config.HealthCheckConfig) {
 	if rs == nil {
 		return
 	}
