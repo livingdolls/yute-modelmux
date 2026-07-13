@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -25,7 +24,7 @@ func (s *Server) modelsHandler(w http.ResponseWriter, r *http.Request) {
 		ID     string `json:"id"`
 		Object string `json:"object"`
 	}
-	rs := s.loadRouterService()
+	rs := s.routerServiceForRequest(r)
 	models := rs.ListModels()
 	groups := rs.ListModelGroups()
 	items := make([]modelItem, 0, len(models)+len(groups))
@@ -54,7 +53,7 @@ func (s *Server) completionsHandler(w http.ResponseWriter, r *http.Request) {
 		maxBytes = 10 * 1024 * 1024
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
-	rs := s.loadRouterService()
+	rs := s.routerServiceForRequest(r)
 	resp, err := rs.HandleCompletion(r.Context(), r)
 	if err != nil {
 		if traceID := service.GetTraceID(r.Context()); traceID != "" {
@@ -86,7 +85,7 @@ func (s *Server) chatCompletionsHandler(w http.ResponseWriter, r *http.Request) 
 		maxBytes = 10 * 1024 * 1024
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
-	rs := s.loadRouterService()
+	rs := s.routerServiceForRequest(r)
 	resp, err := rs.HandleChatCompletion(r.Context(), r)
 	if err != nil {
 		if traceID := service.GetTraceID(r.Context()); traceID != "" {
@@ -166,21 +165,23 @@ func copyProxyHeaders(dst, src http.Header) {
 }
 
 type metricSnapshot struct {
-	requests      int
-	errors        int
-	rateLimits    int
-	latencies     []int64
-	statusClasses map[string]int
-	activeKeys    int
-	cooldownKeys  int
-	invalidKeys   int
-	limitedKeys   int
+	requests       uint64
+	errors         uint64
+	rateLimits     uint64
+	latencyCount   uint64
+	latencySumMs   uint64
+	latencyBuckets service.RuntimeLatencyBuckets
+	statusClasses  map[string]uint64
+	activeKeys     int
+	cooldownKeys   int
+	invalidKeys    int
+	limitedKeys    int
 }
 
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 	format := r.URL.Query().Get("format")
 
-	rs := s.loadRouterService()
+	rs := s.routerServiceForRequest(r)
 	keys := rs.ListKeys()
 	metrics := rs.MetricsSnapshot()
 	models := rs.ListModels()
@@ -226,20 +227,22 @@ func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
 
 func metricSnapshotFromRuntime(src service.RuntimeMetricSeries) *metricSnapshot {
 	return &metricSnapshot{
-		requests:      src.Requests,
-		errors:        src.Errors,
-		rateLimits:    src.RateLimits,
-		latencies:     append([]int64(nil), src.Latencies...),
-		statusClasses: src.StatusClasses,
+		requests:       src.Requests,
+		errors:         src.Errors,
+		rateLimits:     src.RateLimits,
+		latencyCount:   src.LatencyCount,
+		latencySumMs:   src.LatencySumMs,
+		latencyBuckets: src.LatencyBuckets,
+		statusClasses:  src.StatusClasses,
 	}
 }
 
 func (s *Server) writeJSONMetrics(w http.ResponseWriter, models []domain.Model, groups []domain.ModelGroup, keys []domain.APIKey, modelMetrics map[string]*metricSnapshot, groupMetrics map[string]*metricSnapshot) {
 	type modelMetric struct {
 		ID           string  `json:"id"`
-		Requests     int     `json:"requests"`
-		Errors       int     `json:"errors"`
-		RateLimits   int     `json:"rate_limits"`
+		Requests     uint64  `json:"requests"`
+		Errors       uint64  `json:"errors"`
+		RateLimits   uint64  `json:"rate_limits"`
 		LatencyAvgMs float64 `json:"latency_avg_ms"`
 		LatencyP95Ms int64   `json:"latency_p95_ms"`
 		ActiveKeys   int     `json:"active_keys"`
@@ -249,8 +252,8 @@ func (s *Server) writeJSONMetrics(w http.ResponseWriter, models []domain.Model, 
 	}
 	type groupMetric struct {
 		ID                string `json:"id"`
-		Requests          int    `json:"requests"`
-		Errors            int    `json:"errors"`
+		Requests          uint64 `json:"requests"`
+		Errors            uint64 `json:"errors"`
 		ActiveModels      int    `json:"active_models"`
 		UnavailableModels int    `json:"unavailable_models"`
 	}
@@ -263,20 +266,9 @@ func (s *Server) writeJSONMetrics(w http.ResponseWriter, models []domain.Model, 
 		}
 		latencyAvg := float64(0)
 		latencyP95 := int64(0)
-		if len(ms.latencies) > 0 {
-			sorted := make([]int64, len(ms.latencies))
-			copy(sorted, ms.latencies)
-			sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-			var total int64
-			for _, l := range sorted {
-				total += l
-			}
-			latencyAvg = float64(total) / float64(len(sorted))
-			p95Idx := int(float64(len(sorted)) * 0.95)
-			if p95Idx >= len(sorted) {
-				p95Idx = len(sorted) - 1
-			}
-			latencyP95 = sorted[p95Idx]
+		if ms.latencyCount > 0 {
+			latencyAvg = float64(ms.latencySumMs) / float64(ms.latencyCount)
+			latencyP95 = approximateP95FromBuckets(ms.latencyBuckets, ms.latencyCount)
 		}
 		mm = append(mm, modelMetric{
 			ID:           model.ID,
@@ -322,8 +314,6 @@ func (s *Server) writeJSONMetrics(w http.ResponseWriter, models []domain.Model, 
 func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.Model, groups []domain.ModelGroup, keys []domain.APIKey, metrics service.RuntimeMetrics, modelMetrics map[string]*metricSnapshot, groupMetrics map[string]*metricSnapshot, providerModelMap map[string]string) {
 	var b strings.Builder
 
-	allLatencies := append([]int64(nil), metrics.Latencies...)
-
 	activeKeys := 0
 	cooldownKeys := 0
 	invalidKeys := 0
@@ -353,18 +343,9 @@ func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.M
 	b.WriteString("# TYPE modelmux_rate_limits_total counter\n")
 	b.WriteString(fmt.Sprintf("modelmux_rate_limits_total %d\n", metrics.RateLimits))
 
-	if len(allLatencies) > 0 {
-		sort.Slice(allLatencies, func(i, j int) bool { return allLatencies[i] < allLatencies[j] })
-		var totalLatency int64
-		for _, l := range allLatencies {
-			totalLatency += l
-		}
-		avgMs := float64(totalLatency) / float64(len(allLatencies))
-		p95Idx := int(float64(len(allLatencies)) * 0.95)
-		if p95Idx >= len(allLatencies) {
-			p95Idx = len(allLatencies) - 1
-		}
-		p95Ms := allLatencies[p95Idx]
+	if metrics.LatencyCount > 0 {
+		avgMs := float64(metrics.LatencySumMs) / float64(metrics.LatencyCount)
+		p95Ms := approximateP95FromBuckets(metrics.LatencyBuckets, metrics.LatencyCount)
 
 		b.WriteString("# HELP modelmux_latency_avg_ms Average request latency in milliseconds\n")
 		b.WriteString("# TYPE modelmux_latency_avg_ms gauge\n")
@@ -393,21 +374,6 @@ func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.M
 
 	b.WriteString("# HELP modelmux_latency_ms Request latency in milliseconds\n")
 	b.WriteString("# TYPE modelmux_latency_ms histogram\n")
-	buckets := []struct {
-		le    int64
-		label string
-	}{
-		{50, "50"},
-		{100, "100"},
-		{250, "250"},
-		{500, "500"},
-		{1000, "1000"},
-		{2500, "2500"},
-		{5000, "5000"},
-		{10000, "10000"},
-		{30000, "30000"},
-	}
-
 	for _, model := range models {
 		provider := providerModelMap[model.ID]
 		ms := modelMetrics[model.ID]
@@ -419,34 +385,18 @@ func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.M
 		b.WriteString(fmt.Sprintf("modelmux_errors_total{%s} %d\n", labels, ms.errors))
 		b.WriteString(fmt.Sprintf("modelmux_rate_limits_total{%s} %d\n", labels, ms.rateLimits))
 
-		if len(ms.latencies) > 0 {
-			sorted := make([]int64, len(ms.latencies))
-			copy(sorted, ms.latencies)
-			sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-			var total int64
-			for _, l := range sorted {
-				total += l
-			}
-			avg := float64(total) / float64(len(sorted))
-			p95Idx := int(float64(len(sorted)) * 0.95)
-			if p95Idx >= len(sorted) {
-				p95Idx = len(sorted) - 1
-			}
+		if ms.latencyCount > 0 {
+			avg := float64(ms.latencySumMs) / float64(ms.latencyCount)
+			p95 := approximateP95FromBuckets(ms.latencyBuckets, ms.latencyCount)
 			b.WriteString(fmt.Sprintf("modelmux_latency_avg_ms{%s} %.0f\n", labels, avg))
-			b.WriteString(fmt.Sprintf("modelmux_latency_p95_ms{%s} %d\n", labels, sorted[p95Idx]))
+			b.WriteString(fmt.Sprintf("modelmux_latency_p95_ms{%s} %d\n", labels, p95))
 
-			for _, bucket := range buckets {
-				count := 0
-				for _, l := range sorted {
-					if l <= bucket.le {
-						count++
-					}
-				}
-				b.WriteString(fmt.Sprintf("modelmux_latency_ms_bucket{%s,le=\"%s\"} %d\n", labels, bucket.label, count))
+			for i, upperBound := range service.RuntimeLatencyBucketsMs {
+				b.WriteString(fmt.Sprintf("modelmux_latency_ms_bucket{%s,le=\"%d\"} %d\n", labels, upperBound, ms.latencyBuckets[i]))
 			}
-			b.WriteString(fmt.Sprintf("modelmux_latency_ms_bucket{%s,le=\"+Inf\"} %d\n", labels, len(sorted)))
-			b.WriteString(fmt.Sprintf("modelmux_latency_ms_sum{%s} %.0f\n", labels, float64(total)))
-			b.WriteString(fmt.Sprintf("modelmux_latency_ms_count{%s} %d\n", labels, len(sorted)))
+			b.WriteString(fmt.Sprintf("modelmux_latency_ms_bucket{%s,le=\"+Inf\"} %d\n", labels, ms.latencyBuckets[service.RuntimeLatencyInfBucket]))
+			b.WriteString(fmt.Sprintf("modelmux_latency_ms_sum{%s} %d\n", labels, ms.latencySumMs))
+			b.WriteString(fmt.Sprintf("modelmux_latency_ms_count{%s} %d\n", labels, ms.latencyCount))
 		}
 
 		for class, count := range ms.statusClasses {
@@ -465,8 +415,8 @@ func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.M
 	for _, group := range groups {
 		groupMetric := groupMetrics[group.ID]
 		labels := fmt.Sprintf(`group="%s"`, escapeLabelValue(group.ID))
-		requests := 0
-		errors := 0
+		var requests uint64
+		var errors uint64
 		if groupMetric != nil {
 			requests = groupMetric.requests
 			errors = groupMetric.errors
@@ -478,6 +428,22 @@ func (s *Server) writePrometheusMetrics(w http.ResponseWriter, models []domain.M
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(b.String()))
+}
+
+func approximateP95FromBuckets(buckets service.RuntimeLatencyBuckets, count uint64) int64 {
+	if count == 0 {
+		return 0
+	}
+	threshold := (count*95 + 99) / 100
+	for i, cumulative := range buckets {
+		if cumulative >= threshold {
+			if i < len(service.RuntimeLatencyBucketsMs) {
+				return service.RuntimeLatencyBucketsMs[i]
+			}
+			return service.RuntimeLatencyBucketsMs[len(service.RuntimeLatencyBucketsMs)-1]
+		}
+	}
+	return 0
 }
 
 func modelHasActiveKey(keys []domain.APIKey, modelID string) bool {
@@ -526,7 +492,7 @@ func (s *Server) logsHandler(w http.ResponseWriter, r *http.Request) {
 		filter.StatusCode = statusCodeFilter
 	}
 
-	page, total := s.loadRouterService().QueryLogs(filter)
+	page, total := s.routerServiceForRequest(r).QueryLogs(filter)
 
 	type logItem struct {
 		ID            string  `json:"id"`

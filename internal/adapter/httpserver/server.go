@@ -29,33 +29,63 @@ func generateRequestID() string {
 type Server struct {
 	rs            *service.RouterService
 	rsMu          sync.RWMutex
+	gen           *routerGeneration
+	genMu         sync.RWMutex
 	cfg           *config.Config
 	cfgMu         sync.RWMutex
 	configFileMu  sync.Mutex
 	configPath    string
 	store         storage.Storage
 	storeMu       sync.RWMutex
-	retiredStores []*retiredStore
+	retiredGens   []*routerGeneration
 	retiredMu     sync.Mutex
 	healthChecker *service.HealthChecker
 	mux           *http.ServeMux
 	srv           *http.Server
 }
 
-const retiredStoreCloseDelay = 30 * time.Second
+type routerContextKey struct{}
+type generationContextKey struct{}
 
-type retiredStore struct {
-	store storage.Storage
-	once  sync.Once
+type routerGeneration struct {
+	router *service.RouterService
+	store  storage.Storage
+
+	mu        sync.Mutex
+	retiring  bool
+	wg        sync.WaitGroup
+	closeOnce sync.Once
 }
 
-func (r *retiredStore) Close() {
-	r.once.Do(func() { _ = r.store.Close() })
+func newRouterGeneration(router *service.RouterService, store storage.Storage) *routerGeneration {
+	return &routerGeneration{router: router, store: store}
+}
+
+func (g *routerGeneration) acquire() (*service.RouterService, func(), bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.retiring {
+		return nil, nil, false
+	}
+	g.wg.Add(1)
+	return g.router, g.wg.Done, true
+}
+
+func (g *routerGeneration) retireAndClose() {
+	g.mu.Lock()
+	g.retiring = true
+	g.mu.Unlock()
+	g.wg.Wait()
+	g.closeOnce.Do(func() {
+		if g.store != nil {
+			_ = g.store.Close()
+		}
+	})
 }
 
 func New(rs *service.RouterService, cfg *config.Config) *Server {
 	mux := http.NewServeMux()
-	s := &Server{rs: rs, cfg: cfg, mux: mux}
+	s := &Server{rs: rs, gen: newRouterGeneration(rs, nil), cfg: cfg, mux: mux}
 	mux.HandleFunc("/health", s.healthHandler)
 	mux.HandleFunc("/v1/models", s.modelsHandler)
 	mux.HandleFunc("/v1/chat/completions", s.chatCompletionsHandler)
@@ -70,7 +100,7 @@ func New(rs *service.RouterService, cfg *config.Config) *Server {
 	mux.HandleFunc("GET /admin/traces/{request_id}", s.adminTraceHandler)
 	s.srv = &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
-		Handler:      s.requestIDMiddleware(s.authMiddleware(mux)),
+		Handler:      s.requestIDMiddleware(s.authMiddleware(s.generationMiddleware(mux))),
 		ReadTimeout:  time.Duration(cfg.Server.ReadTimeoutSecond) * time.Second,
 		WriteTimeout: time.Duration(cfg.Server.WriteTimeoutSecond) * time.Second,
 	}
@@ -85,14 +115,27 @@ func (s *Server) SetHealthChecker(checker *service.HealthChecker) {
 
 func (s *Server) SetStore(store storage.Storage) {
 	s.storeMu.Lock()
-	defer s.storeMu.Unlock()
 	s.store = store
+	s.storeMu.Unlock()
+
+	s.genMu.Lock()
+	if s.gen != nil {
+		s.gen.store = store
+	}
+	s.genMu.Unlock()
 }
 
 func (s *Server) loadRouterService() *service.RouterService {
 	s.rsMu.RLock()
 	defer s.rsMu.RUnlock()
 	return s.rs
+}
+
+func (s *Server) routerServiceForRequest(r *http.Request) *service.RouterService {
+	if rs, ok := r.Context().Value(routerContextKey{}).(*service.RouterService); ok && rs != nil {
+		return rs
+	}
+	return s.loadRouterService()
 }
 
 func (s *Server) loadConfig() *config.Config {
@@ -105,6 +148,35 @@ func (s *Server) loadStore() storage.Storage {
 	s.storeMu.RLock()
 	defer s.storeMu.RUnlock()
 	return s.store
+}
+
+func (s *Server) storeForRequest(r *http.Request) storage.Storage {
+	if gen, ok := r.Context().Value(generationContextKey{}).(*routerGeneration); ok && gen != nil {
+		return gen.store
+	}
+	return s.loadStore()
+}
+
+func (s *Server) generationMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.genMu.RLock()
+		gen := s.gen
+		s.genMu.RUnlock()
+		if gen == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "router not configured"})
+			return
+		}
+		rs, release, ok := gen.acquire()
+		if !ok {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "router is reloading"})
+			return
+		}
+		defer release()
+
+		ctx := context.WithValue(r.Context(), routerContextKey{}, rs)
+		ctx = context.WithValue(ctx, generationContextKey{}, gen)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 func (s *Server) configFilePath() string {
@@ -137,9 +209,12 @@ func resolveSecretPath(cfg *config.Config) string {
 }
 
 func (s *Server) adminReloadHandler(w http.ResponseWriter, r *http.Request) {
+	s.configFileMu.Lock()
+	defer s.configFileMu.Unlock()
+
 	path := s.configFilePath()
 	oldRS := s.loadRouterService()
-	oldMetrics := oldRS.MetricsSnapshot()
+	metrics := oldRS.MetricsRegistry()
 	cfg, err := config.Load(path)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "failed to load config: " + err.Error()})
@@ -172,7 +247,7 @@ func (s *Server) adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	newRS, err := service.NewRouterServiceWithSecret(cfg, newStore, secStore)
+	newRS, err := service.NewRouterServiceWithSecretAndMetrics(cfg, newStore, secStore, metrics)
 	if err != nil {
 		if newStore != nil {
 			newStore.Close()
@@ -180,14 +255,18 @@ func (s *Server) adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to create router: " + err.Error()})
 		return
 	}
-	newRS.RestoreMetrics(oldMetrics)
+	newGen := newRouterGeneration(newRS, newStore)
 
 	s.rsMu.Lock()
 	s.rs = newRS
 	s.rsMu.Unlock()
 
+	s.genMu.Lock()
+	oldGen := s.gen
+	s.gen = newGen
+	s.genMu.Unlock()
+
 	s.storeMu.Lock()
-	oldStore := s.store
 	s.store = newStore
 	s.storeMu.Unlock()
 
@@ -199,14 +278,14 @@ func (s *Server) adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 		s.healthChecker.Update(newRS, cfg.HealthCheck)
 	}
 
-	if oldStore != nil {
-		s.retireStore(oldStore)
+	if oldGen != nil {
+		s.retireGeneration(oldGen)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "reloaded"})
 }
 
-func (s *Server) updateKeyStatusInConfig(id, status string) error {
+func (s *Server) updateKeyStatus(id, status string) error {
 	s.configFileMu.Lock()
 	defer s.configFileMu.Unlock()
 
@@ -218,7 +297,11 @@ func (s *Server) updateKeyStatusInConfig(id, status string) error {
 	for i := range cfg.Keys {
 		if cfg.Keys[i].ID == id {
 			cfg.Keys[i].Status = status
-			return config.Save(path, cfg)
+			if err := config.Save(path, cfg); err != nil {
+				return err
+			}
+			s.loadRouterService().SetKeyStatus(id, status)
+			return nil
 		}
 	}
 	return os.ErrNotExist
@@ -230,7 +313,7 @@ func (s *Server) adminEnableKeyHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "missing key id"})
 		return
 	}
-	if err := s.updateKeyStatusInConfig(id, "active"); err != nil {
+	if err := s.updateKeyStatus(id, "active"); err != nil {
 		if os.IsNotExist(err) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "key not found"})
 			return
@@ -238,8 +321,6 @@ func (s *Server) adminEnableKeyHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	rs := s.loadRouterService()
-	rs.SetKeyStatus(id, "active")
 	writeJSON(w, http.StatusOK, map[string]any{"status": "enabled", "id": id})
 }
 
@@ -249,7 +330,7 @@ func (s *Server) adminDisableKeyHandler(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "missing key id"})
 		return
 	}
-	if err := s.updateKeyStatusInConfig(id, "disabled"); err != nil {
+	if err := s.updateKeyStatus(id, "disabled"); err != nil {
 		if os.IsNotExist(err) {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "key not found"})
 			return
@@ -257,8 +338,6 @@ func (s *Server) adminDisableKeyHandler(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	rs := s.loadRouterService()
-	rs.SetKeyStatus(id, "disabled")
 	writeJSON(w, http.StatusOK, map[string]any{"status": "disabled", "id": id})
 }
 
@@ -268,7 +347,7 @@ func (s *Server) adminTestKeyHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "missing key id"})
 		return
 	}
-	rs := s.loadRouterService()
+	rs := s.routerServiceForRequest(r)
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	if err := rs.TestKey(ctx, id); err != nil {
@@ -279,7 +358,7 @@ func (s *Server) adminTestKeyHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminStatusHandler(w http.ResponseWriter, r *http.Request) {
-	rs := s.loadRouterService()
+	rs := s.routerServiceForRequest(r)
 	providers := rs.ListProviders()
 	models := rs.ListModels()
 	groups := rs.ListModelGroups()
@@ -354,7 +433,7 @@ func (s *Server) adminTraceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	store := s.loadStore()
+	store := s.storeForRequest(r)
 	if store == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "storage not configured"})
 		return
@@ -424,40 +503,38 @@ func (s *Server) Run(ctx context.Context) error {
 
 func (s *Server) closeRetired() {
 	s.retiredMu.Lock()
-	defer s.retiredMu.Unlock()
-	for _, store := range s.retiredStores {
-		store.Close()
-	}
-	s.retiredStores = nil
-	s.storeMu.RLock()
-	current := s.store
-	s.storeMu.RUnlock()
+	retired := append([]*routerGeneration(nil), s.retiredGens...)
+	s.retiredGens = nil
+	s.retiredMu.Unlock()
+
+	s.genMu.RLock()
+	current := s.gen
+	s.genMu.RUnlock()
 	if current != nil {
-		current.Close()
+		current.retireAndClose()
+	}
+	for _, gen := range retired {
+		gen.retireAndClose()
 	}
 }
 
-func (s *Server) retireStore(store storage.Storage) {
-	retired := &retiredStore{store: store}
+func (s *Server) retireGeneration(gen *routerGeneration) {
 	s.retiredMu.Lock()
-	s.retiredStores = append(s.retiredStores, retired)
+	s.retiredGens = append(s.retiredGens, gen)
 	s.retiredMu.Unlock()
 
 	go func() {
-		timer := time.NewTimer(retiredStoreCloseDelay)
-		defer timer.Stop()
-		<-timer.C
-		retired.Close()
-		s.removeRetiredStore(retired)
+		gen.retireAndClose()
+		s.removeRetiredGeneration(gen)
 	}()
 }
 
-func (s *Server) removeRetiredStore(retired *retiredStore) {
+func (s *Server) removeRetiredGeneration(retired *routerGeneration) {
 	s.retiredMu.Lock()
 	defer s.retiredMu.Unlock()
-	for i, candidate := range s.retiredStores {
+	for i, candidate := range s.retiredGens {
 		if candidate == retired {
-			s.retiredStores = append(s.retiredStores[:i], s.retiredStores[i+1:]...)
+			s.retiredGens = append(s.retiredGens[:i], s.retiredGens[i+1:]...)
 			return
 		}
 	}

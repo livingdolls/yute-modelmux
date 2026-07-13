@@ -135,8 +135,7 @@ type RouterService struct {
 	store        storage.Storage
 	secretStore  *secret.Store
 	mu           sync.Mutex
-	metricsMu    sync.RWMutex
-	metrics      RuntimeMetrics
+	metrics      *RuntimeMetricsRegistry
 	rrIndex      map[string]int
 	groupRRIndex map[string]int
 	logs         []domain.RequestLog
@@ -150,22 +149,37 @@ type RouterService struct {
 	aiPolicy     *ai.RoutePolicy
 }
 
+var RuntimeLatencyBucketsMs = [...]int64{50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000}
+
+const RuntimeLatencyInfBucket = len(RuntimeLatencyBucketsMs)
+
+type RuntimeLatencyBuckets [len(RuntimeLatencyBucketsMs) + 1]uint64
+
 type RuntimeMetricSeries struct {
-	Requests      int
-	Errors        int
-	RateLimits    int
-	Latencies     []int64
-	StatusClasses map[string]int
+	Requests       uint64
+	Errors         uint64
+	RateLimits     uint64
+	LatencyCount   uint64
+	LatencySumMs   uint64
+	LatencyBuckets RuntimeLatencyBuckets
+	StatusClasses  map[string]uint64
 }
 
 type RuntimeMetrics struct {
-	Requests   int
-	Errors     int
-	RateLimits int
-	Latencies  []int64
-	Models     map[string]RuntimeMetricSeries
-	Keys       map[string]RuntimeMetricSeries
-	Groups     map[string]RuntimeMetricSeries
+	Requests       uint64
+	Errors         uint64
+	RateLimits     uint64
+	LatencyCount   uint64
+	LatencySumMs   uint64
+	LatencyBuckets RuntimeLatencyBuckets
+	Models         map[string]RuntimeMetricSeries
+	Keys           map[string]RuntimeMetricSeries
+	Groups         map[string]RuntimeMetricSeries
+}
+
+type RuntimeMetricsRegistry struct {
+	mu      sync.RWMutex
+	metrics RuntimeMetrics
 }
 
 func NewRouterService(cfg *config.Config) (*RouterService, error) {
@@ -180,13 +194,24 @@ func NewRouterServiceWithSecret(cfg *config.Config, store storage.Storage, secre
 	return newRouterService(cfg, store, secretStore)
 }
 
+func NewRouterServiceWithSecretAndMetrics(cfg *config.Config, store storage.Storage, secretStore *secret.Store, metrics *RuntimeMetricsRegistry) (*RouterService, error) {
+	return newRouterServiceWithMetrics(cfg, store, secretStore, metrics)
+}
+
 func newRouterService(cfg *config.Config, store storage.Storage, secretStore *secret.Store) (*RouterService, error) {
+	return newRouterServiceWithMetrics(cfg, store, secretStore, nil)
+}
+
+func newRouterServiceWithMetrics(cfg *config.Config, store storage.Storage, secretStore *secret.Store, metrics *RuntimeMetricsRegistry) (*RouterService, error) {
+	if metrics == nil {
+		metrics = NewRuntimeMetricsRegistry()
+	}
 	rs := &RouterService{
 		cfg:          cfg,
 		clientReg:    providerclient.NewClientRegistry(),
 		store:        store,
 		secretStore:  secretStore,
-		metrics:      newRuntimeMetrics(),
+		metrics:      metrics,
 		rrIndex:      map[string]int{},
 		groupRRIndex: map[string]int{},
 		aiClassifier: ai.NewClassifier(),
@@ -353,7 +378,9 @@ func newRouterService(cfg *config.Config, store storage.Storage, secretStore *se
 					CreatedAt:     createdAt,
 				})
 			}
-			rs.rebuildMetricsFromLogs(rs.logs)
+			if metrics.IsEmpty() {
+				metrics.RebuildFromLogs(rs.logs)
+			}
 		}
 	}
 
@@ -387,15 +414,11 @@ func (s *RouterService) Logs() []domain.RequestLog {
 }
 
 func (s *RouterService) MetricsSnapshot() RuntimeMetrics {
-	s.metricsMu.RLock()
-	defer s.metricsMu.RUnlock()
-	return cloneRuntimeMetrics(s.metrics)
+	return s.metrics.Snapshot()
 }
 
-func (s *RouterService) RestoreMetrics(metrics RuntimeMetrics) {
-	s.metricsMu.Lock()
-	defer s.metricsMu.Unlock()
-	s.metrics = cloneRuntimeMetrics(metrics)
+func (s *RouterService) MetricsRegistry() *RuntimeMetricsRegistry {
+	return s.metrics
 }
 
 func (s *RouterService) LogsForMetrics() []domain.RequestLog {
@@ -490,6 +513,37 @@ func requestLogRecordsToDomain(records []storage.RequestLogRecord) []domain.Requ
 	return logs
 }
 
+func NewRuntimeMetricsRegistry() *RuntimeMetricsRegistry {
+	return &RuntimeMetricsRegistry{metrics: newRuntimeMetrics()}
+}
+
+func (r *RuntimeMetricsRegistry) Snapshot() RuntimeMetrics {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return cloneRuntimeMetrics(r.metrics)
+}
+
+func (r *RuntimeMetricsRegistry) IsEmpty() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.metrics.Requests == 0
+}
+
+func (r *RuntimeMetricsRegistry) RebuildFromLogs(logs []domain.RequestLog) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.metrics = newRuntimeMetrics()
+	for _, log := range logs {
+		recordRuntimeMetric(&r.metrics, log)
+	}
+}
+
+func (r *RuntimeMetricsRegistry) Record(log domain.RequestLog) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	recordRuntimeMetric(&r.metrics, log)
+}
+
 func newRuntimeMetrics() RuntimeMetrics {
 	return RuntimeMetrics{
 		Models: map[string]RuntimeMetricSeries{},
@@ -500,13 +554,15 @@ func newRuntimeMetrics() RuntimeMetrics {
 
 func cloneRuntimeMetrics(src RuntimeMetrics) RuntimeMetrics {
 	dst := RuntimeMetrics{
-		Requests:   src.Requests,
-		Errors:     src.Errors,
-		RateLimits: src.RateLimits,
-		Latencies:  append([]int64(nil), src.Latencies...),
-		Models:     make(map[string]RuntimeMetricSeries, len(src.Models)),
-		Keys:       make(map[string]RuntimeMetricSeries, len(src.Keys)),
-		Groups:     make(map[string]RuntimeMetricSeries, len(src.Groups)),
+		Requests:       src.Requests,
+		Errors:         src.Errors,
+		RateLimits:     src.RateLimits,
+		LatencyCount:   src.LatencyCount,
+		LatencySumMs:   src.LatencySumMs,
+		LatencyBuckets: src.LatencyBuckets,
+		Models:         make(map[string]RuntimeMetricSeries, len(src.Models)),
+		Keys:           make(map[string]RuntimeMetricSeries, len(src.Keys)),
+		Groups:         make(map[string]RuntimeMetricSeries, len(src.Groups)),
 	}
 	for k, v := range src.Models {
 		dst.Models[k] = cloneRuntimeMetricSeries(v)
@@ -522,11 +578,13 @@ func cloneRuntimeMetrics(src RuntimeMetrics) RuntimeMetrics {
 
 func cloneRuntimeMetricSeries(src RuntimeMetricSeries) RuntimeMetricSeries {
 	dst := RuntimeMetricSeries{
-		Requests:      src.Requests,
-		Errors:        src.Errors,
-		RateLimits:    src.RateLimits,
-		Latencies:     append([]int64(nil), src.Latencies...),
-		StatusClasses: make(map[string]int, len(src.StatusClasses)),
+		Requests:       src.Requests,
+		Errors:         src.Errors,
+		RateLimits:     src.RateLimits,
+		LatencyCount:   src.LatencyCount,
+		LatencySumMs:   src.LatencySumMs,
+		LatencyBuckets: src.LatencyBuckets,
+		StatusClasses:  make(map[string]uint64, len(src.StatusClasses)),
 	}
 	for k, v := range src.StatusClasses {
 		dst.StatusClasses[k] = v
@@ -534,19 +592,8 @@ func cloneRuntimeMetricSeries(src RuntimeMetricSeries) RuntimeMetricSeries {
 	return dst
 }
 
-func (s *RouterService) rebuildMetricsFromLogs(logs []domain.RequestLog) {
-	s.metricsMu.Lock()
-	defer s.metricsMu.Unlock()
-	s.metrics = newRuntimeMetrics()
-	for _, log := range logs {
-		recordRuntimeMetric(&s.metrics, log)
-	}
-}
-
 func (s *RouterService) recordRuntimeMetric(log domain.RequestLog) {
-	s.metricsMu.Lock()
-	defer s.metricsMu.Unlock()
-	recordRuntimeMetric(&s.metrics, log)
+	s.metrics.Record(log)
 }
 
 func recordRuntimeMetric(metrics *RuntimeMetrics, log domain.RequestLog) {
@@ -558,7 +605,7 @@ func recordRuntimeMetric(metrics *RuntimeMetrics, log domain.RequestLog) {
 		metrics.RateLimits++
 	}
 	if log.LatencyMs > 0 {
-		metrics.Latencies = append(metrics.Latencies, log.LatencyMs)
+		recordLatency(&metrics.LatencyCount, &metrics.LatencySumMs, &metrics.LatencyBuckets, log.LatencyMs)
 	}
 	if log.ModelID != "" {
 		series := metrics.Models[log.ModelID]
@@ -586,10 +633,10 @@ func updateRuntimeMetricSeries(series *RuntimeMetricSeries, log domain.RequestLo
 		series.RateLimits++
 	}
 	if log.LatencyMs > 0 {
-		series.Latencies = append(series.Latencies, log.LatencyMs)
+		recordLatency(&series.LatencyCount, &series.LatencySumMs, &series.LatencyBuckets, log.LatencyMs)
 	}
 	if series.StatusClasses == nil {
-		series.StatusClasses = map[string]int{}
+		series.StatusClasses = map[string]uint64{}
 	}
 	switch {
 	case log.StatusCode >= 200 && log.StatusCode < 300:
@@ -599,6 +646,17 @@ func updateRuntimeMetricSeries(series *RuntimeMetricSeries, log domain.RequestLo
 	case log.StatusCode >= 500:
 		series.StatusClasses["5xx"]++
 	}
+}
+
+func recordLatency(count *uint64, sum *uint64, buckets *RuntimeLatencyBuckets, latencyMs int64) {
+	(*count)++
+	*sum += uint64(latencyMs)
+	for i, upperBound := range RuntimeLatencyBucketsMs {
+		if latencyMs <= upperBound {
+			buckets[i]++
+		}
+	}
+	buckets[RuntimeLatencyInfBucket]++
 }
 
 func (s *RouterService) SelectKey(ctx context.Context, modelID string) (*domain.APIKey, error) {

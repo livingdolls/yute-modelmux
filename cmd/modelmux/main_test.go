@@ -14,10 +14,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func boolPtr(v bool) *bool { return &v }
+
 func setupTestConfig(t *testing.T, baseURL string) string {
 	t.Helper()
 
 	cfg := config.Default()
+	cfg.Server.Admin.RequireAuth = boolPtr(false)
 	cfg.Providers[0].BaseURL = baseURL + "/v1"
 	cfg.Providers[0].TimeoutSeconds = 5
 	cfg.Models[0].ModelName = cfg.Models[0].ID
@@ -220,6 +223,7 @@ func TestVersionCommand(t *testing.T) {
 
 func TestGroupsCLIJSONIncludesKeyMembers(t *testing.T) {
 	cfg := config.Default()
+	cfg.Server.Admin.RequireAuth = boolPtr(false)
 	cfg.Providers[0].BaseURL = "https://api.example.com/v1"
 	cfg.Keys[0].Value = "test-key-value"
 	cfg.ModelGroups = []config.ModelGroupConfig{{

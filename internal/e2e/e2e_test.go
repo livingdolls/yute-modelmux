@@ -19,6 +19,8 @@ import (
 	"github.com/livingdolls/yute-modelmux/internal/storage"
 )
 
+func boolPtr(v bool) *bool { return &v }
+
 func startE2EServer(t *testing.T, cfg *config.Config) (string, func()) {
 	t.Helper()
 
@@ -58,7 +60,7 @@ func e2eConfig(baseURL string) *config.Config {
 	}
 	return &config.Config{
 		App:         config.AppConfig{Name: "e2e", LogLevel: "info"},
-		Server:      config.ServerConfig{Host: "127.0.0.1", Port: 18787, ReadTimeoutSecond: 30, WriteTimeoutSecond: 30},
+		Server:      config.ServerConfig{Host: "127.0.0.1", Port: 18787, ReadTimeoutSecond: 30, WriteTimeoutSecond: 30, Admin: config.AdminConfig{RequireAuth: boolPtr(false)}},
 		Cooldown:    config.CooldownConfig{RateLimitSeconds: 300, ServerErrorSeconds: 60, TimeoutSeconds: 60},
 		Retry:       config.RetryConfig{MaxRetryPerKey: 1, MaxTotalAttempts: 3},
 		Providers:   []config.ProviderConfig{{ID: "mimo", Name: "MiMo", Type: "openai-compatible", BaseURL: baseURL, AuthType: "bearer", TimeoutSeconds: 10, Enabled: true}},

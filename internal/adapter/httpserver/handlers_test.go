@@ -8,15 +8,68 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/livingdolls/yute-modelmux/internal/app/service"
 	"github.com/livingdolls/yute-modelmux/internal/config"
 	"github.com/livingdolls/yute-modelmux/internal/core/port/inbound"
+	storagepkg "github.com/livingdolls/yute-modelmux/internal/storage"
 )
 
 func boolPtr(v bool) *bool { return &v }
+
+type trackingStorage struct {
+	closeOnce sync.Once
+	closed    chan struct{}
+}
+
+func newTrackingStorage() *trackingStorage {
+	return &trackingStorage{closed: make(chan struct{})}
+}
+
+func (s *trackingStorage) Close() error {
+	s.closeOnce.Do(func() {
+		close(s.closed)
+	})
+	return nil
+}
+
+func (s *trackingStorage) SaveKeyRuntime(storagepkg.KeyRuntimeRecord) error { return nil }
+func (s *trackingStorage) LoadKeyRuntime() ([]storagepkg.KeyRuntimeRecord, error) {
+	return nil, nil
+}
+func (s *trackingStorage) SaveRequestLog(storagepkg.RequestLogRecord) error { return nil }
+func (s *trackingStorage) LoadRequestLogs() ([]storagepkg.RequestLogRecord, error) {
+	return nil, nil
+}
+func (s *trackingStorage) QueryRequestLogs(storagepkg.LogFilter) ([]storagepkg.RequestLogRecord, int, error) {
+	return nil, 0, nil
+}
+func (s *trackingStorage) SaveRouteTrace(storagepkg.RouteTraceRecord) error { return nil }
+func (s *trackingStorage) GetRouteTraceByRequestID(string) (*storagepkg.RouteTraceRecord, error) {
+	return nil, nil
+}
+func (s *trackingStorage) SaveChatSession(string, string) (int, error) { return 0, nil }
+func (s *trackingStorage) SaveChatMessage(int, string, string) error   { return nil }
+func (s *trackingStorage) ListChatSessions() ([]storagepkg.ChatSessionRecord, error) {
+	return nil, nil
+}
+func (s *trackingStorage) GetChatMessages(int) ([]storagepkg.ChatMessageRecord, error) {
+	return nil, nil
+}
+func (s *trackingStorage) SaveEvalRun(storagepkg.EvalRunRecord) error       { return nil }
+func (s *trackingStorage) SaveEvalResult(storagepkg.EvalResultRecord) error { return nil }
+func (s *trackingStorage) ListEvalRuns() ([]storagepkg.EvalRunRecord, error) {
+	return nil, nil
+}
+func (s *trackingStorage) GetEvalResults(string) ([]storagepkg.EvalResultRecord, error) {
+	return nil, nil
+}
+func (s *trackingStorage) PruneBefore(string) (int, error) { return 0, nil }
+func (s *trackingStorage) Stats() (map[string]int, error)  { return nil, nil }
+func (s *trackingStorage) Vacuum() error                   { return nil }
 
 func TestMetricsDoesNotExposeAPIKeyValue(t *testing.T) {
 	cfg := config.Default()
@@ -68,6 +121,119 @@ func TestPrometheusMetricsLatencyHistogramUsesMilliseconds(t *testing.T) {
 	}
 	if strings.Contains(body, `le="0.1"`) {
 		t.Fatalf("latency bucket labels should be milliseconds, got:\n%s", body)
+	}
+}
+
+func TestReloadReusesMetricsRegistry(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	cfg := config.Default()
+	cfg.Server.RequireAuth = false
+	cfg.Server.Admin.RequireAuth = boolPtr(false)
+	cfg.Providers[0].BaseURL = "https://example.com/v1"
+	cfg.Keys[0].Value = "provider-secret"
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	rs, err := service.NewRouterService(cfg)
+	if err != nil {
+		t.Fatalf("create router: %v", err)
+	}
+	if err := rs.MarkKeyResult(context.Background(), "mimo-key-1", inbound.KeyResult{Success: true, ModelID: "mimo-v2.5-pro", ProviderID: "mimo", StatusCode: http.StatusOK, LatencyMs: 75}); err != nil {
+		t.Fatalf("mark initial result: %v", err)
+	}
+
+	srv := New(rs, cfg)
+	srv.SetConfigPath(cfgPath)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/reload", nil)
+	rec := httptest.NewRecorder()
+	srv.adminReloadHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected reload 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	reloaded := srv.loadRouterService()
+	if reloaded == rs {
+		t.Fatal("expected reload to replace router service")
+	}
+	if err := reloaded.MarkKeyResult(context.Background(), "mimo-key-1", inbound.KeyResult{Success: true, ModelID: "mimo-v2.5-pro", ProviderID: "mimo", StatusCode: http.StatusOK, LatencyMs: 125}); err != nil {
+		t.Fatalf("mark reloaded result: %v", err)
+	}
+	if got := reloaded.MetricsSnapshot().Requests; got != 2 {
+		t.Fatalf("expected metrics to include requests across reload, got %d", got)
+	}
+	if got := rs.MetricsSnapshot().Requests; got != 2 {
+		t.Fatalf("expected old in-flight router to share metrics registry, got %d", got)
+	}
+}
+
+func TestRetiredGenerationClosesStoreAfterInFlightRequestFinishes(t *testing.T) {
+	cfg := config.Default()
+	cfg.Server.RequireAuth = false
+	cfg.Server.Admin.RequireAuth = boolPtr(false)
+	cfg.Keys[0].Value = "provider-secret"
+
+	rs, err := service.NewRouterService(cfg)
+	if err != nil {
+		t.Fatalf("create router: %v", err)
+	}
+	srv := New(rs, cfg)
+
+	oldStore := newTrackingStorage()
+	srv.SetStore(oldStore)
+
+	requestEntered := make(chan struct{})
+	releaseRequest := make(chan struct{})
+	requestDone := make(chan struct{})
+	handlerErr := make(chan string, 1)
+	handler := srv.generationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var errMsg string
+		if got := srv.storeForRequest(r); got != oldStore {
+			errMsg = "request did not use old store"
+		}
+		close(requestEntered)
+		<-releaseRequest
+		if errMsg == "" {
+			w.WriteHeader(http.StatusNoContent)
+		}
+		handlerErr <- errMsg
+		close(requestDone)
+	}))
+
+	go handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/admin/traces/request-1", nil))
+	<-requestEntered
+
+	newRS, err := service.NewRouterService(cfg)
+	if err != nil {
+		t.Fatalf("create reloaded router: %v", err)
+	}
+	newStore := newTrackingStorage()
+
+	srv.genMu.Lock()
+	oldGen := srv.gen
+	srv.gen = newRouterGeneration(newRS, newStore)
+	srv.genMu.Unlock()
+
+	srv.retireGeneration(oldGen)
+
+	select {
+	case <-oldStore.closed:
+		t.Fatal("old store closed while an in-flight request still held its generation")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(releaseRequest)
+	<-requestDone
+	if errMsg := <-handlerErr; errMsg != "" {
+		t.Fatal(errMsg)
+	}
+
+	select {
+	case <-oldStore.closed:
+	case <-time.After(time.Second):
+		t.Fatal("old store was not closed after in-flight request finished")
 	}
 }
 
@@ -383,6 +549,7 @@ func TestChatSSEDeliversChunksBeforeStreamEnds(t *testing.T) {
 func TestAdminStatusReturnsSummary(t *testing.T) {
 	cfg := config.Default()
 	cfg.Server.RequireAuth = false
+	cfg.Server.Admin.RequireAuth = boolPtr(false)
 	cfg.Providers[0].BaseURL = "https://example.com/v1"
 	cfg.Keys[0].Value = "test-key"
 	rs, _ := NewTestRouterService(cfg)
@@ -407,6 +574,7 @@ func TestAdminEnableKeySavesConfig(t *testing.T) {
 	cfgPath := filepath.Join(dir, "config.yaml")
 	cfg := config.Default()
 	cfg.Server.RequireAuth = false
+	cfg.Server.Admin.RequireAuth = boolPtr(false)
 	cfg.Providers[0].BaseURL = "https://example.com/v1"
 	cfg.Keys = []config.KeyConfig{
 		{ID: "key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "k1", Status: "disabled", Priority: 1},
@@ -435,6 +603,7 @@ func TestAdminDisableKeySavesConfig(t *testing.T) {
 	cfgPath := filepath.Join(dir, "config.yaml")
 	cfg := config.Default()
 	cfg.Server.RequireAuth = false
+	cfg.Server.Admin.RequireAuth = boolPtr(false)
 	cfg.Providers[0].BaseURL = "https://example.com/v1"
 	cfg.Keys = []config.KeyConfig{
 		{ID: "key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "k1", Status: "active", Priority: 1},
@@ -463,6 +632,7 @@ func TestAdminKeyNotFound(t *testing.T) {
 	cfgPath := filepath.Join(dir, "config.yaml")
 	cfg := config.Default()
 	cfg.Server.RequireAuth = false
+	cfg.Server.Admin.RequireAuth = boolPtr(false)
 	cfg.Providers[0].BaseURL = "https://example.com/v1"
 	cfg.Keys = []config.KeyConfig{
 		{ID: "key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "k1", Status: "active", Priority: 1},
@@ -487,6 +657,7 @@ func TestAdminReloadUpdatesRouter(t *testing.T) {
 	cfgPath := filepath.Join(dir, "config.yaml")
 	cfg := config.Default()
 	cfg.Server.RequireAuth = false
+	cfg.Server.Admin.RequireAuth = boolPtr(false)
 	cfg.Providers[0].BaseURL = "https://example.com/v1"
 	cfg.Keys = []config.KeyConfig{
 		{ID: "key-1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "k1", Status: "active", Priority: 1},

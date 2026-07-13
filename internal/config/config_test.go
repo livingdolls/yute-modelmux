@@ -13,6 +13,11 @@ func TestDefaultConfigValid(t *testing.T) {
 	}
 }
 
+func setDefaultAdminToken(t *testing.T) {
+	t.Helper()
+	t.Setenv("MODELMUX_AUTH_TOKEN", "admin-token")
+}
+
 func TestValidateRejectsModelGroupIDConflict(t *testing.T) {
 	cfg := Default()
 	cfg.ModelGroups[0].ID = cfg.Models[0].ID
@@ -84,6 +89,8 @@ func TestValidateRejectsKeyWithoutValue(t *testing.T) {
 }
 
 func TestSaveDoesNotPersistResolvedEnvSecret(t *testing.T) {
+	setDefaultAdminToken(t)
+
 	cfg := Default()
 	cfg.Keys[0].Value = ""
 	cfg.Keys[0].ValueEnv = "MUX_TEST_SECRET"
@@ -120,6 +127,8 @@ func TestSaveDoesNotPersistResolvedEnvSecret(t *testing.T) {
 }
 
 func TestResolveSecretsFailsWhenEnvVarMissing(t *testing.T) {
+	setDefaultAdminToken(t)
+
 	cfg := Default()
 	cfg.Keys[0].Value = ""
 	cfg.Keys[0].ValueEnv = "MUX_MISSING_VAR"
@@ -129,6 +138,8 @@ func TestResolveSecretsFailsWhenEnvVarMissing(t *testing.T) {
 }
 
 func TestValidateAllowsEmptyValueWithValueEnv(t *testing.T) {
+	setDefaultAdminToken(t)
+
 	cfg := Default()
 	cfg.Keys[0].Value = ""
 	cfg.Keys[0].ValueEnv = "MUX_EXISTS"
@@ -153,6 +164,7 @@ func TestValidateRejectsKeyProviderMismatchWithModel(t *testing.T) {
 }
 
 func TestValidateRejectsDuplicateKeyIDWithValueEnv(t *testing.T) {
+	setDefaultAdminToken(t)
 	t.Setenv("MUX_DUP_A", "token-a")
 	t.Setenv("MUX_DUP_B", "token-b")
 
@@ -171,6 +183,7 @@ func TestValidateRejectsDuplicateKeyIDWithValueEnv(t *testing.T) {
 }
 
 func TestValidateRejectsDuplicateKeyIDMixedValueAndValueEnv(t *testing.T) {
+	setDefaultAdminToken(t)
 	t.Setenv("MUX_DUP_C", "token-c")
 
 	cfg := Default()
@@ -188,6 +201,8 @@ func TestValidateRejectsDuplicateKeyIDMixedValueAndValueEnv(t *testing.T) {
 }
 
 func TestReloadFlowFailsWhenValueEnvMissing(t *testing.T) {
+	setDefaultAdminToken(t)
+
 	cfg := Default()
 	cfg.Keys[0].Value = ""
 	cfg.Keys[0].ValueEnv = "MUX_RELOAD_MISSING"
@@ -198,6 +213,7 @@ func TestReloadFlowFailsWhenValueEnvMissing(t *testing.T) {
 }
 
 func TestReloadFlowSucceedsWhenValueEnvAvailable(t *testing.T) {
+	setDefaultAdminToken(t)
 	t.Setenv("MUX_RELOAD_EXISTS", "reload-token")
 
 	cfg := Default()
@@ -231,6 +247,28 @@ func TestResolveSecretsAllowsConfiguredAuthTokenEnv(t *testing.T) {
 
 	if err := cfg.ResolveSecrets(); err != nil {
 		t.Fatalf("resolve secrets failed: %v", err)
+	}
+}
+
+func TestResolveSecretsFailsWhenDefaultAdminAuthTokenEnvMissing(t *testing.T) {
+	cfg := Default()
+	cfg.Server.RequireAuth = false
+
+	if err := cfg.ResolveSecrets(); err == nil {
+		t.Fatal("expected resolve secrets error for missing default admin auth token env")
+	}
+}
+
+func TestValidateRejectsAdminAuthWithoutTokenEnv(t *testing.T) {
+	cfg := Default()
+	cfg.Server.AuthTokenEnv = ""
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error for missing admin auth token env")
+	}
+	if !strings.Contains(err.Error(), "server.admin.require_auth") {
+		t.Fatalf("expected admin auth validation error, got %v", err)
 	}
 }
 

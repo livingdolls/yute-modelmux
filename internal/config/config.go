@@ -207,7 +207,7 @@ func defaultStoragePath() string {
 func Default() *Config {
 	return &Config{
 		App:         AppConfig{Name: "modelmux", LogLevel: "info"},
-		Server:      ServerConfig{Host: "127.0.0.1", Port: 8787, ReadTimeoutSecond: 60, WriteTimeoutSecond: 300, MaxRequestBodyMB: 10},
+		Server:      ServerConfig{Host: "127.0.0.1", Port: 8787, ReadTimeoutSecond: 60, WriteTimeoutSecond: 300, AuthTokenEnv: "MODELMUX_AUTH_TOKEN", MaxRequestBodyMB: 10},
 		Storage:     StorageConfig{Type: "", Path: defaultStoragePath()},
 		Cooldown:    CooldownConfig{RateLimitSeconds: 300, ServerErrorSeconds: 60, TimeoutSeconds: 60},
 		Retry:       RetryConfig{MaxRetryPerKey: 1, MaxTotalAttempts: 5, BackoffMilliseconds: []int{300, 700, 1500}},
@@ -236,15 +236,17 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
-	if err := cfg.ResolveSecrets(); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.ResolveSecrets(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
 }
 
+// Save writes through a same-directory temp file and then renames it into place.
+// Replacement atomicity follows the host OS filesystem semantics.
 func Save(path string, cfg *Config) error {
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -302,6 +304,9 @@ func (c *Config) ResolveSecrets() error {
 	if c.Server.RequireAuth && c.Server.AuthTokenEnv != "" && os.Getenv(c.Server.AuthTokenEnv) == "" {
 		return fmt.Errorf("server auth requires environment variable %q which is not set", c.Server.AuthTokenEnv)
 	}
+	if c.AdminRequireAuth() && c.Server.AuthTokenEnv != "" && os.Getenv(c.Server.AuthTokenEnv) == "" {
+		return fmt.Errorf("server admin auth requires environment variable %q which is not set", c.Server.AuthTokenEnv)
+	}
 	for i := range c.Keys {
 		if c.Keys[i].Value != "" || c.Keys[i].SecretRef != "" || c.Keys[i].ValueEnv == "" {
 			continue
@@ -354,6 +359,9 @@ func (c *Config) collectValidationErrors() ValidationErrors {
 	}
 	if c.Server.RequireAuth && c.Server.AuthTokenEnv == "" {
 		errs = append(errs, "server.auth_token_env is required when server.require_auth is true")
+	}
+	if c.AdminRequireAuth() && c.Server.AuthTokenEnv == "" {
+		errs = append(errs, "server.auth_token_env is required when server.admin.require_auth is true")
 	}
 	if c.Storage.RetentionDays < 0 {
 		errs = append(errs, "storage.retention_days must be non-negative")
