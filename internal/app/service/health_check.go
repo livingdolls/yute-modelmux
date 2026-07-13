@@ -118,6 +118,9 @@ func (h *HealthChecker) runCheck(ctx context.Context, rs *RouterService, cfg con
 		}
 
 		err := rs.TestKey(checkCtx, key.ID)
+		if ctx.Err() != nil {
+			return
+		}
 		if err != nil {
 			errStr := err.Error()
 			if strings.Contains(errStr, "401") || strings.Contains(errStr, "403") {

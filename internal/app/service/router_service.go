@@ -149,7 +149,7 @@ type RouterService struct {
 	aiPolicy     *ai.RoutePolicy
 }
 
-var RuntimeLatencyBucketsMs = [...]int64{50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 120000, 300000}
+var RuntimeLatencyBucketsMs = [...]int64{50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000, 120000, 300000, 600000, 1800000, 3600000}
 
 const RuntimeLatencyInfBucket = len(RuntimeLatencyBucketsMs)
 
@@ -1650,6 +1650,10 @@ func (s *RouterService) clearKeyCooldown(keyID string) {
 
 	for i := range s.keys {
 		if s.keys[i].ID == keyID {
+			if s.keys[i].Status != domain.KeyStatusCooldown {
+				s.mu.Unlock()
+				return
+			}
 			s.keys[i].Status = domain.KeyStatusActive
 			s.keys[i].CooldownEnd = nil
 			keyRecord := s.keyRuntimeRecord(s.keys[i])

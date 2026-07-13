@@ -90,6 +90,35 @@ func (c *blockingProviderClient) TestKey(ctx context.Context, _ domain.Provider,
 	}
 }
 
+type retryProviderClient struct {
+	started    chan struct{}
+	release    chan struct{}
+	statusCode int
+}
+
+func (c *retryProviderClient) Forward(context.Context, domain.Provider, domain.Model, domain.APIKey, *http.Request, string) (*http.Response, error) {
+	select {
+	case <-c.started:
+	default:
+		close(c.started)
+	}
+	<-c.release
+	statusCode := c.statusCode
+	if statusCode == 0 {
+		statusCode = http.StatusTooManyRequests
+	}
+	return &http.Response{
+		StatusCode: statusCode,
+		Status:     http.StatusText(statusCode),
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader(`{"error":"limited"}`)),
+	}, nil
+}
+
+func (c *retryProviderClient) TestKey(context.Context, domain.Provider, domain.Model, domain.APIKey) error {
+	return nil
+}
+
 func TestSelectKeyPrefersLowestPriority(t *testing.T) {
 	cfg := config.Default()
 	cfg.Keys = []config.KeyConfig{
@@ -158,6 +187,54 @@ func TestMarkKeyResultPreservesAdministrativelyDisabledKey(t *testing.T) {
 	}
 }
 
+func TestRetryAfterProviderFailureDoesNotReactivateDisabledKey(t *testing.T) {
+	cfg := config.Default()
+	cfg.Retry.MaxRetryPerKey = 1
+	cfg.Retry.MaxTotalAttempts = 2
+	cfg.Retry.BackoffMilliseconds = nil
+
+	rs, err := NewRouterService(cfg)
+	if err != nil {
+		t.Fatalf("create router: %v", err)
+	}
+	client := &retryProviderClient{
+		started:    make(chan struct{}),
+		release:    make(chan struct{}),
+		statusCode: http.StatusTooManyRequests,
+	}
+	rs.clientReg.Register(domain.ProviderTypeOpenAICompatible, client)
+
+	done := make(chan error, 1)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"mimo-v2.5-pro","messages":[]}`))
+	go func() {
+		resp, err := rs.HandleChatCompletion(context.Background(), req)
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		done <- err
+	}()
+
+	select {
+	case <-client.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for provider request")
+	}
+
+	rs.SetKeyStatus("mimo-key-1", "disabled")
+	close(client.release)
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for routed request")
+	}
+
+	keys := rs.ListKeys()
+	if got := keys[0].Status; got != domain.KeyStatusDisabled {
+		t.Fatalf("expected disabled key to stay disabled after retry flow, got %s", got)
+	}
+}
+
 func TestRuntimeStatusDoesNotOverrideDisabledConfigStatus(t *testing.T) {
 	cfg := config.Default()
 	cfg.Keys[0].Status = "disabled"
@@ -194,7 +271,7 @@ func TestRuntimeMetricsRegistryRebuildFromLogsIfEmptyDoesNotResetExistingMetrics
 }
 
 func TestRuntimeLatencyBucketsIncludeLongLLMTimeouts(t *testing.T) {
-	want := []int64{60000, 120000, 300000}
+	want := []int64{60000, 120000, 300000, 600000, 1800000, 3600000}
 	for _, bucket := range want {
 		found := false
 		for _, got := range RuntimeLatencyBucketsMs {
@@ -266,6 +343,11 @@ func TestHealthCheckerUpdateWaitsForPreviousWorker(t *testing.T) {
 	case <-updateDone:
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for health checker update")
+	}
+
+	keys := rs.ListKeys()
+	if got := keys[0].Status; got != domain.KeyStatusActive {
+		t.Fatalf("expected reload cancellation to leave key active, got %s", got)
 	}
 }
 
