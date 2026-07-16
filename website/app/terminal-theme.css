@@ -1,0 +1,718 @@
+:root {
+  --bg: #030603;
+  --bg2: #050a06;
+  --card: #071008;
+  --card2: #0a160c;
+  --line: #17351f;
+  --line2: #285c35;
+  --cyan: #78ff8b;
+  --cyan2: #b2ffba;
+  --text: #d8fddd;
+  --sub: #93b99a;
+  --muted: #57715c;
+  --green: #78ff8b;
+  --amber: #ffc857;
+  --terminal-red: #ff6b6b;
+  --shadow: 0 0 28px rgba(120, 255, 139, 0.06);
+}
+
+html {
+  color-scheme: dark;
+  scrollbar-color: var(--line2) var(--bg);
+}
+
+body {
+  position: relative;
+  background:
+    linear-gradient(rgba(120, 255, 139, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(120, 255, 139, 0.014) 1px, transparent 1px),
+    var(--bg);
+  background-size: 24px 24px;
+  color: var(--text);
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-variant-ligatures: none;
+  letter-spacing: -0.015em;
+  text-shadow: 0 0 18px rgba(120, 255, 139, 0.025);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  z-index: 999;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.16;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.018) 0,
+    rgba(255, 255, 255, 0.018) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+  mix-blend-mode: screen;
+}
+
+::selection {
+  background: var(--green);
+  color: #020502;
+}
+
+:focus-visible {
+  outline: 1px dashed var(--green);
+  outline-offset: 4px;
+}
+
+.section-grid {
+  background-image:
+    linear-gradient(rgba(120, 255, 139, 0.026) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(120, 255, 139, 0.026) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.section-grid::after {
+  background: radial-gradient(circle at 50% 35%, transparent 0, rgba(3, 6, 3, 0.42) 55%, var(--bg) 95%);
+}
+
+.site-header {
+  height: 64px;
+  background: rgba(3, 6, 3, 0.94);
+  border-bottom: 1px solid var(--line2);
+  box-shadow: 0 1px 0 #000, 0 8px 30px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+}
+
+.nav-shell::before {
+  content: "root@modelmux:~$";
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.brand {
+  gap: 9px;
+  color: var(--green);
+  font-size: 15px;
+  font-weight: 600;
+  text-transform: lowercase;
+}
+
+.brand::after {
+  content: "_";
+  animation: terminal-blink 1.05s steps(1) infinite;
+}
+
+.brand-mark {
+  width: 23px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  grid-template-columns: none;
+  border: 1px solid var(--line2);
+  color: var(--green);
+}
+
+.brand-mark::before {
+  content: ">_";
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1;
+}
+
+.brand-mark i {
+  display: none;
+}
+
+@keyframes terminal-blink {
+  50% { opacity: 0; }
+}
+
+.desktop-nav {
+  gap: 6px;
+}
+
+.desktop-nav a,
+.footer-links a,
+.docs-nav-group a,
+.docs-toc a {
+  color: var(--sub);
+}
+
+.desktop-nav a {
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  font-size: 11px;
+  text-transform: lowercase;
+}
+
+.desktop-nav a::before {
+  content: "./";
+  color: var(--muted);
+}
+
+.desktop-nav a:hover {
+  color: var(--green);
+  border-color: var(--line);
+  background: var(--card);
+}
+
+.icon-link {
+  border: 1px solid var(--line);
+  color: var(--sub);
+}
+
+.icon-link:hover {
+  color: var(--green);
+  border-color: var(--line2);
+}
+
+.button {
+  min-height: 42px;
+  border-radius: 1px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: lowercase;
+  box-shadow: none;
+}
+
+.button::before { content: "["; }
+.button::after { content: "]"; }
+.button:hover { transform: none; }
+
+.button-primary {
+  color: #020502;
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.button-primary:hover {
+  color: var(--green);
+  background: transparent;
+}
+
+.button-secondary {
+  color: var(--sub);
+  background: var(--card);
+  border-color: var(--line2);
+}
+
+.button-secondary:hover {
+  color: var(--green);
+  border-color: var(--green);
+  background: #081209;
+}
+
+.hero {
+  min-height: calc(100vh - 64px);
+}
+
+.hero-glow {
+  display: none;
+}
+
+.hero-layout {
+  padding: 88px 0;
+}
+
+.eyebrow,
+.section-kicker {
+  color: var(--green);
+  font-family: inherit;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+}
+
+.eyebrow {
+  padding: 7px 10px;
+  border-color: var(--line2);
+  border-radius: 1px;
+  background: var(--card);
+}
+
+.eyebrow::before {
+  content: "$";
+  color: var(--amber);
+}
+
+.pulse-dot {
+  border-radius: 0;
+  background: var(--green);
+  box-shadow: 0 0 10px rgba(120, 255, 139, 0.7);
+}
+
+.hero h1,
+.section-heading h2,
+.architecture-copy h2,
+.showcase-copy h2,
+.cta-card h2,
+.docs-title h1,
+.docs-section h2,
+.feature-card h3,
+.workflow-grid h3 {
+  font-family: inherit;
+  font-weight: 600;
+  letter-spacing: -0.05em;
+}
+
+.hero h1 {
+  max-width: 790px;
+  font-size: clamp(43px, 5vw, 72px);
+  line-height: 1.02;
+  text-transform: lowercase;
+}
+
+.hero h1::before {
+  content: "> ";
+  color: var(--amber);
+}
+
+.hero h1 span {
+  color: var(--green);
+  text-shadow: 0 0 18px rgba(120, 255, 139, 0.24);
+}
+
+.hero-copy > p,
+.split-heading > p,
+.centered-heading > p,
+.architecture-copy > p,
+.showcase-copy > p,
+.cta-card p,
+.feature-card p,
+.docs-title p,
+.docs-section > p {
+  color: var(--sub);
+}
+
+.hero-proof {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.hero-proof span::before {
+  content: "[ok]";
+  color: var(--green);
+}
+
+.hero-proof svg {
+  display: none;
+}
+
+.terminal-window,
+.showcase-window,
+.workflow-grid article,
+.architecture-diagram,
+.cta-card,
+.code-block,
+.docs-callout,
+.next-grid a,
+.docs-pagination a,
+.endpoint-card,
+.floating-card {
+  border-radius: 1px;
+  background: rgba(5, 10, 6, 0.96);
+  border-color: var(--line2);
+  box-shadow: var(--shadow);
+}
+
+.terminal-window,
+.showcase-window {
+  box-shadow: 12px 12px 0 #010301, 12px 12px 0 1px var(--line);
+}
+
+.terminal-bar {
+  height: 39px;
+  grid-template-columns: auto 1fr auto;
+  border-color: var(--line2);
+  color: var(--muted);
+  background: #071008;
+  text-transform: lowercase;
+}
+
+.terminal-bar > span:nth-child(2)::before {
+  content: "~/bin/";
+  color: var(--line2);
+}
+
+.terminal-dots i {
+  width: 7px;
+  height: 7px;
+  border-radius: 0;
+  background: var(--terminal-red);
+}
+
+.terminal-body {
+  background:
+    repeating-linear-gradient(0deg, transparent, transparent 27px, rgba(120, 255, 139, 0.025) 28px),
+    #030703;
+}
+
+.status-badge,
+.state,
+.showcase-title > span {
+  border-radius: 1px;
+  text-transform: lowercase;
+}
+
+.status-badge {
+  color: var(--green);
+  border-color: var(--line2);
+  background: var(--card2);
+}
+
+.route-client,
+.route-branches span,
+.route-core,
+.terminal-table,
+.showcase-rows,
+.showcase-stats div,
+.diagram-apps span,
+.diagram-providers span,
+.diagram-core-grid span,
+.feature-meta span,
+.docs-search,
+.docs-search kbd {
+  border-radius: 1px;
+  background: var(--card);
+}
+
+.route-core {
+  border-color: var(--green);
+  background: rgba(120, 255, 139, 0.04);
+}
+
+.route-line,
+.route-line i {
+  background: var(--green);
+}
+
+.route-branches .branch-active,
+.state-active,
+.terminal-online,
+.terminal-log strong,
+.check-list svg,
+.text-link,
+.code-muted {
+  color: var(--green);
+}
+
+.state-standby { color: #9ad6ff; }
+.state-cooldown { color: var(--amber); }
+
+.terminal-row,
+.showcase-rows > div {
+  border-color: rgba(120, 255, 139, 0.08);
+}
+
+.terminal-row:hover,
+.showcase-rows > div:hover {
+  background: rgba(120, 255, 139, 0.045);
+}
+
+.terminal-log {
+  border-left-color: var(--green);
+  background: rgba(120, 255, 139, 0.035);
+}
+
+.floating-card {
+  background: #071008;
+}
+
+.floating-icon {
+  border: 1px solid var(--line2);
+  border-radius: 1px;
+  color: var(--green);
+  background: var(--card2);
+}
+
+.provider-strip,
+.workflow-section,
+.terminal-showcase,
+.site-footer {
+  background: #030603;
+  border-color: var(--line);
+}
+
+.provider-line > span::before {
+  content: "$ modelmux providers --list  ";
+  color: var(--green);
+}
+
+.provider-line strong {
+  color: var(--sub);
+  font-weight: 500;
+}
+
+.provider-line i {
+  border-radius: 0;
+  background: var(--line2);
+}
+
+.section-heading h2,
+.architecture-copy h2,
+.showcase-copy h2,
+.cta-card h2 {
+  text-transform: lowercase;
+}
+
+.section-kicker::before {
+  content: "// ";
+  color: var(--muted);
+}
+
+.feature-grid {
+  border-color: var(--line2);
+}
+
+.feature-card {
+  min-height: 310px;
+  border-color: var(--line);
+  background: rgba(5, 10, 6, 0.78);
+}
+
+.feature-card:hover {
+  background: #081209;
+  box-shadow: inset 3px 0 0 var(--green);
+}
+
+.feature-index {
+  color: var(--amber);
+}
+
+.feature-index::before { content: "module_"; color: var(--muted); }
+
+.feature-card h3 {
+  color: var(--text);
+  text-transform: lowercase;
+}
+
+.feature-meta span {
+  color: var(--sub);
+  border-color: var(--line);
+}
+
+.feature-meta span::before {
+  content: "--";
+  color: var(--muted);
+}
+
+.workflow-grid article {
+  border-color: var(--line2);
+}
+
+.workflow-grid article > span {
+  color: var(--amber);
+}
+
+.workflow-grid article > span::before { content: "step_"; }
+
+.workflow-grid pre,
+.code-block pre {
+  background: #020502;
+  color: var(--text);
+}
+
+.workflow-grid pre::before {
+  content: "$ cat config.yaml\A";
+  white-space: pre;
+  color: var(--green);
+}
+
+.architecture-diagram {
+  background: #030703;
+}
+
+.diagram-label {
+  color: var(--green);
+  text-transform: lowercase;
+}
+
+.diagram-label::before { content: "["; }
+.diagram-label::after { content: "]"; }
+
+.diagram-arrow {
+  color: var(--muted);
+}
+
+.diagram-core {
+  border-color: var(--green);
+  border-radius: 1px;
+  background: rgba(120, 255, 139, 0.025);
+}
+
+.diagram-core-header strong {
+  color: var(--green);
+  text-transform: lowercase;
+}
+
+.showcase-window {
+  transform: none;
+}
+
+.showcase-sidebar {
+  background: #050a06;
+  border-color: var(--line2);
+}
+
+.showcase-sidebar strong {
+  color: var(--green);
+}
+
+.showcase-sidebar strong::before { content: "> "; color: var(--amber); }
+
+.showcase-sidebar span {
+  border-radius: 1px;
+}
+
+.showcase-sidebar span::before { content: "- "; color: var(--muted); }
+
+.showcase-sidebar .selected {
+  color: #020502;
+  background: var(--green);
+}
+
+.showcase-sidebar .selected::before { color: #020502; }
+
+.command-line {
+  border-radius: 1px;
+  border-color: var(--line2);
+  background: #020502;
+  box-shadow: 8px 8px 0 #010301, 8px 8px 0 1px var(--line);
+}
+
+.command-line span,
+.text-link {
+  color: var(--amber);
+}
+
+.cta-card {
+  background: #050a06;
+}
+
+.site-footer {
+  padding-top: 46px;
+}
+
+.site-footer::before {
+  content: "modelmux process exited with code 0";
+  display: block;
+  width: min(calc(100% - 40px), var(--max));
+  margin: 0 auto 38px;
+  padding-bottom: 12px;
+  color: var(--green);
+  border-bottom: 1px dashed var(--line2);
+  font-size: 11px;
+}
+
+.footer-links strong {
+  color: var(--green);
+  font-weight: 500;
+}
+
+.footer-links strong::before { content: "./"; color: var(--muted); }
+
+.docs-shell {
+  background: rgba(3, 6, 3, 0.82);
+}
+
+.docs-sidebar,
+.docs-toc {
+  border-color: var(--line2);
+  background: #040804;
+}
+
+.docs-search {
+  border-color: var(--line2);
+}
+
+.docs-search::before {
+  content: "/";
+  color: var(--amber);
+}
+
+.docs-nav-group strong,
+.docs-toc strong {
+  color: var(--green);
+  font-weight: 500;
+  text-transform: lowercase;
+}
+
+.docs-nav-group strong::before,
+.docs-toc strong::before {
+  content: "# ";
+  color: var(--muted);
+}
+
+.docs-nav-group a.active {
+  color: var(--green);
+  border-left-color: var(--green);
+  background: rgba(120, 255, 139, 0.035);
+}
+
+.docs-title h1 {
+  color: var(--text);
+  text-transform: lowercase;
+}
+
+.docs-title h1::before {
+  content: "$ man ";
+  color: var(--amber);
+  font-size: 0.62em;
+}
+
+.docs-callout-info {
+  border-color: var(--line2);
+  background: rgba(120, 255, 139, 0.035);
+}
+
+.docs-callout-info strong { color: var(--green); }
+.docs-callout-warning strong { color: var(--amber); }
+
+.code-header {
+  color: var(--sub);
+  background: #071008;
+  border-color: var(--line2);
+}
+
+.code-header::before {
+  content: "~/modelmux/";
+  color: var(--muted);
+}
+
+.code-header button {
+  color: var(--green);
+  font-family: inherit;
+}
+
+.docs-section code,
+.docs-callout code {
+  color: var(--green);
+  background: #0a160c;
+  border: 1px solid var(--line);
+}
+
+.endpoint-card span {
+  color: var(--amber);
+}
+
+@media (max-width: 880px) {
+  .nav-shell::before { display: none; }
+  .terminal-window,
+  .showcase-window,
+  .command-line { box-shadow: 6px 6px 0 #010301, 6px 6px 0 1px var(--line); }
+}
+
+@media (max-width: 640px) {
+  body::before { opacity: 0.1; }
+  .hero h1 { font-size: 39px; }
+  .hero-layout { padding: 62px 0; }
+  .brand::after { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
