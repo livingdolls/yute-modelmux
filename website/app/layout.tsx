@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 
@@ -37,7 +36,7 @@ const GithubIcon = () => (
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+    <html lang="en" className={GeistMono.variable}>
       <body>
         <header className="site-header">
           <div className="container nav-shell">
@@ -47,14 +46,14 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                 <i />
                 <i />
               </span>
-              <span>ModelMux</span>
+              <span>modelmux</span>
             </Link>
 
             <nav className="desktop-nav" aria-label="Main navigation">
-              <Link href="/#features">Features</Link>
-              <Link href="/#architecture">Architecture</Link>
-              <Link href="/docs">Docs</Link>
-              <a href="https://github.com/livingdolls/yute-modelmux/releases">Download</a>
+              <Link href="/#features">features</Link>
+              <Link href="/#architecture">architecture</Link>
+              <Link href="/docs">docs</Link>
+              <a href="https://github.com/livingdolls/yute-modelmux/releases">download</a>
             </nav>
 
             <div className="nav-actions">
@@ -66,7 +65,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                 <GithubIcon />
               </a>
               <Link className="button button-small button-primary" href="/docs">
-                Get started
+                quick_start
               </Link>
             </div>
           </div>
@@ -83,28 +82,28 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                   <i />
                   <i />
                 </span>
-                <span>ModelMux</span>
+                <span>modelmux</span>
               </Link>
               <p>A lightweight LLM gateway built for reliable, self-hosted inference routing.</p>
             </div>
             <div className="footer-links">
               <div>
-                <strong>Product</strong>
-                <Link href="/#features">Features</Link>
-                <Link href="/#architecture">Architecture</Link>
-                <a href="https://github.com/livingdolls/yute-modelmux/releases">Releases</a>
+                <strong>product</strong>
+                <Link href="/#features">features</Link>
+                <Link href="/#architecture">architecture</Link>
+                <a href="https://github.com/livingdolls/yute-modelmux/releases">releases</a>
               </div>
               <div>
-                <strong>Resources</strong>
-                <Link href="/docs">Documentation</Link>
-                <a href="https://github.com/livingdolls/yute-modelmux">GitHub</a>
-                <a href="https://github.com/livingdolls/yute-modelmux/issues">Issues</a>
+                <strong>resources</strong>
+                <Link href="/docs">documentation</Link>
+                <a href="https://github.com/livingdolls/yute-modelmux">github</a>
+                <a href="https://github.com/livingdolls/yute-modelmux/issues">issues</a>
               </div>
             </div>
           </div>
           <div className="container footer-bottom">
-            <span>Open source software.</span>
-            <span>Built in Go.</span>
+            <span>open_source=true</span>
+            <span>runtime=go</span>
           </div>
         </footer>
       </body>
