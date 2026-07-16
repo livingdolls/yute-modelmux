@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import "../docs-runtime";
 import { docPages } from "../docs-content";
 import { DocsShell } from "../docs-shell";
 
