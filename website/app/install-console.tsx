@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { CSSProperties } from "react";
 
 const installSteps = [
   {
@@ -57,7 +58,7 @@ export function InstallConsole() {
 
           <div className="install-terminal-body">
             {installSteps.map((step, index) => (
-              <div className="install-step" style={{ "--install-delay": `${index * 130}ms` } as React.CSSProperties} key={step.label}>
+              <div className="install-step" style={{ "--install-delay": `${index * 130}ms` } as CSSProperties} key={step.label}>
                 <div className="install-step-label"><span>{String(index + 1).padStart(2, "0")}</span>{step.label}</div>
                 <div className="install-command-line">
                   <span>$</span>
