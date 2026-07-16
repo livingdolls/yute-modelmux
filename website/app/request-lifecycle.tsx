@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { CSSProperties } from "react";
 
 const lifecycleSteps = [
   {
@@ -92,7 +93,7 @@ export function RequestLifecycle() {
 
           <ol className="request-trace-list">
             {lifecycleSteps.map((step, index) => (
-              <li className="request-trace-step" style={{ "--trace-delay": `${index * 100}ms` } as React.CSSProperties} key={step.index}>
+              <li className="request-trace-step" style={{ "--trace-delay": `${index * 100}ms` } as CSSProperties} key={step.index}>
                 <div className="request-trace-index">{step.index}</div>
                 <div className="request-trace-rail" aria-hidden="true"><i /></div>
                 <div className="request-trace-content">
