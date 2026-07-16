@@ -1,0 +1,317 @@
+.tui-tour-section {
+  position: relative;
+  padding: 116px 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 82% 14%, rgba(215, 135, 255, 0.085), transparent 30%),
+    #1d1a2b;
+}
+
+.tui-tour-shell {
+  position: relative;
+  z-index: 1;
+}
+
+.tui-tour-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(300px, 0.5fr);
+  gap: 72px;
+  align-items: end;
+  margin-bottom: 42px;
+}
+
+.tui-tour-heading h2 {
+  margin: 16px 0 0;
+  font-size: clamp(40px, 4.8vw, 66px);
+  line-height: 1.02;
+  letter-spacing: -0.06em;
+  text-transform: lowercase;
+}
+
+.tui-tour-heading p {
+  margin: 0;
+  color: var(--sub);
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.tui-tour-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.42fr) minmax(320px, 0.58fr);
+  gap: 22px;
+  align-items: stretch;
+}
+
+.tui-screenshot-frame {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid rgba(135, 95, 255, 0.58);
+  background: rgba(24, 21, 37, 0.96);
+  box-shadow:
+    14px 14px 0 rgba(10, 8, 18, 0.68),
+    14px 14px 0 1px rgba(130, 91, 246, 0.2);
+}
+
+.tui-screenshot-bar {
+  min-height: 45px;
+  padding: 0 16px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 14px;
+  align-items: center;
+  border-bottom: 1px solid rgba(135, 95, 255, 0.3);
+  background: rgba(43, 39, 64, 0.94);
+  font-size: 9px;
+}
+
+.tui-screenshot-bar code {
+  color: var(--sub);
+  background: transparent;
+}
+
+.tui-screenshot-bar > span {
+  color: var(--violet-success);
+}
+
+.tui-screenshot-dots {
+  display: flex;
+  gap: 5px;
+}
+
+.tui-screenshot-dots i {
+  width: 7px;
+  height: 7px;
+  display: block;
+  border: 1px solid rgba(215, 135, 255, 0.45);
+}
+
+.tui-screenshot-stage {
+  position: relative;
+  aspect-ratio: 1563 / 948;
+  overflow: hidden;
+  background: #1f1d2e;
+}
+
+.tui-screenshot-stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.014) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(135, 95, 255, 0.012) 1px, transparent 1px);
+  background-size: 4px 4px;
+  mix-blend-mode: screen;
+}
+
+.tui-screenshot-stage img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.tui-hotspot {
+  position: absolute;
+  z-index: 2;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--cyan2);
+  border-radius: 50%;
+  color: #f5efff;
+  background: rgba(31, 29, 46, 0.88);
+  box-shadow:
+    0 0 0 6px rgba(135, 95, 255, 0.1),
+    0 0 22px rgba(215, 135, 255, 0.4);
+  font-size: 8px;
+  transform: translate(-50%, -50%);
+}
+
+.tui-hotspot::after {
+  content: "";
+  position: absolute;
+  width: 52px;
+  height: 52px;
+  border: 1px solid rgba(215, 135, 255, 0.24);
+  border-radius: 50%;
+  animation: tui-hotspot-pulse 2.3s ease-out infinite;
+}
+
+.tui-hotspot-1 { left: 4.6%; top: 23%; }
+.tui-hotspot-2 { left: 50%; top: 48%; }
+.tui-hotspot-3 { left: 23%; top: 94%; }
+.tui-hotspot-4 { left: 88%; top: 94%; }
+
+.tui-keyboard-strip {
+  min-height: 40px;
+  padding: 0 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  border-top: 1px solid rgba(135, 95, 255, 0.24);
+  background: #414139;
+  color: #c5bddb;
+  font-size: 7px;
+}
+
+.tui-keyboard-strip b {
+  min-width: 15px;
+  display: inline-block;
+  color: #f0eafb;
+  font-weight: 600;
+}
+
+.tui-tour-notes {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(135, 95, 255, 0.34);
+  background: rgba(35, 32, 51, 0.72);
+}
+
+.tui-tour-notes article {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 14px;
+  padding: 22px 20px;
+  border-bottom: 1px solid rgba(135, 95, 255, 0.16);
+  transition: background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.tui-tour-notes article:hover {
+  background: rgba(135, 95, 255, 0.075);
+  box-shadow: inset 3px 0 0 var(--cyan2);
+}
+
+.tui-tour-notes article > span {
+  color: var(--cyan2);
+  font-size: 9px;
+}
+
+.tui-tour-notes h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tui-tour-notes p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.65;
+}
+
+.tui-tour-command {
+  margin: auto 20px 18px;
+  min-height: 43px;
+  padding: 0 13px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 9px;
+  align-items: center;
+  border: 1px solid rgba(135, 95, 255, 0.32);
+  background: rgba(31, 29, 46, 0.8);
+  font-size: 9px;
+}
+
+.tui-tour-command span,
+.tui-tour-command i {
+  color: var(--cyan2);
+  font-style: normal;
+}
+
+.tui-tour-command code {
+  color: var(--text);
+  background: transparent;
+}
+
+.tui-tour-link {
+  margin: 0 20px 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--cyan2);
+  font-size: 9px;
+  text-decoration: none;
+}
+
+.tui-tour-link:hover {
+  color: var(--text);
+}
+
+@keyframes tui-hotspot-pulse {
+  0% { opacity: 0.75; transform: scale(0.72); }
+  100% { opacity: 0; transform: scale(1.2); }
+}
+
+@media (max-width: 1080px) {
+  .tui-tour-heading,
+  .tui-tour-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .tui-tour-heading {
+    gap: 22px;
+  }
+
+  .tui-tour-heading p {
+    max-width: 720px;
+  }
+
+  .tui-tour-notes {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .tui-tour-notes article:nth-child(odd) {
+    border-right: 1px solid rgba(135, 95, 255, 0.16);
+  }
+
+  .tui-tour-command,
+  .tui-tour-link {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 680px) {
+  .tui-tour-section {
+    padding: 80px 0;
+  }
+
+  .tui-tour-notes {
+    display: flex;
+  }
+
+  .tui-tour-notes article:nth-child(odd) {
+    border-right: 0;
+  }
+
+  .tui-hotspot {
+    width: 27px;
+    height: 27px;
+    font-size: 7px;
+  }
+
+  .tui-hotspot::after {
+    width: 40px;
+    height: 40px;
+  }
+
+  .tui-keyboard-strip {
+    padding-block: 10px;
+  }
+
+  .tui-screenshot-bar > span {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tui-hotspot::after {
+    animation: none;
+  }
+}

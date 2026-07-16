@@ -9,3 +9,7 @@
 @import "./violet-theme.css";
 @import "./failure-replay.css";
 @import "./setup-session.css";
+@import "./hero-router.css";
+@import "./request-lifecycle.css";
+@import "./tui-tour.css";
+@import "./install-console.css";

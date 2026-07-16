@@ -1,0 +1,433 @@
+.hero-router {
+  position: relative;
+  min-height: calc(100vh - var(--header));
+  padding: clamp(76px, 9vw, 126px) 0 96px;
+  overflow: hidden;
+  display: grid;
+  align-items: center;
+}
+
+.hero-router-glow {
+  position: absolute;
+  width: 760px;
+  height: 760px;
+  right: -250px;
+  top: -240px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(135, 95, 255, 0.16), transparent 68%);
+  filter: blur(10px);
+  pointer-events: none;
+}
+
+.hero-router-layout {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(520px, 1.08fr);
+  gap: clamp(48px, 7vw, 94px);
+  align-items: center;
+}
+
+.hero-router-copy h1 {
+  max-width: 760px;
+  margin: 19px 0 24px;
+  font-size: clamp(46px, 5.9vw, 82px);
+  line-height: 0.99;
+  letter-spacing: -0.068em;
+  text-transform: lowercase;
+}
+
+.hero-router-copy h1 span {
+  color: var(--cyan2);
+  text-shadow: 0 0 30px rgba(215, 135, 255, 0.18);
+}
+
+.hero-router-copy > p {
+  max-width: 650px;
+  margin: 0;
+  color: var(--sub);
+  font-size: 15px;
+  line-height: 1.8;
+}
+
+.hero-router-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 32px;
+}
+
+.hero-router-proof {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px 26px;
+  margin-top: 32px;
+  padding-top: 22px;
+  border-top: 1px solid rgba(135, 95, 255, 0.17);
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.hero-router-proof span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hero-router-proof b {
+  color: var(--cyan2);
+  font-weight: 500;
+}
+
+.hero-boot-console {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(135, 95, 255, 0.58);
+  background: rgba(27, 24, 42, 0.94);
+  box-shadow:
+    16px 16px 0 rgba(13, 10, 24, 0.72),
+    16px 16px 0 1px rgba(130, 91, 246, 0.22),
+    0 0 60px rgba(130, 91, 246, 0.1);
+}
+
+.hero-boot-header {
+  min-height: 47px;
+  padding: 0 17px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 15px;
+  align-items: center;
+  border-bottom: 1px solid rgba(135, 95, 255, 0.3);
+  background: rgba(43, 39, 64, 0.92);
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.hero-boot-header code {
+  color: var(--sub);
+  background: transparent;
+}
+
+.hero-boot-header > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--violet-success);
+}
+
+.hero-boot-header > span i {
+  width: 7px;
+  height: 7px;
+  display: block;
+  background: currentColor;
+  box-shadow: 0 0 12px currentColor;
+  animation: hero-runtime-pulse 2s steps(2) infinite;
+}
+
+.hero-boot-dots {
+  display: flex;
+  gap: 5px;
+}
+
+.hero-boot-dots i {
+  width: 7px;
+  height: 7px;
+  display: block;
+  border: 1px solid var(--muted);
+}
+
+.hero-boot-dots i:first-child { border-color: #e06c8b; background: rgba(224, 108, 139, 0.25); }
+.hero-boot-dots i:nth-child(2) { border-color: var(--violet-warning); background: rgba(216, 199, 122, 0.2); }
+.hero-boot-dots i:last-child { border-color: var(--violet-success); background: rgba(126, 231, 135, 0.2); }
+
+.hero-boot-body {
+  padding: 24px;
+}
+
+.hero-boot-command {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-bottom: 17px;
+  border-bottom: 1px dashed rgba(135, 95, 255, 0.26);
+  color: var(--sub);
+  font-size: 11px;
+}
+
+.hero-boot-command > span {
+  color: var(--cyan2);
+}
+
+.hero-boot-command code {
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+}
+
+.hero-boot-lines {
+  padding: 16px 0 20px;
+}
+
+.hero-boot-line {
+  display: grid;
+  grid-template-columns: 14px 74px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 34px;
+  color: var(--muted);
+  font-size: 9px;
+  opacity: 0;
+  transform: translateY(3px);
+  animation: hero-boot-enter 360ms ease forwards;
+  animation-delay: var(--boot-delay);
+}
+
+.hero-boot-line b {
+  color: var(--sub);
+  font-weight: 500;
+}
+
+.hero-boot-line code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  background: transparent;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hero-boot-line > span:last-child {
+  color: var(--violet-success);
+}
+
+.hero-boot-check {
+  color: var(--violet-success);
+}
+
+.hero-route-topology {
+  display: grid;
+  grid-template-columns: minmax(112px, 0.8fr) minmax(70px, 0.48fr) minmax(92px, 0.7fr) minmax(58px, 0.36fr) minmax(130px, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 20px;
+  border: 1px solid rgba(135, 95, 255, 0.28);
+  background:
+    linear-gradient(rgba(135, 95, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(135, 95, 255, 0.025) 1px, transparent 1px),
+    rgba(35, 32, 51, 0.72);
+  background-size: 22px 22px;
+}
+
+.hero-topology-node,
+.hero-topology-core,
+.hero-topology-providers span {
+  border: 1px solid rgba(135, 95, 255, 0.34);
+  background: rgba(31, 29, 46, 0.92);
+}
+
+.hero-topology-node,
+.hero-topology-core {
+  min-height: 72px;
+  padding: 12px;
+  display: grid;
+  place-content: center;
+  text-align: center;
+}
+
+.hero-topology-node span,
+.hero-topology-core small {
+  color: var(--muted);
+  font-size: 7px;
+  letter-spacing: 0.08em;
+}
+
+.hero-topology-node strong,
+.hero-topology-core strong {
+  margin-top: 5px;
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.hero-topology-node small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 7px;
+}
+
+.hero-topology-core {
+  border-color: var(--cyan);
+  box-shadow: inset 0 0 24px rgba(130, 91, 246, 0.08);
+}
+
+.hero-topology-core > span {
+  color: var(--cyan2);
+  font-size: 15px;
+}
+
+.hero-topology-link {
+  position: relative;
+  height: 1px;
+  background: rgba(135, 95, 255, 0.36);
+}
+
+.hero-topology-link::after {
+  content: ">";
+  position: absolute;
+  right: -1px;
+  top: 50%;
+  color: var(--cyan2);
+  font-size: 10px;
+  transform: translateY(-55%);
+}
+
+.hero-topology-link i {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  left: 0;
+  top: -2px;
+  background: var(--cyan2);
+  box-shadow: 0 0 12px rgba(215, 135, 255, 0.7);
+  animation: hero-packet 2.8s linear infinite;
+}
+
+.hero-topology-link span {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  color: var(--muted);
+  font-size: 6px;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+
+.hero-topology-link-out i { animation-delay: 1.2s; }
+
+.hero-topology-providers {
+  display: grid;
+  gap: 5px;
+}
+
+.hero-topology-providers span {
+  padding: 6px 8px;
+  color: var(--sub);
+  font-size: 7px;
+}
+
+.hero-boot-status {
+  min-height: 37px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  border-top: 1px solid rgba(135, 95, 255, 0.28);
+  background: #414139;
+  color: #c5bddb;
+  font-size: 8px;
+}
+
+.hero-boot-status b {
+  color: #f0eafb;
+  font-weight: 500;
+}
+
+@keyframes hero-runtime-pulse { 50% { opacity: 0.35; } }
+@keyframes hero-boot-enter { to { opacity: 1; transform: translateY(0); } }
+@keyframes hero-packet { from { left: 0; } to { left: calc(100% - 6px); } }
+
+@media (max-width: 1080px) {
+  .hero-router-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-router-copy {
+    max-width: 820px;
+  }
+
+  .hero-boot-console {
+    max-width: 820px;
+  }
+}
+
+@media (max-width: 680px) {
+  .hero-router {
+    padding: 64px 0 72px;
+  }
+
+  .hero-router-copy h1 {
+    font-size: clamp(42px, 13vw, 62px);
+  }
+
+  .hero-boot-body {
+    padding: 17px;
+  }
+
+  .hero-boot-line {
+    grid-template-columns: 13px 62px minmax(0, 1fr);
+  }
+
+  .hero-boot-line > span:last-child {
+    display: none;
+  }
+
+  .hero-route-topology {
+    grid-template-columns: 1fr;
+    gap: 9px;
+  }
+
+  .hero-topology-link {
+    width: 1px;
+    height: 34px;
+    margin: 0 auto;
+  }
+
+  .hero-topology-link::after {
+    content: "v";
+    right: auto;
+    left: 50%;
+    top: auto;
+    bottom: -2px;
+    transform: translateX(-50%);
+  }
+
+  .hero-topology-link i {
+    left: -2px;
+    top: 0;
+    animation-name: hero-packet-mobile;
+  }
+
+  .hero-topology-link span {
+    left: 10px;
+    bottom: 50%;
+    transform: translateY(50%);
+  }
+
+  .hero-topology-providers {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .hero-boot-status {
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 7px;
+  }
+}
+
+@keyframes hero-packet-mobile { from { top: 0; } to { top: calc(100% - 6px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-boot-line {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+
+  .hero-topology-link i,
+  .hero-boot-header > span i {
+    animation: none;
+  }
+}
