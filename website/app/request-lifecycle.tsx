@@ -77,11 +77,11 @@ export function RequestLifecycle() {
           </Link>
         </div>
 
-        <article className="request-trace-terminal" aria-label="ModelMux request lifecycle trace">
+        <article className="request-trace-terminal" aria-label="Illustrated ModelMux request lifecycle derived from request logs">
           <header className="request-trace-header">
             <div className="request-trace-dots" aria-hidden="true"><i /><i /><i /></div>
-            <code>modelmux trace request_8a91</code>
-            <span>complete</span>
+            <code>modelmux logs --json --limit 1</code>
+            <span>illustrated trace</span>
           </header>
 
           <div className="request-trace-meta">
