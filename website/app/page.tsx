@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { FailureReplay } from "./failure-replay";
 import { ProviderMatrix } from "./provider-matrix";
+import { SetupSession } from "./setup-session";
 
 const ArrowIcon = () => (
   <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -118,33 +119,7 @@ export default function HomePage() {
 
       <FailureReplay />
 
-      <section className="section workflow-section">
-        <div className="container">
-          <div className="section-heading centered-heading">
-            <span className="section-kicker">THREE STEPS</span>
-            <h2>From API keys to a reliable endpoint.</h2>
-            <p>Configure once, then keep your application code focused on the product.</p>
-          </div>
-
-          <div className="workflow-grid">
-            <article>
-              <span>01</span>
-              <h3>Configure providers</h3>
-              <pre><code>{`providers:\n  - id: mimo\n    type: openai-compatible\n    base_url: https://api.example.com/v1`}</code></pre>
-            </article>
-            <article>
-              <span>02</span>
-              <h3>Add models and keys</h3>
-              <pre><code>{`models:\n  - id: mimo-v2.5-pro\n    strategy: failover\n\nkeys:\n  - id: mimo-primary\n    secret_ref: mimo-key`}</code></pre>
-            </article>
-            <article>
-              <span>03</span>
-              <h3>Point your client</h3>
-              <pre><code>{`const client = new OpenAI({\n  baseURL: "http://127.0.0.1:8787/v1",\n  apiKey: process.env.MODELMUX_TOKEN,\n});`}</code></pre>
-            </article>
-          </div>
-        </div>
-      </section>
+      <SetupSession />
 
       <section className="section section-grid" id="architecture">
         <div className="container architecture-layout">
