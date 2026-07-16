@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { CSSProperties } from "react";
 
 const bootLines = [
   ["config", "~/.config/modelmux/config.yaml", "loaded"],
@@ -54,7 +55,7 @@ export function HeroRouter() {
 
             <div className="hero-boot-lines">
               {bootLines.map(([label, value, state], index) => (
-                <div className="hero-boot-line" style={{ "--boot-delay": `${index * 110}ms` } as React.CSSProperties} key={label}>
+                <div className="hero-boot-line" style={{ "--boot-delay": `${index * 110}ms` } as CSSProperties} key={label}>
                   <span className="hero-boot-check">✓</span>
                   <b>{label}</b>
                   <code>{value}</code>
