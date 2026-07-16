@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { FailureReplay } from "./failure-replay";
 import { ProviderMatrix } from "./provider-matrix";
 
 const ArrowIcon = () => (
@@ -12,33 +13,6 @@ const CheckIcon = () => (
     <path d="m4 10 3.2 3.2L16 5.8" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
-
-const features = [
-  {
-    index: "01",
-    title: "Resilient key routing",
-    text: "Rotate across keys using failover, round-robin, least-error, or least-used strategies. Cool down unhealthy keys automatically.",
-    meta: ["Priority routing", "Automatic retry", "Health checks"],
-  },
-  {
-    index: "02",
-    title: "One compatible endpoint",
-    text: "Keep your OpenAI SDK and route requests to OpenAI-compatible, Anthropic, Gemini, or custom providers behind one local API.",
-    meta: ["Streaming", "Tool calls", "Provider conversion"],
-  },
-  {
-    index: "03",
-    title: "Limits at every layer",
-    text: "Enforce model and key-level RPM, token, daily quota, and concurrency limits before upstream providers reject production traffic.",
-    meta: ["RPM and TPM", "Daily quotas", "Concurrency"],
-  },
-  {
-    index: "04",
-    title: "Operational visibility",
-    text: "Inspect request IDs, structured logs, latency, token usage, key health, and Prometheus metrics from the terminal or API.",
-    meta: ["Prometheus", "SQLite persistence", "Live TUI"],
-  },
-];
 
 const routingRows = [
   ["mimo-primary", "MIMO", "ACTIVE", "42 / 60 RPM"],
@@ -142,33 +116,7 @@ export default function HomePage() {
 
       <ProviderMatrix />
 
-      <section className="section section-grid" id="features">
-        <div className="container">
-          <div className="section-heading split-heading">
-            <div>
-              <span className="section-kicker">BUILT FOR FAILURE</span>
-              <h2>Reliability belongs<br />in your infrastructure.</h2>
-            </div>
-            <p>
-              ModelMux handles the unstable parts of LLM APIs before they reach your application,
-              without adding Redis, queues, or another control plane.
-            </p>
-          </div>
-
-          <div className="feature-grid">
-            {features.map((feature) => (
-              <article className="feature-card" key={feature.index}>
-                <span className="feature-index">{feature.index}</span>
-                <h3>{feature.title}</h3>
-                <p>{feature.text}</p>
-                <div className="feature-meta">
-                  {feature.meta.map((item) => <span key={item}>{item}</span>)}
-                </div>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
+      <FailureReplay />
 
       <section className="section workflow-section">
         <div className="container">
