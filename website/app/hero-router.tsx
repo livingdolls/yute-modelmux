@@ -43,11 +43,11 @@ export function HeroRouter() {
           </div>
         </div>
 
-        <article className="hero-boot-console" aria-label="ModelMux server startup preview">
+        <article className="hero-boot-console" aria-label="ModelMux server startup demo">
           <header className="hero-boot-header">
             <div className="hero-boot-dots" aria-hidden="true"><i /><i /><i /></div>
             <code>modelmux start</code>
-            <span><i /> running</span>
+            <span><i /> demo boot</span>
           </header>
 
           <div className="hero-boot-body">
