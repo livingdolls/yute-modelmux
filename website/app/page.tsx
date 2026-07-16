@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ProviderMatrix } from "./provider-matrix";
 
 const ArrowIcon = () => (
   <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -139,18 +140,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="provider-strip">
-        <div className="container provider-line">
-          <span>ROUTE ACROSS</span>
-          <strong>OpenAI-compatible</strong>
-          <i />
-          <strong>Anthropic</strong>
-          <i />
-          <strong>Gemini</strong>
-          <i />
-          <strong>Custom APIs</strong>
-        </div>
-      </section>
+      <ProviderMatrix />
 
       <section className="section section-grid" id="features">
         <div className="container">
@@ -253,8 +243,8 @@ export default function HomePage() {
           <div className="showcase-window">
             <div className="showcase-sidebar">
               <strong>MODELMUX</strong>
-              {['Providers', 'Models', 'Groups', 'Chat', 'Keys', 'Logs', 'Config', 'AI'].map((item) => (
-                <span className={item === 'Keys' ? 'selected' : ''} key={item}>{item}</span>
+              {["Providers", "Models", "Groups", "Chat", "Keys", "Logs", "Config", "AI"].map((item) => (
+                <span className={item === "Keys" ? "selected" : ""} key={item}>{item}</span>
               ))}
             </div>
             <div className="showcase-content">
