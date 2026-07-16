@@ -1,0 +1,497 @@
+:root {
+  --bg: #1f1d2e;
+  --bg2: #211f31;
+  --card: #232033;
+  --card2: #2b2740;
+  --line: #3d315f;
+  --line2: #825bf6;
+  --cyan: #875fff;
+  --cyan2: #d787ff;
+  --text: #d8cff0;
+  --sub: #aaa2c4;
+  --muted: #716b85;
+  --green: #875fff;
+  --amber: #d787ff;
+  --terminal-red: #e06c8b;
+  --violet-success: #7ee787;
+  --violet-warning: #d8c77a;
+  --violet-badge: #414139;
+  --shadow: 0 0 30px rgba(130, 91, 246, 0.09);
+}
+
+html {
+  color-scheme: dark;
+  scrollbar-color: #5a439d var(--bg);
+}
+
+body {
+  background:
+    linear-gradient(rgba(135, 95, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(135, 95, 255, 0.014) 1px, transparent 1px),
+    var(--bg);
+  background-size: 24px 24px;
+  color: var(--text);
+  text-shadow: 0 0 18px rgba(215, 135, 255, 0.025);
+}
+
+::selection {
+  background: var(--cyan);
+  color: #171321;
+}
+
+:focus-visible {
+  outline-color: var(--cyan2);
+}
+
+.section-grid {
+  background-image:
+    linear-gradient(rgba(135, 95, 255, 0.026) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(135, 95, 255, 0.026) 1px, transparent 1px);
+}
+
+.section-grid::after {
+  background: radial-gradient(circle at 50% 35%, transparent 0, rgba(31, 29, 46, 0.42) 55%, var(--bg) 95%);
+}
+
+/* Floating glass navigation */
+.site-header {
+  border-color: rgba(135, 95, 255, 0.42);
+  background: rgba(31, 29, 46, 0.72);
+  box-shadow:
+    0 18px 55px rgba(8, 6, 16, 0.52),
+    inset 0 1px 0 rgba(255, 255, 255, 0.055),
+    0 0 0 1px rgba(18, 13, 31, 0.45),
+    0 0 30px rgba(130, 91, 246, 0.08);
+}
+
+.site-header::before {
+  background:
+    linear-gradient(110deg, rgba(215, 135, 255, 0.09), transparent 30%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 56%);
+}
+
+.site-header::after {
+  background: linear-gradient(90deg, transparent, rgba(135, 95, 255, 0.58), transparent);
+}
+
+.site-header .brand-mark {
+  filter: drop-shadow(0 0 8px rgba(215, 135, 255, 0.32));
+}
+
+.site-header .desktop-nav a {
+  color: #aaa2c4;
+}
+
+.site-header .desktop-nav a::before {
+  color: #69627d;
+}
+
+.site-header .desktop-nav a:hover,
+.site-header .icon-link:hover {
+  color: var(--cyan2);
+  background: rgba(135, 95, 255, 0.12);
+}
+
+.site-header .nav-actions {
+  border-left-color: rgba(135, 95, 255, 0.24);
+}
+
+.site-header .icon-link {
+  color: #938ba9;
+}
+
+.site-header .button-small {
+  box-shadow: 0 0 24px rgba(130, 91, 246, 0.2);
+}
+
+.site-header .button-primary:hover {
+  color: #171321;
+  border-color: var(--cyan2);
+  background: var(--cyan2);
+  box-shadow: 0 0 30px rgba(215, 135, 255, 0.28);
+}
+
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .site-header {
+    background: rgba(31, 29, 46, 0.96);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .site-header {
+    background: rgba(31, 29, 46, 0.97);
+  }
+}
+
+/* Primary actions and terminal accents */
+.button-primary {
+  color: #171321;
+  background: var(--cyan);
+  border-color: var(--cyan);
+}
+
+.button-primary:hover {
+  color: var(--cyan2);
+  background: transparent;
+  border-color: var(--cyan2);
+}
+
+.button-secondary {
+  color: var(--sub);
+  background: rgba(35, 32, 51, 0.82);
+  border-color: #4d3b7a;
+}
+
+.button-secondary:hover {
+  color: var(--cyan2);
+  border-color: var(--cyan);
+  background: #29243d;
+}
+
+.hero h1 span,
+.brand,
+.eyebrow,
+.section-kicker,
+.feature-index,
+.diagram-label,
+.diagram-core-header strong,
+.showcase-sidebar strong,
+.docs-nav-group strong,
+.docs-toc strong,
+.docs-callout-info strong,
+.code-header button,
+.docs-section code,
+.docs-callout code,
+.text-link,
+.code-muted {
+  color: var(--cyan2);
+}
+
+.hero h1 span {
+  text-shadow: 0 0 20px rgba(215, 135, 255, 0.3);
+}
+
+.eyebrow,
+.status-badge,
+.feature-meta span,
+.docs-search,
+.docs-search kbd {
+  border-color: #4d3b7a;
+  background: rgba(43, 39, 64, 0.9);
+}
+
+.pulse-dot {
+  background: var(--cyan);
+  box-shadow: 0 0 12px rgba(135, 95, 255, 0.76);
+}
+
+/* Terminal and dashboard panels */
+.terminal-window,
+.showcase-window,
+.workflow-grid article,
+.architecture-diagram,
+.cta-card,
+.code-block,
+.docs-callout,
+.next-grid a,
+.docs-pagination a,
+.endpoint-card,
+.floating-card,
+.feature-card {
+  border-color: #4d3b7a;
+  background: rgba(35, 32, 51, 0.96);
+  box-shadow: var(--shadow);
+}
+
+.terminal-window,
+.showcase-window {
+  box-shadow: 12px 12px 0 #171522, 12px 12px 0 1px #3d315f;
+}
+
+.terminal-bar,
+.code-header {
+  color: #827b99;
+  border-color: #4d3b7a;
+  background: #252137;
+}
+
+.terminal-body,
+.workflow-grid pre,
+.code-block pre {
+  background:
+    repeating-linear-gradient(0deg, transparent, transparent 27px, rgba(135, 95, 255, 0.025) 28px),
+    #1d1a2b;
+  color: var(--text);
+}
+
+.route-client,
+.route-branches span,
+.route-core,
+.terminal-table,
+.showcase-rows,
+.showcase-stats div,
+.diagram-apps span,
+.diagram-providers span,
+.diagram-core-grid span {
+  border-color: #46376f;
+  background: #252137;
+}
+
+.route-core,
+.diagram-core {
+  border-color: var(--cyan);
+  background: rgba(135, 95, 255, 0.08);
+}
+
+.route-line,
+.route-line i {
+  background: var(--cyan);
+}
+
+.route-branches .branch-active,
+.status-badge,
+.state-standby,
+.text-link,
+.command-line span {
+  color: var(--cyan2);
+}
+
+.terminal-row,
+.showcase-rows > div {
+  border-color: rgba(135, 95, 255, 0.13);
+}
+
+.terminal-row:hover,
+.showcase-rows > div:hover,
+.feature-card:hover {
+  background: rgba(135, 95, 255, 0.075);
+  box-shadow: inset 3px 0 0 var(--cyan);
+}
+
+.terminal-log {
+  border-left-color: var(--cyan);
+  background: rgba(135, 95, 255, 0.08);
+}
+
+.terminal-log strong,
+.terminal-online,
+.state-active,
+.check-list svg {
+  color: var(--violet-success);
+}
+
+.state-cooldown {
+  color: var(--violet-warning);
+}
+
+.floating-icon {
+  color: var(--cyan2);
+  border-color: #5a439d;
+  background: #2b2740;
+}
+
+.workflow-section,
+.terminal-showcase,
+.site-footer,
+.provider-strip {
+  background: #1f1d2e;
+  border-color: #3d315f;
+}
+
+.architecture-diagram {
+  background: #211e31;
+}
+
+.showcase-sidebar {
+  background: #211e31;
+  border-color: #4d3b7a;
+}
+
+.showcase-sidebar .selected {
+  color: #171321;
+  background: var(--cyan);
+}
+
+.command-line {
+  border-color: #5a439d;
+  background: #1a1727;
+  box-shadow: 8px 8px 0 #15121f, 8px 8px 0 1px #3d315f;
+}
+
+.cta-card {
+  background: linear-gradient(120deg, rgba(47, 39, 79, 0.96), rgba(31, 29, 46, 0.97));
+}
+
+/* TUI-style neutral badges */
+.provider-summary-item span,
+.muted-label,
+.terminal-row-head,
+.diagram-arrow {
+  color: #817a94;
+}
+
+.status-badge,
+.showcase-title > span {
+  border-color: #656357;
+  background: var(--violet-badge);
+  color: #ece8c5;
+}
+
+/* Documentation */
+.docs-shell {
+  background: rgba(31, 29, 46, 0.86);
+}
+
+.docs-sidebar,
+.docs-toc {
+  border-color: #4d3b7a;
+  background: #211f31;
+}
+
+.docs-nav-group a.active {
+  color: var(--cyan2);
+  border-left-color: var(--cyan);
+  background: linear-gradient(90deg, rgba(135, 95, 255, 0.14), transparent);
+}
+
+.docs-title,
+.docs-pagination {
+  border-color: #3d315f;
+}
+
+.docs-callout-info {
+  border-color: #5a439d;
+  background: rgba(135, 95, 255, 0.085);
+}
+
+.docs-callout-warning {
+  border-color: #756f55;
+  background: rgba(216, 199, 122, 0.07);
+}
+
+.docs-callout-warning strong {
+  color: var(--violet-warning);
+}
+
+.docs-section code,
+.docs-callout code {
+  color: #d9b5ff;
+  background: #2b2740;
+  border-color: #4d3b7a;
+}
+
+.endpoint-card span {
+  color: var(--cyan2);
+}
+
+/* Provider matrix */
+.provider-matrix-section {
+  border-color: #3d315f;
+  background:
+    radial-gradient(circle at 12% 12%, rgba(135, 95, 255, 0.12), transparent 32%),
+    radial-gradient(circle at 88% 85%, rgba(215, 135, 255, 0.06), transparent 30%),
+    rgba(31, 29, 46, 0.96);
+}
+
+.provider-matrix-section::before {
+  background-image:
+    linear-gradient(rgba(135, 95, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(135, 95, 255, 0.035) 1px, transparent 1px);
+}
+
+.provider-summary-bar,
+.provider-panel,
+.routing-activity-panel,
+.provider-topology {
+  border-color: #5a439d;
+  background: rgba(35, 32, 51, 0.94);
+  box-shadow: 10px 10px 0 rgba(20, 17, 31, 0.9), 10px 10px 0 1px #3d315f;
+}
+
+.provider-panel-header,
+.routing-activity-header {
+  border-color: #5a439d;
+  background: #29243d;
+}
+
+.provider-panel-header code,
+.routing-activity-header code {
+  color: var(--cyan2);
+}
+
+.provider-live-dot {
+  background: var(--violet-success);
+  box-shadow: 0 0 12px rgba(126, 231, 135, 0.58);
+}
+
+.provider-summary-item,
+.provider-table-head,
+.provider-table-row {
+  border-color: rgba(135, 95, 255, 0.16);
+}
+
+.provider-table-row:hover {
+  background: rgba(135, 95, 255, 0.08);
+  box-shadow: inset 3px 0 0 var(--cyan);
+}
+
+.provider-health-online {
+  color: var(--violet-success);
+  background: rgba(126, 231, 135, 0.06);
+}
+
+.provider-health-degraded {
+  color: var(--violet-warning);
+  background: rgba(216, 199, 122, 0.06);
+}
+
+.routing-request-id > span {
+  border-color: rgba(135, 95, 255, 0.58);
+  color: var(--cyan2);
+}
+
+.routing-log-item-success .routing-log-marker,
+.routing-log-item-success strong,
+.routing-result strong {
+  color: var(--violet-success);
+}
+
+.routing-log-item-warning .routing-log-marker,
+.routing-log-item-warning strong {
+  color: var(--violet-warning);
+}
+
+.routing-result {
+  border-color: #46376f;
+  background: rgba(135, 95, 255, 0.07);
+}
+
+.provider-topology-node {
+  border-color: #5a439d;
+  background: #252137;
+}
+
+.provider-topology-node-core {
+  border-color: var(--cyan);
+  background: rgba(135, 95, 255, 0.12);
+}
+
+.provider-topology-line,
+.provider-topology-line::before,
+.provider-topology-line::after {
+  border-color: #5a439d;
+  background-color: #5a439d;
+}
+
+.provider-topology-packet {
+  background: var(--cyan2);
+  box-shadow: 0 0 12px rgba(215, 135, 255, 0.7);
+}
+
+@media (max-width: 880px) {
+  .terminal-window,
+  .showcase-window,
+  .command-line {
+    box-shadow: 6px 6px 0 #15121f, 6px 6px 0 1px #3d315f;
+  }
+}
