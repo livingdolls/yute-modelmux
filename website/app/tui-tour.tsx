@@ -71,7 +71,7 @@ export function TuiTour() {
                   className={`tui-hotspot tui-hotspot-${index + 1}`}
                   aria-hidden="true"
                   key={hotspot}
-                  animate={reduceMotion ? undefined : { scale: [1, 1.08, 1] }}
+                  animate={reduceMotion ? undefined : { opacity: [0.78, 1, 0.78] }}
                   transition={{ duration: 2.4, repeat: Infinity, delay: index * 0.28 }}
                 >
                   {hotspot}
