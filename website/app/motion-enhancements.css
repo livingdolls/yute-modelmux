@@ -16,10 +16,6 @@
   isolation: isolate;
 }
 
-.motion-section-shell > section {
-  transform: translateZ(0);
-}
-
 .hero-boot-console,
 .request-trace-terminal,
 .tui-screenshot-frame,
@@ -29,7 +25,6 @@
 .failure-terminal,
 .setup-terminal {
   backface-visibility: hidden;
-  transform: translateZ(0);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -37,8 +32,7 @@
     display: none;
   }
 
-  .motion-section-shell,
-  .motion-section-shell > section {
+  .motion-section-shell {
     transform: none !important;
   }
 }
