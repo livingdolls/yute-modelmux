@@ -44,7 +44,7 @@ export function SiteMotionProvider({ children }: { children: ReactNode }) {
   return (
     <MotionConfig
       reducedMotion="user"
-      transition={{ duration: 0.62, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: 0.62, ease: [0.22, 1, 0.36, 1] as const }}
     >
       <LazyMotion features={domAnimation} strict>
         <SmoothScroll>{children}</SmoothScroll>
