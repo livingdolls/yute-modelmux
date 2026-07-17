@@ -5,7 +5,7 @@ export function DocsShell({ page }: { page: DocPage }) {
   return (
     <div className="docs-shell">
       <aside className="docs-sidebar">
-        <div className="docs-sidebar-inner">
+        <div className="docs-sidebar-inner" data-lenis-prevent>
           <div className="docs-index-label">
             <span>docs://modelmux</span>
             <strong>INDEX</strong>
@@ -35,7 +35,7 @@ export function DocsShell({ page }: { page: DocPage }) {
       </aside>
 
       <article className="docs-content">
-        <details className="docs-mobile-nav">
+        <details className="docs-mobile-nav" data-lenis-prevent>
           <summary>Open documentation index</summary>
           <div>
             {docNavigation.map((group) => (
@@ -83,7 +83,7 @@ export function DocsShell({ page }: { page: DocPage }) {
         )}
       </article>
 
-      <aside className="docs-toc">
+      <aside className="docs-toc" data-lenis-prevent>
         <strong>ON THIS PAGE</strong>
         {page.toc.map((item) => (
           <a href={`#${item.id}`} key={item.id}>{item.label}</a>
