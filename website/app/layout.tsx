@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { GeistMono } from "geist/font/mono";
+import "lenis/dist/lenis.css";
 import "./globals.css";
+import { ScrollProgress } from "./scroll-progress";
+import { SiteMotionProvider } from "./site-motion-provider";
 
 export const metadata: Metadata = {
   title: {
@@ -38,45 +41,12 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en" className={GeistMono.variable}>
       <body>
-        <header className="site-header">
-          <div className="container nav-shell">
-            <Link className="brand" href="/" aria-label="ModelMux home">
-              <span className="brand-mark" aria-hidden="true">
-                <i />
-                <i />
-                <i />
-              </span>
-              <span>modelmux</span>
-            </Link>
+        <SiteMotionProvider>
+          <ScrollProgress />
 
-            <nav className="desktop-nav" aria-label="Main navigation">
-              <Link href="/#features">features</Link>
-              <Link href="/#architecture">architecture</Link>
-              <Link href="/docs">docs</Link>
-              <a href="https://github.com/livingdolls/yute-modelmux/releases">download</a>
-            </nav>
-
-            <div className="nav-actions">
-              <a
-                className="icon-link"
-                href="https://github.com/livingdolls/yute-modelmux"
-                aria-label="View ModelMux on GitHub"
-              >
-                <GithubIcon />
-              </a>
-              <Link className="button button-small button-primary" href="/docs/quick-start">
-                quick_start →
-              </Link>
-            </div>
-          </div>
-        </header>
-
-        <main>{children}</main>
-
-        <footer className="site-footer">
-          <div className="container footer-grid">
-            <div>
-              <Link className="brand" href="/">
+          <header className="site-header">
+            <div className="container nav-shell">
+              <Link className="brand" href="/" aria-label="ModelMux home">
                 <span className="brand-mark" aria-hidden="true">
                   <i />
                   <i />
@@ -84,28 +54,65 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                 </span>
                 <span>modelmux</span>
               </Link>
-              <p>A lightweight LLM gateway built for reliable, self-hosted inference routing.</p>
-            </div>
-            <div className="footer-links">
-              <div>
-                <strong>product</strong>
+
+              <nav className="desktop-nav" aria-label="Main navigation">
                 <Link href="/#features">features</Link>
                 <Link href="/#architecture">architecture</Link>
-                <a href="https://github.com/livingdolls/yute-modelmux/releases">releases</a>
-              </div>
-              <div>
-                <strong>resources</strong>
-                <Link href="/docs">documentation</Link>
-                <a href="https://github.com/livingdolls/yute-modelmux">github</a>
-                <a href="https://github.com/livingdolls/yute-modelmux/issues">issues</a>
+                <Link href="/docs">docs</Link>
+                <a href="https://github.com/livingdolls/yute-modelmux/releases">download</a>
+              </nav>
+
+              <div className="nav-actions">
+                <a
+                  className="icon-link"
+                  href="https://github.com/livingdolls/yute-modelmux"
+                  aria-label="View ModelMux on GitHub"
+                >
+                  <GithubIcon />
+                </a>
+                <Link className="button button-small button-primary" href="/docs/quick-start">
+                  quick_start →
+                </Link>
               </div>
             </div>
-          </div>
-          <div className="container footer-bottom">
-            <span>open_source=true</span>
-            <span>runtime=go</span>
-          </div>
-        </footer>
+          </header>
+
+          <main>{children}</main>
+
+          <footer className="site-footer">
+            <div className="container footer-grid">
+              <div>
+                <Link className="brand" href="/">
+                  <span className="brand-mark" aria-hidden="true">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                  <span>modelmux</span>
+                </Link>
+                <p>A lightweight LLM gateway built for reliable, self-hosted inference routing.</p>
+              </div>
+              <div className="footer-links">
+                <div>
+                  <strong>product</strong>
+                  <Link href="/#features">features</Link>
+                  <Link href="/#architecture">architecture</Link>
+                  <a href="https://github.com/livingdolls/yute-modelmux/releases">releases</a>
+                </div>
+                <div>
+                  <strong>resources</strong>
+                  <Link href="/docs">documentation</Link>
+                  <a href="https://github.com/livingdolls/yute-modelmux">github</a>
+                  <a href="https://github.com/livingdolls/yute-modelmux/issues">issues</a>
+                </div>
+              </div>
+            </div>
+            <div className="container footer-bottom">
+              <span>open_source=true</span>
+              <span>runtime=go</span>
+            </div>
+          </footer>
+        </SiteMotionProvider>
       </body>
     </html>
   );
