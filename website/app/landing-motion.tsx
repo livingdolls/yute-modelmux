@@ -19,14 +19,24 @@ const revealTransition = {
   ease: [0.22, 1, 0.36, 1] as const,
 };
 
-function RevealSection({ children, index }: { children: ReactNode; index: number }) {
+function RevealSection({
+  children,
+  index,
+  translate = true,
+}: {
+  children: ReactNode;
+  index: number;
+  translate?: boolean;
+}) {
   const reduceMotion = useReducedMotion();
+  const initial = translate ? { opacity: 0, y: 46 } : { opacity: 0 };
+  const visible = translate ? { opacity: 1, y: 0 } : { opacity: 1 };
 
   return (
     <m.div
       className="motion-section-shell"
-      initial={reduceMotion ? false : { opacity: 0, y: 46, scale: 0.996 }}
-      whileInView={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
+      initial={reduceMotion ? false : initial}
+      whileInView={reduceMotion ? undefined : visible}
       viewport={{ once: true, amount: 0.08, margin: "0px 0px -8% 0px" }}
       transition={{ ...revealTransition, delay: Math.min(index * 0.025, 0.12) }}
     >
@@ -58,8 +68,8 @@ export function LandingMotion({
       </m.div>
       <RevealSection index={0}>{providers}</RevealSection>
       <RevealSection index={1}>{failure}</RevealSection>
-      <RevealSection index={2}>{setup}</RevealSection>
-      <RevealSection index={3}>{lifecycle}</RevealSection>
+      <RevealSection index={2} translate={false}>{setup}</RevealSection>
+      <RevealSection index={3} translate={false}>{lifecycle}</RevealSection>
       <RevealSection index={4}>{tui}</RevealSection>
       <RevealSection index={5}>{install}</RevealSection>
     </>
