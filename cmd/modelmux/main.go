@@ -1532,7 +1532,7 @@ func evalCommands(configPath *string) *cobra.Command {
 				})
 				for _, r := range result.Results {
 					_ = store.SaveEvalResult(storage.EvalResultRecord{
-						RunID: r.RunID, CaseName: r.CaseName,
+						RunID: result.RunID, CaseName: r.CaseName,
 						TargetModel: r.TargetModel, TargetGroup: r.TargetGroup,
 						StatusCode: r.StatusCode, LatencyMs: r.LatencyMs,
 						ResponseHash: r.ResponseHash, Error: r.Error,
