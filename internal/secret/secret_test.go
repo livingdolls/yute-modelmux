@@ -223,3 +223,48 @@ func TestVerifyFile(t *testing.T) {
 		t.Fatal("verify should fail for missing file")
 	}
 }
+
+func TestNewStoreReturnsReadErrors(t *testing.T) {
+	t.Setenv("MODELMUX_MASTER_KEY", "read-error-test-key")
+	path := filepath.Join(t.TempDir(), "secrets.enc")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(path); err == nil {
+		t.Fatal("expected directory read error")
+	}
+}
+
+func TestImportRejectsInvalidDataAndPreservesExistingStore(t *testing.T) {
+	t.Setenv("MODELMUX_MASTER_KEY", "import-validation-key")
+	path := filepath.Join(t.TempDir(), "secrets.enc")
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set("existing", "value"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ImportData(path, []byte("not-an-encrypted-store")); err == nil {
+		t.Fatal("expected invalid import to fail")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("invalid import replaced the existing store")
+	}
+}
+
+func TestNormalizeLegacyCustomDatabaseSecretPath(t *testing.T) {
+	got := normalizeStorePath(filepath.Join("data", "custom.db.dsecrets.enc"))
+	want := filepath.Join("data", "secrets.enc")
+	if got != want {
+		t.Fatalf("normalizeStorePath() = %q, want %q", got, want)
+	}
+}
