@@ -1043,7 +1043,7 @@ func createFullRouter(cfg *config.Config) (*service.RouterService, storage.Stora
 		}
 		return nil, nil, nil, err
 	}
-	router, err := service.NewRouterServiceWithSecret(cfg, store, secStore)
+	router, err := newRouterServiceWithSecret(cfg, store, secStore)
 	if err != nil {
 		if store != nil {
 			store.Close()
