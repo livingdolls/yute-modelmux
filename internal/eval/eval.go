@@ -44,14 +44,15 @@ type Case struct {
 }
 
 type RunResult struct {
-	RunID      string        `yaml:"run_id"`
-	SuiteName  string        `yaml:"suite_name"`
-	StartedAt  time.Time     `yaml:"started_at"`
-	FinishedAt time.Time     `yaml:"finished_at"`
-	Results    []CaseResult  `yaml:"results"`
+	RunID      string       `yaml:"run_id"`
+	SuiteName  string       `yaml:"suite_name"`
+	StartedAt  time.Time    `yaml:"started_at"`
+	FinishedAt time.Time    `yaml:"finished_at"`
+	Results    []CaseResult `yaml:"results"`
 }
 
 type CaseResult struct {
+	RunID        string `yaml:"-" json:"-"`
 	CaseName     string `yaml:"case_name"`
 	TargetModel  string `yaml:"target_model"`
 	TargetGroup  string `yaml:"target_group"`
@@ -105,6 +106,7 @@ func RunSuite(ctx context.Context, suite *Suite, router *service.RouterService) 
 
 			result := runCase(caseCtx, router, c, targetID)
 			cancel()
+			result.RunID = run.RunID
 			result.TargetModel = target.Model
 			result.TargetGroup = target.Group
 			run.Results = append(run.Results, result)
