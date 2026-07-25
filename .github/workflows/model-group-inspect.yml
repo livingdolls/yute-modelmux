@@ -6,21 +6,34 @@ on:
       - agent/model-group-routing
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   inspect:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect routing implementation
+      - name: Capture routing implementation
         shell: bash
         run: |
-          echo '=== group selection ==='
-          grep -R -n -A140 -B20 'func (s \*RouterService) SelectGroupMember' internal || true
-          echo '=== config validation ==='
-          grep -R -n -A160 -B20 'func (.*Config.*Validate' internal/config || true
-          echo '=== group tests ==='
-          grep -R -n -A120 -B10 'ModelGroup' internal/app/service/*_test.go internal/adapter/httpserver/*_test.go internal/config/*_test.go || true
-          echo '=== repository docs ==='
-          find . -maxdepth 3 -type f \( -iname '*config*.yaml' -o -iname '*config*.yml' -o -iname 'README.md' \) -print
+          {
+            echo '=== files ==='
+            find internal/config internal/app/service internal/adapter/httpserver -maxdepth 2 -type f | sort
+            echo '=== group selection ==='
+            grep -R -n -A180 -B30 'func (s \*RouterService) SelectGroupMember' internal || true
+            echo '=== config validation ==='
+            grep -R -n -A220 -B30 'func (.*Config.*Validate' internal/config || true
+            echo '=== group tests ==='
+            grep -R -n -A180 -B20 'ModelGroup' internal/app/service/*_test.go internal/adapter/httpserver/*_test.go internal/config/*_test.go || true
+            echo '=== repository docs ==='
+            find . -maxdepth 4 -type f \( -iname '*config*.yaml' -o -iname '*config*.yml' -o -iname 'README.md' \) -print | sort
+          } > model-group-inspection.txt
+      - name: Commit inspection report
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/model-group-inspect.yml
+          git add model-group-inspection.txt
+          git commit -m 'chore: capture model group implementation'
+          git push
