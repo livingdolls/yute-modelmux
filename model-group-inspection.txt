@@ -1,0 +1,1742 @@
+=== files ===
+internal/adapter/httpserver/handlers.go
+internal/adapter/httpserver/handlers_test.go
+internal/adapter/httpserver/server.go
+internal/adapter/httpserver/storage_health_test.go
+internal/app/service/health_check.go
+internal/app/service/health_check_test.go
+internal/app/service/response_buffer.go
+internal/app/service/response_buffer_test.go
+internal/app/service/router_service.go
+internal/app/service/router_service_test.go
+internal/app/service/storage_health_test.go
+internal/config/config.go
+internal/config/config_test.go
+internal/config/paths.go
+internal/config/paths_test.go
+=== group selection ===
+internal/app/service/router_service.go-1406-	return domain.Provider{}, false
+internal/app/service/router_service.go-1407-}
+internal/app/service/router_service.go-1408-
+internal/app/service/router_service.go-1409-func (s *RouterService) modelByID(id string) (domain.Model, bool) {
+internal/app/service/router_service.go-1410-	for _, m := range s.models {
+internal/app/service/router_service.go-1411-		if m.ID == id {
+internal/app/service/router_service.go-1412-			return m, true
+internal/app/service/router_service.go-1413-		}
+internal/app/service/router_service.go-1414-	}
+internal/app/service/router_service.go-1415-	return domain.Model{}, false
+internal/app/service/router_service.go-1416-}
+internal/app/service/router_service.go-1417-
+internal/app/service/router_service.go-1418-func (s *RouterService) keyByID(id string) (domain.APIKey, bool) {
+internal/app/service/router_service.go-1419-	for _, k := range s.keys {
+internal/app/service/router_service.go-1420-		if k.ID == id {
+internal/app/service/router_service.go-1421-			return k, true
+internal/app/service/router_service.go-1422-		}
+internal/app/service/router_service.go-1423-	}
+internal/app/service/router_service.go-1424-	return domain.APIKey{}, false
+internal/app/service/router_service.go-1425-}
+internal/app/service/router_service.go-1426-
+internal/app/service/router_service.go-1427-func (s *RouterService) groupByID(id string) (domain.ModelGroup, bool) {
+internal/app/service/router_service.go-1428-	for _, g := range s.groups {
+internal/app/service/router_service.go-1429-		if g.ID == id {
+internal/app/service/router_service.go-1430-			return g, true
+internal/app/service/router_service.go-1431-		}
+internal/app/service/router_service.go-1432-	}
+internal/app/service/router_service.go-1433-	return domain.ModelGroup{}, false
+internal/app/service/router_service.go-1434-}
+internal/app/service/router_service.go-1435-
+internal/app/service/router_service.go:1436:func (s *RouterService) SelectGroupMember(groupID string, attempted map[string]struct{}) (domain.ModelGroupMember, domain.Model, bool) {
+internal/app/service/router_service.go-1437-	s.mu.Lock()
+internal/app/service/router_service.go-1438-	defer s.mu.Unlock()
+internal/app/service/router_service.go-1439-
+internal/app/service/router_service.go-1440-	group, ok := s.groupByID(groupID)
+internal/app/service/router_service.go-1441-	if !ok || !group.Enabled {
+internal/app/service/router_service.go-1442-		return domain.ModelGroupMember{}, domain.Model{}, false
+internal/app/service/router_service.go-1443-	}
+internal/app/service/router_service.go-1444-	members := s.availableGroupMembers(group, attempted)
+internal/app/service/router_service.go-1445-	if len(members) == 0 {
+internal/app/service/router_service.go-1446-		return domain.ModelGroupMember{}, domain.Model{}, false
+internal/app/service/router_service.go-1447-	}
+internal/app/service/router_service.go-1448-
+internal/app/service/router_service.go-1449-	switch group.Strategy {
+internal/app/service/router_service.go-1450-	case domain.GroupStrategyRoundRobin:
+internal/app/service/router_service.go-1451-		idx := s.groupRRIndex[groupID] % len(members)
+internal/app/service/router_service.go-1452-		s.groupRRIndex[groupID] = (idx + 1) % len(members)
+internal/app/service/router_service.go-1453-		return members[idx].member, members[idx].model, true
+internal/app/service/router_service.go-1454-	case domain.GroupStrategyWeighted:
+internal/app/service/router_service.go-1455-		m := s.selectWeightedMember(members)
+internal/app/service/router_service.go-1456-		return m.member, m.model, true
+internal/app/service/router_service.go-1457-	default:
+internal/app/service/router_service.go-1458-		sort.SliceStable(members, func(i, j int) bool { return members[i].member.Priority < members[j].member.Priority })
+internal/app/service/router_service.go-1459-		return members[0].member, members[0].model, true
+internal/app/service/router_service.go-1460-	}
+internal/app/service/router_service.go-1461-}
+internal/app/service/router_service.go-1462-
+internal/app/service/router_service.go-1463-func (s *RouterService) selectWeightedMember(members []availableGroupMember) availableGroupMember {
+internal/app/service/router_service.go-1464-	totalWeight := 0
+internal/app/service/router_service.go-1465-	for _, m := range members {
+internal/app/service/router_service.go-1466-		totalWeight += m.member.Weight
+internal/app/service/router_service.go-1467-	}
+internal/app/service/router_service.go-1468-	if totalWeight <= 0 {
+internal/app/service/router_service.go-1469-		return members[0]
+internal/app/service/router_service.go-1470-	}
+internal/app/service/router_service.go-1471-	pick := rand.IntN(totalWeight)
+internal/app/service/router_service.go-1472-	return selectWeightedMemberByPick(members, pick)
+internal/app/service/router_service.go-1473-}
+internal/app/service/router_service.go-1474-
+internal/app/service/router_service.go-1475-func selectWeightedMemberByPick(members []availableGroupMember, pick int) availableGroupMember {
+internal/app/service/router_service.go-1476-	totalWeight := 0
+internal/app/service/router_service.go-1477-	for _, m := range members {
+internal/app/service/router_service.go-1478-		totalWeight += m.member.Weight
+internal/app/service/router_service.go-1479-	}
+internal/app/service/router_service.go-1480-	if totalWeight <= 0 {
+internal/app/service/router_service.go-1481-		return members[0]
+internal/app/service/router_service.go-1482-	}
+internal/app/service/router_service.go-1483-	cumulative := 0
+internal/app/service/router_service.go-1484-	for _, m := range members {
+internal/app/service/router_service.go-1485-		cumulative += m.member.Weight
+internal/app/service/router_service.go-1486-		if pick < cumulative {
+internal/app/service/router_service.go-1487-			return m
+internal/app/service/router_service.go-1488-		}
+internal/app/service/router_service.go-1489-	}
+internal/app/service/router_service.go-1490-	return members[len(members)-1]
+internal/app/service/router_service.go-1491-}
+internal/app/service/router_service.go-1492-
+internal/app/service/router_service.go-1493-func (s *RouterService) keyCountForModel(modelID string) int {
+internal/app/service/router_service.go-1494-	s.mu.Lock()
+internal/app/service/router_service.go-1495-	defer s.mu.Unlock()
+internal/app/service/router_service.go-1496-	return s.keyCountForModelLocked(modelID)
+internal/app/service/router_service.go-1497-}
+internal/app/service/router_service.go-1498-
+internal/app/service/router_service.go-1499-func (s *RouterService) keyCountForModelLocked(modelID string) int {
+internal/app/service/router_service.go-1500-	count := 0
+internal/app/service/router_service.go-1501-	for _, k := range s.keys {
+internal/app/service/router_service.go-1502-		if k.ModelID == modelID {
+internal/app/service/router_service.go-1503-			count++
+internal/app/service/router_service.go-1504-		}
+internal/app/service/router_service.go-1505-	}
+internal/app/service/router_service.go-1506-	return count
+internal/app/service/router_service.go-1507-}
+internal/app/service/router_service.go-1508-
+internal/app/service/router_service.go-1509-type availableGroupMember struct {
+internal/app/service/router_service.go-1510-	member domain.ModelGroupMember
+internal/app/service/router_service.go-1511-	model  domain.Model
+internal/app/service/router_service.go-1512-}
+internal/app/service/router_service.go-1513-
+internal/app/service/router_service.go-1514-func (s *RouterService) availableGroupMembers(group domain.ModelGroup, attempted map[string]struct{}) []availableGroupMember {
+internal/app/service/router_service.go-1515-	var members []availableGroupMember
+internal/app/service/router_service.go-1516-	for _, member := range group.Members {
+internal/app/service/router_service.go-1517-		if !member.Enabled {
+internal/app/service/router_service.go-1518-			continue
+internal/app/service/router_service.go-1519-		}
+internal/app/service/router_service.go-1520-		if _, seen := attempted[groupMemberAttemptKey(member)]; seen {
+internal/app/service/router_service.go-1521-			continue
+internal/app/service/router_service.go-1522-		}
+internal/app/service/router_service.go-1523-		modelID := member.ModelID
+internal/app/service/router_service.go-1524-		if member.KeyID != "" {
+internal/app/service/router_service.go-1525-			key, ok := s.keyByID(member.KeyID)
+internal/app/service/router_service.go-1526-			if !ok {
+internal/app/service/router_service.go-1527-				continue
+internal/app/service/router_service.go-1528-			}
+internal/app/service/router_service.go-1529-			modelID = key.ModelID
+internal/app/service/router_service.go-1530-		}
+internal/app/service/router_service.go-1531-		model, ok := s.modelByID(modelID)
+internal/app/service/router_service.go-1532-		if !ok || !model.Enabled {
+internal/app/service/router_service.go-1533-			continue
+internal/app/service/router_service.go-1534-		}
+internal/app/service/router_service.go-1535-		provider, ok := s.providerByID(model.ProviderID)
+internal/app/service/router_service.go-1536-		if !ok || !provider.Enabled {
+internal/app/service/router_service.go-1537-			continue
+internal/app/service/router_service.go-1538-		}
+internal/app/service/router_service.go-1539-		if member.KeyID != "" {
+internal/app/service/router_service.go-1540-			if !s.isKeyAvailableForModel(member.KeyID, model.ID) {
+internal/app/service/router_service.go-1541-				continue
+internal/app/service/router_service.go-1542-			}
+internal/app/service/router_service.go-1543-		} else if len(s.availableKeys(member.ModelID)) == 0 {
+internal/app/service/router_service.go-1544-			continue
+internal/app/service/router_service.go-1545-		}
+internal/app/service/router_service.go-1546-		members = append(members, availableGroupMember{member: member, model: model})
+internal/app/service/router_service.go-1547-	}
+internal/app/service/router_service.go-1548-	return members
+internal/app/service/router_service.go-1549-}
+internal/app/service/router_service.go-1550-
+internal/app/service/router_service.go-1551-func groupMemberAttemptKey(member domain.ModelGroupMember) string {
+internal/app/service/router_service.go-1552-	if member.KeyID != "" {
+internal/app/service/router_service.go-1553-		return "key:" + member.KeyID
+internal/app/service/router_service.go-1554-	}
+internal/app/service/router_service.go-1555-	return "model:" + member.ModelID
+internal/app/service/router_service.go-1556-}
+internal/app/service/router_service.go-1557-
+internal/app/service/router_service.go-1558-func (s *RouterService) isKeyAvailableForModel(keyID string, modelID string) bool {
+internal/app/service/router_service.go-1559-	for _, key := range s.availableKeys(modelID) {
+internal/app/service/router_service.go-1560-		if key.ID == keyID {
+internal/app/service/router_service.go-1561-			return true
+internal/app/service/router_service.go-1562-		}
+internal/app/service/router_service.go-1563-	}
+internal/app/service/router_service.go-1564-	return false
+internal/app/service/router_service.go-1565-}
+internal/app/service/router_service.go-1566-
+internal/app/service/router_service.go-1567-func (s *RouterService) availableKeys(modelID string) []domain.APIKey {
+internal/app/service/router_service.go-1568-	todayStr := time.Now().Format("2006-01-02")
+internal/app/service/router_service.go-1569-	now := time.Now()
+internal/app/service/router_service.go-1570-	var out []domain.APIKey
+internal/app/service/router_service.go-1571-	for i, k := range s.keys {
+internal/app/service/router_service.go-1572-		if k.ModelID != modelID {
+internal/app/service/router_service.go-1573-			continue
+internal/app/service/router_service.go-1574-		}
+internal/app/service/router_service.go-1575-		if k.Status == domain.KeyStatusDisabled || k.Status == domain.KeyStatusInvalid {
+internal/app/service/router_service.go-1576-			continue
+internal/app/service/router_service.go-1577-		}
+internal/app/service/router_service.go-1578-		if k.Status == domain.KeyStatusLimited {
+internal/app/service/router_service.go-1579-			if k.DailyDate != todayStr {
+internal/app/service/router_service.go-1580-				s.keys[i].Status = domain.KeyStatusActive
+internal/app/service/router_service.go-1581-				s.keys[i].DailyRequestCount = 0
+internal/app/service/router_service.go-1582-				s.keys[i].DailyTokenCount = 0
+internal/app/service/router_service.go-1583-				s.keys[i].DailyDate = todayStr
+internal/app/service/router_service.go-1584-				k = s.keys[i]
+internal/app/service/router_service.go-1585-			} else {
+internal/app/service/router_service.go-1586-				continue
+internal/app/service/router_service.go-1587-			}
+internal/app/service/router_service.go-1588-		}
+internal/app/service/router_service.go-1589-		if k.Status == domain.KeyStatusCooldown && k.CooldownEnd != nil && k.CooldownEnd.After(now) {
+internal/app/service/router_service.go-1590-			continue
+internal/app/service/router_service.go-1591-		}
+internal/app/service/router_service.go-1592-		if s.isKeyPerMinuteLimited(i) || s.isKeyConcurrencyLimited(i) {
+internal/app/service/router_service.go-1593-			continue
+internal/app/service/router_service.go-1594-		}
+internal/app/service/router_service.go-1595-		out = append(out, k)
+internal/app/service/router_service.go-1596-	}
+internal/app/service/router_service.go-1597-	return out
+internal/app/service/router_service.go-1598-}
+internal/app/service/router_service.go-1599-
+internal/app/service/router_service.go-1600-func (s *RouterService) isKeyPerMinuteLimited(i int) bool {
+internal/app/service/router_service.go-1601-	k := &s.keys[i]
+internal/app/service/router_service.go-1602-	if k.RequestsPerMinute <= 0 && k.TokensPerMinute <= 0 {
+internal/app/service/router_service.go-1603-		return false
+internal/app/service/router_service.go-1604-	}
+internal/app/service/router_service.go-1605-	now := time.Now()
+internal/app/service/router_service.go-1606-	windowStart := k.MinuteWindowStart
+internal/app/service/router_service.go-1607-	if windowStart.IsZero() || now.Sub(windowStart) >= time.Minute {
+internal/app/service/router_service.go-1608-		k.MinuteWindowStart = now.Truncate(time.Minute)
+internal/app/service/router_service.go-1609-		k.MinuteRequestCount = 0
+internal/app/service/router_service.go-1610-		k.MinuteTokenCount = 0
+internal/app/service/router_service.go-1611-		return false
+internal/app/service/router_service.go-1612-	}
+internal/app/service/router_service.go-1613-	if k.RequestsPerMinute > 0 && k.MinuteRequestCount >= k.RequestsPerMinute {
+internal/app/service/router_service.go-1614-		return true
+internal/app/service/router_service.go-1615-	}
+internal/app/service/router_service.go-1616-	if k.TokensPerMinute > 0 && k.MinuteTokenCount >= k.TokensPerMinute {
+=== config validation ===
+internal/config/config.go-301-}
+internal/config/config.go-302-
+internal/config/config.go-303-func (c *Config) ResolveSecrets() error {
+internal/config/config.go-304-	if c.Server.RequireAuth && c.Server.AuthTokenEnv != "" && os.Getenv(c.Server.AuthTokenEnv) == "" {
+internal/config/config.go-305-		return fmt.Errorf("server auth requires environment variable %q which is not set", c.Server.AuthTokenEnv)
+internal/config/config.go-306-	}
+internal/config/config.go-307-	if c.AdminRequireAuth() && c.Server.AuthTokenEnv != "" && os.Getenv(c.Server.AuthTokenEnv) == "" {
+internal/config/config.go-308-		return fmt.Errorf("server admin auth requires environment variable %q which is not set", c.Server.AuthTokenEnv)
+internal/config/config.go-309-	}
+internal/config/config.go-310-	for i := range c.Keys {
+internal/config/config.go-311-		if c.Keys[i].Value != "" || c.Keys[i].SecretRef != "" || c.Keys[i].ValueEnv == "" {
+internal/config/config.go-312-			continue
+internal/config/config.go-313-		}
+internal/config/config.go-314-		if os.Getenv(c.Keys[i].ValueEnv) == "" {
+internal/config/config.go-315-			return fmt.Errorf("key %s requires environment variable %q which is not set", c.Keys[i].ID, c.Keys[i].ValueEnv)
+internal/config/config.go-316-		}
+internal/config/config.go-317-	}
+internal/config/config.go-318-	return nil
+internal/config/config.go-319-}
+internal/config/config.go-320-
+internal/config/config.go-321-type ValidationErrors []string
+internal/config/config.go-322-
+internal/config/config.go-323-func (ve ValidationErrors) Error() string {
+internal/config/config.go-324-	return strings.Join(ve, "; ")
+internal/config/config.go-325-}
+internal/config/config.go-326-
+internal/config/config.go-327-func (ve ValidationErrors) Errors() []string {
+internal/config/config.go-328-	return ve
+internal/config/config.go-329-}
+internal/config/config.go-330-
+internal/config/config.go:331:func (c *Config) Validate() error {
+internal/config/config.go-332-	errs := c.collectValidationErrors()
+internal/config/config.go-333-	if len(errs) == 0 {
+internal/config/config.go-334-		return nil
+internal/config/config.go-335-	}
+internal/config/config.go-336-	return errs
+internal/config/config.go-337-}
+internal/config/config.go-338-
+internal/config/config.go:339:func (c *Config) ValidateAll() ValidationErrors {
+internal/config/config.go-340-	return c.collectValidationErrors()
+internal/config/config.go-341-}
+internal/config/config.go-342-
+internal/config/config.go-343-func (c *Config) collectValidationErrors() ValidationErrors {
+internal/config/config.go-344-	var errs ValidationErrors
+internal/config/config.go-345-	if c.Server.Host == "" {
+internal/config/config.go-346-		errs = append(errs, "server.host is required")
+internal/config/config.go-347-	}
+internal/config/config.go-348-	if c.Server.Port <= 0 {
+internal/config/config.go-349-		errs = append(errs, "server.port must be greater than zero")
+internal/config/config.go-350-	}
+internal/config/config.go-351-	if c.Server.ReadTimeoutSecond < 0 {
+internal/config/config.go-352-		errs = append(errs, "server.read_timeout_seconds must be non-negative")
+internal/config/config.go-353-	}
+internal/config/config.go-354-	if c.Server.WriteTimeoutSecond < 0 {
+internal/config/config.go-355-		errs = append(errs, "server.write_timeout_seconds must be non-negative")
+internal/config/config.go-356-	}
+internal/config/config.go-357-	if c.Server.MaxRequestBodyMB < 0 {
+internal/config/config.go-358-		errs = append(errs, "server.max_request_body_mb must be non-negative")
+internal/config/config.go-359-	}
+internal/config/config.go-360-	if c.Server.RequireAuth && c.Server.AuthTokenEnv == "" {
+internal/config/config.go-361-		errs = append(errs, "server.auth_token_env is required when server.require_auth is true")
+internal/config/config.go-362-	}
+internal/config/config.go-363-	if c.AdminRequireAuth() && c.Server.AuthTokenEnv == "" {
+internal/config/config.go-364-		errs = append(errs, "server.auth_token_env is required when server.admin.require_auth is true")
+internal/config/config.go-365-	}
+internal/config/config.go-366-	if c.Storage.RetentionDays < 0 {
+internal/config/config.go-367-		errs = append(errs, "storage.retention_days must be non-negative")
+internal/config/config.go-368-	}
+internal/config/config.go-369-	if c.Cooldown.RateLimitSeconds < 0 {
+internal/config/config.go-370-		errs = append(errs, "cooldown.rate_limit_seconds must be non-negative")
+internal/config/config.go-371-	}
+internal/config/config.go-372-	if c.Cooldown.ServerErrorSeconds < 0 {
+internal/config/config.go-373-		errs = append(errs, "cooldown.server_error_seconds must be non-negative")
+internal/config/config.go-374-	}
+internal/config/config.go-375-	if c.Cooldown.TimeoutSeconds < 0 {
+internal/config/config.go-376-		errs = append(errs, "cooldown.timeout_seconds must be non-negative")
+internal/config/config.go-377-	}
+internal/config/config.go-378-	if c.Retry.MaxRetryPerKey < 0 {
+internal/config/config.go-379-		errs = append(errs, "retry.max_retry_per_key must be non-negative")
+internal/config/config.go-380-	}
+internal/config/config.go-381-	if c.Retry.MaxTotalAttempts < 0 {
+internal/config/config.go-382-		errs = append(errs, "retry.max_total_attempts must be non-negative")
+internal/config/config.go-383-	}
+internal/config/config.go-384-	for i, backoff := range c.Retry.BackoffMilliseconds {
+internal/config/config.go-385-		if backoff < 0 {
+internal/config/config.go-386-			errs = append(errs, fmt.Sprintf("retry.backoff_milliseconds[%d] must be non-negative", i))
+internal/config/config.go-387-		}
+internal/config/config.go-388-	}
+internal/config/config.go-389-	if c.HealthCheck.IntervalSeconds < 0 {
+internal/config/config.go-390-		errs = append(errs, "health_check.interval_seconds must be non-negative")
+internal/config/config.go-391-	}
+internal/config/config.go-392-	if c.HealthCheck.TimeoutSeconds < 0 {
+internal/config/config.go-393-		errs = append(errs, "health_check.timeout_seconds must be non-negative")
+internal/config/config.go-394-	}
+internal/config/config.go-395-	if c.AI.Guardrails.MaxPromptChars < 0 {
+internal/config/config.go-396-		errs = append(errs, "ai.guardrails.max_prompt_chars must be non-negative")
+internal/config/config.go-397-	}
+internal/config/config.go-398-	providerIDs := map[string]struct{}{}
+internal/config/config.go-399-	for _, p := range c.Providers {
+internal/config/config.go-400-		if p.ID == "" {
+internal/config/config.go-401-			errs = append(errs, "provider.id is required")
+internal/config/config.go-402-			continue
+internal/config/config.go-403-		}
+internal/config/config.go-404-		if _, exists := providerIDs[p.ID]; exists {
+internal/config/config.go-405-			errs = append(errs, "duplicate provider id "+p.ID)
+internal/config/config.go-406-		}
+internal/config/config.go-407-		providerIDs[p.ID] = struct{}{}
+internal/config/config.go-408-		if p.Enabled {
+internal/config/config.go-409-			if p.BaseURL == "" {
+internal/config/config.go-410-				errs = append(errs, "provider "+p.ID+" base_url is required")
+internal/config/config.go-411-			}
+internal/config/config.go-412-			if p.BaseURL != "" && !strings.HasPrefix(p.BaseURL, "http://") && !strings.HasPrefix(p.BaseURL, "https://") {
+internal/config/config.go-413-				errs = append(errs, "provider "+p.ID+" base_url must start with http:// or https://")
+internal/config/config.go-414-			}
+internal/config/config.go-415-			validTypes := map[string]bool{"openai-compatible": true, "anthropic": true, "gemini": true, "custom": true}
+internal/config/config.go-416-			if p.Type != "" && !validTypes[p.Type] {
+internal/config/config.go-417-				errs = append(errs, "provider "+p.ID+" type "+p.Type+" is not valid; must be one of: openai-compatible, anthropic, gemini, custom")
+internal/config/config.go-418-			}
+internal/config/config.go-419-			if p.AuthType != "" && p.AuthType != "bearer" && p.AuthType != "header" {
+internal/config/config.go-420-				errs = append(errs, "provider "+p.ID+" auth_type must be bearer or header")
+internal/config/config.go-421-			}
+internal/config/config.go-422-			if p.AuthType == "header" && p.AuthHeaderName == "" {
+internal/config/config.go-423-				errs = append(errs, "provider "+p.ID+" auth_header_name is required when auth_type is header")
+internal/config/config.go-424-			}
+internal/config/config.go-425-			if p.TimeoutSeconds <= 0 || p.TimeoutSeconds > 3600 {
+internal/config/config.go-426-				errs = append(errs, "provider "+p.ID+" timeout_seconds must be between 1 and 3600")
+internal/config/config.go-427-			}
+internal/config/config.go-428-		}
+internal/config/config.go-429-	}
+internal/config/config.go-430-	modelIDs := map[string]struct{}{}
+internal/config/config.go-431-	modelByProviderID := map[string]string{}
+internal/config/config.go-432-	for _, m := range c.Models {
+internal/config/config.go-433-		if m.ID == "" {
+internal/config/config.go-434-			errs = append(errs, "model.id is required")
+internal/config/config.go-435-			continue
+internal/config/config.go-436-		}
+internal/config/config.go-437-		if _, exists := modelIDs[m.ID]; exists {
+internal/config/config.go-438-			errs = append(errs, "duplicate model id "+m.ID)
+internal/config/config.go-439-		}
+internal/config/config.go-440-		modelIDs[m.ID] = struct{}{}
+internal/config/config.go-441-		modelByProviderID[m.ID] = m.ProviderID
+internal/config/config.go-442-		if _, ok := providerIDs[m.ProviderID]; !ok && m.ProviderID != "" {
+internal/config/config.go-443-			errs = append(errs, "model "+m.ID+" references unknown provider "+m.ProviderID)
+internal/config/config.go-444-		}
+internal/config/config.go-445-		if m.Enabled {
+internal/config/config.go-446-			if m.ModelName == "" {
+internal/config/config.go-447-				errs = append(errs, "model "+m.ID+" model_name is required")
+internal/config/config.go-448-			}
+internal/config/config.go-449-			validStrategies := map[string]bool{"failover": true, "round_robin": true, "least_error": true, "least_used": true}
+internal/config/config.go-450-			if m.Strategy != "" && !validStrategies[m.Strategy] {
+internal/config/config.go-451-				errs = append(errs, "model "+m.ID+" strategy "+m.Strategy+" is not valid; must be one of: failover, round_robin, least_error, least_used")
+internal/config/config.go-452-			}
+internal/config/config.go-453-		}
+internal/config/config.go-454-		if m.RequestsPerMinute < 0 {
+internal/config/config.go-455-			errs = append(errs, "model "+m.ID+" requests_per_minute must be non-negative")
+internal/config/config.go-456-		}
+internal/config/config.go-457-		if m.MaxConcurrentRequests < 0 {
+internal/config/config.go-458-			errs = append(errs, "model "+m.ID+" max_concurrent_requests must be non-negative")
+internal/config/config.go-459-		}
+internal/config/config.go-460-		if m.Cost != nil {
+internal/config/config.go-461-			if m.Cost.InputPer1M < 0 {
+internal/config/config.go-462-				errs = append(errs, "model "+m.ID+" cost.input_per_1m must be non-negative")
+internal/config/config.go-463-			}
+internal/config/config.go-464-			if m.Cost.OutputPer1M < 0 {
+internal/config/config.go-465-				errs = append(errs, "model "+m.ID+" cost.output_per_1m must be non-negative")
+internal/config/config.go-466-			}
+internal/config/config.go-467-		}
+internal/config/config.go-468-	}
+internal/config/config.go-469-	groupIDs := map[string]struct{}{}
+internal/config/config.go-470-	for _, g := range c.ModelGroups {
+internal/config/config.go-471-		if g.ID == "" {
+internal/config/config.go-472-			errs = append(errs, "model_group.id is required")
+internal/config/config.go-473-			continue
+internal/config/config.go-474-		}
+internal/config/config.go-475-		if _, exists := groupIDs[g.ID]; exists {
+internal/config/config.go-476-			errs = append(errs, "duplicate model group id "+g.ID)
+internal/config/config.go-477-		}
+internal/config/config.go-478-		if _, exists := modelIDs[g.ID]; exists {
+internal/config/config.go-479-			errs = append(errs, "model group id "+g.ID+" conflicts with model id")
+internal/config/config.go-480-		}
+internal/config/config.go-481-		groupIDs[g.ID] = struct{}{}
+internal/config/config.go-482-		if g.Enabled {
+internal/config/config.go-483-			if g.Name == "" {
+internal/config/config.go-484-				errs = append(errs, "model group "+g.ID+" name is required")
+internal/config/config.go-485-			}
+internal/config/config.go-486-			validStrategies := map[string]bool{"failover": true, "round_robin": true, "weighted": true}
+internal/config/config.go-487-			if g.Strategy != "" && !validStrategies[g.Strategy] {
+internal/config/config.go-488-				errs = append(errs, "model group "+g.ID+" strategy "+g.Strategy+" is not valid; must be one of: failover, round_robin, weighted")
+internal/config/config.go-489-			}
+internal/config/config.go-490-		}
+internal/config/config.go-491-		if len(g.Members) == 0 {
+internal/config/config.go-492-			if g.Enabled {
+internal/config/config.go-493-				errs = append(errs, "enabled model group "+g.ID+" must have at least one member")
+internal/config/config.go-494-			}
+internal/config/config.go-495-			continue
+internal/config/config.go-496-		}
+internal/config/config.go-497-	}
+internal/config/config.go-498-	keyIDs := map[string]struct{}{}
+internal/config/config.go-499-	for _, k := range c.Keys {
+internal/config/config.go-500-		if k.ID == "" {
+internal/config/config.go-501-			errs = append(errs, "key.id is required")
+internal/config/config.go-502-			continue
+internal/config/config.go-503-		}
+internal/config/config.go-504-		if _, exists := keyIDs[k.ID]; exists {
+internal/config/config.go-505-			errs = append(errs, "duplicate key id "+k.ID)
+internal/config/config.go-506-		}
+internal/config/config.go-507-		keyIDs[k.ID] = struct{}{}
+internal/config/config.go-508-		if _, ok := providerIDs[k.ProviderID]; !ok && k.ProviderID != "" {
+internal/config/config.go-509-			errs = append(errs, "key "+k.ID+" references unknown provider "+k.ProviderID)
+internal/config/config.go-510-		}
+internal/config/config.go-511-		if _, ok := modelIDs[k.ModelID]; !ok && k.ModelID != "" {
+internal/config/config.go-512-			errs = append(errs, "key "+k.ID+" references unknown model "+k.ModelID)
+internal/config/config.go-513-		}
+internal/config/config.go-514-		validStatuses := map[string]bool{"": true, "active": true, "cooldown": true, "invalid": true, "limited": true, "disabled": true}
+internal/config/config.go-515-		if !validStatuses[k.Status] {
+internal/config/config.go-516-			errs = append(errs, "key "+k.ID+" status "+k.Status+" is not valid; must be one of: active, cooldown, invalid, limited, disabled")
+internal/config/config.go-517-		}
+internal/config/config.go-518-		if k.Priority < 0 {
+internal/config/config.go-519-			errs = append(errs, "key "+k.ID+" priority must be non-negative")
+internal/config/config.go-520-		}
+internal/config/config.go-521-		if k.DailyRequestLimit < 0 {
+internal/config/config.go-522-			errs = append(errs, "key "+k.ID+" daily_request_limit must be non-negative")
+internal/config/config.go-523-		}
+internal/config/config.go-524-		if k.DailyTokenLimit < 0 {
+internal/config/config.go-525-			errs = append(errs, "key "+k.ID+" daily_token_limit must be non-negative")
+internal/config/config.go-526-		}
+internal/config/config.go-527-		if k.RequestsPerMinute < 0 {
+internal/config/config.go-528-			errs = append(errs, "key "+k.ID+" requests_per_minute must be non-negative")
+internal/config/config.go-529-		}
+internal/config/config.go-530-		if k.TokensPerMinute < 0 {
+internal/config/config.go-531-			errs = append(errs, "key "+k.ID+" tokens_per_minute must be non-negative")
+internal/config/config.go-532-		}
+internal/config/config.go-533-		if k.MaxConcurrentRequests < 0 {
+internal/config/config.go-534-			errs = append(errs, "key "+k.ID+" max_concurrent_requests must be non-negative")
+internal/config/config.go-535-		}
+internal/config/config.go-536-		if k.ProviderID != "" && k.ModelID != "" {
+internal/config/config.go-537-			if modelProviderID := modelByProviderID[k.ModelID]; modelProviderID != k.ProviderID {
+internal/config/config.go-538-				errs = append(errs, "key "+k.ID+" provider "+k.ProviderID+" does not match model "+k.ModelID+" provider "+modelProviderID)
+internal/config/config.go-539-			}
+internal/config/config.go-540-		}
+internal/config/config.go-541-		if k.Value == "" && k.ValueEnv == "" && k.SecretRef == "" {
+internal/config/config.go-542-			errs = append(errs, "key "+k.ID+" has no value; set keys[].value or keys[].value_env or keys[].secret_ref in config")
+internal/config/config.go-543-		}
+internal/config/config.go-544-	}
+internal/config/config.go-545-	for _, g := range c.ModelGroups {
+internal/config/config.go-546-		for _, member := range g.Members {
+internal/config/config.go-547-			if member.Priority < 0 {
+internal/config/config.go-548-				errs = append(errs, "model group "+g.ID+" member priority must be non-negative")
+internal/config/config.go-549-			}
+internal/config/config.go-550-			if member.Weight < 0 {
+internal/config/config.go-551-				errs = append(errs, "model group "+g.ID+" member weight must be non-negative")
+internal/config/config.go-552-			}
+internal/config/config.go-553-			hasModel := member.ModelID != ""
+internal/config/config.go-554-			hasKey := member.KeyID != ""
+internal/config/config.go-555-			if hasModel == hasKey {
+internal/config/config.go-556-				errs = append(errs, "model group "+g.ID+" member must set exactly one of model_id or key_id")
+internal/config/config.go-557-				continue
+internal/config/config.go-558-			}
+internal/config/config.go-559-			if hasModel {
+=== group tests ===
+internal/app/service/router_service_test.go-457-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-458-	ctx := SetStreamResultContext(context.Background(), streamResultInfo{
+internal/app/service/router_service_test.go-459-		KeyID:      "mimo-key-1",
+internal/app/service/router_service_test.go-460-		ModelID:    "mimo-v2.5-pro",
+internal/app/service/router_service_test.go-461-		ProviderID: "mimo",
+internal/app/service/router_service_test.go-462-		StatusCode: http.StatusOK,
+internal/app/service/router_service_test.go-463-		StartedAt:  time.Now().Add(-25 * time.Millisecond),
+internal/app/service/router_service_test.go-464-	})
+internal/app/service/router_service_test.go-465-
+internal/app/service/router_service_test.go-466-	rs.FinalizeStreamResult(ctx, nil)
+internal/app/service/router_service_test.go-467-
+internal/app/service/router_service_test.go-468-	logs := rs.Logs()
+internal/app/service/router_service_test.go-469-	if len(logs) != 1 {
+internal/app/service/router_service_test.go-470-		t.Fatalf("expected 1 log, got %d", len(logs))
+internal/app/service/router_service_test.go-471-	}
+internal/app/service/router_service_test.go-472-	if logs[0].LatencyMs <= 0 {
+internal/app/service/router_service_test.go-473-		t.Fatalf("expected stream latency to include elapsed body duration, got %d", logs[0].LatencyMs)
+internal/app/service/router_service_test.go-474-	}
+internal/app/service/router_service_test.go-475-}
+internal/app/service/router_service_test.go-476-
+internal/app/service/router_service_test.go:477:func TestHandleChatCompletionRoutesModelGroup(t *testing.T) {
+internal/app/service/router_service_test.go-478-	var gotModel string
+internal/app/service/router_service_test.go-479-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+internal/app/service/router_service_test.go-480-		var payload struct {
+internal/app/service/router_service_test.go-481-			Model string `json:"model"`
+internal/app/service/router_service_test.go-482-		}
+internal/app/service/router_service_test.go-483-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+internal/app/service/router_service_test.go-484-			t.Fatalf("decode upstream request: %v", err)
+internal/app/service/router_service_test.go-485-		}
+internal/app/service/router_service_test.go-486-		gotModel = payload.Model
+internal/app/service/router_service_test.go-487-		w.WriteHeader(http.StatusOK)
+internal/app/service/router_service_test.go-488-	}))
+internal/app/service/router_service_test.go-489-	defer server.Close()
+internal/app/service/router_service_test.go-490-
+internal/app/service/router_service_test.go-491-	cfg := groupRoutingConfig(server.URL + "/v1")
+internal/app/service/router_service_test.go-492-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-493-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"high-price","messages":[]}`))
+internal/app/service/router_service_test.go-494-
+internal/app/service/router_service_test.go-495-	resp, err := rs.HandleChatCompletion(context.Background(), req)
+internal/app/service/router_service_test.go-496-	if err != nil {
+internal/app/service/router_service_test.go-497-		t.Fatalf("handle group request failed: %v", err)
+internal/app/service/router_service_test.go-498-	}
+internal/app/service/router_service_test.go-499-	defer resp.Body.Close()
+internal/app/service/router_service_test.go-500-
+internal/app/service/router_service_test.go-501-	if gotModel != "gpt-5.5-xHigh" {
+internal/app/service/router_service_test.go-502-		t.Fatalf("expected provider model gpt-5.5-xHigh, got %s", gotModel)
+internal/app/service/router_service_test.go-503-	}
+internal/app/service/router_service_test.go-504-	logs := rs.Logs()
+internal/app/service/router_service_test.go-505-	if len(logs) != 1 || logs[0].GroupID != "high-price" || logs[0].ModelID != "gpt-5.5-xhigh" {
+internal/app/service/router_service_test.go-506-		t.Fatalf("unexpected group log: %+v", logs)
+internal/app/service/router_service_test.go-507-	}
+internal/app/service/router_service_test.go-508-}
+internal/app/service/router_service_test.go-509-
+internal/app/service/router_service_test.go-510-func TestHandleChatCompletionGroupFallsBackToNextMember(t *testing.T) {
+internal/app/service/router_service_test.go-511-	var gotModel string
+internal/app/service/router_service_test.go-512-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+internal/app/service/router_service_test.go-513-		var payload struct {
+internal/app/service/router_service_test.go-514-			Model string `json:"model"`
+internal/app/service/router_service_test.go-515-		}
+internal/app/service/router_service_test.go-516-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+internal/app/service/router_service_test.go-517-			t.Fatalf("decode upstream request: %v", err)
+internal/app/service/router_service_test.go-518-		}
+internal/app/service/router_service_test.go-519-		gotModel = payload.Model
+internal/app/service/router_service_test.go-520-		w.WriteHeader(http.StatusOK)
+internal/app/service/router_service_test.go-521-	}))
+internal/app/service/router_service_test.go-522-	defer server.Close()
+internal/app/service/router_service_test.go-523-
+internal/app/service/router_service_test.go-524-	cfg := groupRoutingConfig(server.URL + "/v1")
+internal/app/service/router_service_test.go-525-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-526-	cooldownEnd := time.Now().Add(time.Minute)
+internal/app/service/router_service_test.go-527-	rs.keys[0].Status = domain.KeyStatusCooldown
+internal/app/service/router_service_test.go-528-	rs.keys[0].CooldownEnd = &cooldownEnd
+internal/app/service/router_service_test.go-529-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"high-price","messages":[]}`))
+internal/app/service/router_service_test.go-530-
+internal/app/service/router_service_test.go-531-	resp, err := rs.HandleChatCompletion(context.Background(), req)
+internal/app/service/router_service_test.go-532-	if err != nil {
+internal/app/service/router_service_test.go-533-		t.Fatalf("handle group fallback failed: %v", err)
+internal/app/service/router_service_test.go-534-	}
+internal/app/service/router_service_test.go-535-	defer resp.Body.Close()
+internal/app/service/router_service_test.go-536-
+internal/app/service/router_service_test.go-537-	if gotModel != "gpt-5.5-fast" {
+internal/app/service/router_service_test.go-538-		t.Fatalf("expected fallback provider model gpt-5.5-fast, got %s", gotModel)
+internal/app/service/router_service_test.go-539-	}
+internal/app/service/router_service_test.go-540-}
+internal/app/service/router_service_test.go-541-
+internal/app/service/router_service_test.go-542-func TestHandleChatCompletionGroupFallsBackBetweenKeyMembers(t *testing.T) {
+internal/app/service/router_service_test.go-543-	var gotKeys []string
+internal/app/service/router_service_test.go-544-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+internal/app/service/router_service_test.go-545-		gotKeys = append(gotKeys, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+internal/app/service/router_service_test.go-546-		if gotKeys[len(gotKeys)-1] == "first-key" {
+internal/app/service/router_service_test.go-547-			w.WriteHeader(http.StatusTooManyRequests)
+internal/app/service/router_service_test.go-548-			return
+internal/app/service/router_service_test.go-549-		}
+internal/app/service/router_service_test.go-550-		w.WriteHeader(http.StatusOK)
+internal/app/service/router_service_test.go-551-	}))
+internal/app/service/router_service_test.go-552-	defer server.Close()
+internal/app/service/router_service_test.go-553-
+internal/app/service/router_service_test.go-554-	cfg := groupRoutingConfig(server.URL + "/v1")
+internal/app/service/router_service_test.go-555-	cfg.Retry.MaxRetryPerKey = 0
+internal/app/service/router_service_test.go-556-	cfg.Retry.MaxTotalAttempts = 1
+internal/app/service/router_service_test.go-557-	cfg.Keys = []config.KeyConfig{
+internal/app/service/router_service_test.go-558-		{ID: "key-1", ProviderID: "openai", ModelID: "gpt-5.5-xhigh", Value: "first-key", Status: "active", Priority: 1},
+internal/app/service/router_service_test.go-559-		{ID: "key-2", ProviderID: "openai", ModelID: "gpt-5.5-xhigh", Value: "second-key", Status: "active", Priority: 2},
+internal/app/service/router_service_test.go-560-	}
+internal/app/service/router_service_test.go:561:	cfg.ModelGroups[0].Members = []config.ModelGroupMemberConfig{
+internal/app/service/router_service_test.go-562-		{KeyID: "key-1", Priority: 1, Weight: 1, Enabled: true},
+internal/app/service/router_service_test.go-563-		{KeyID: "key-2", Priority: 2, Weight: 1, Enabled: true},
+internal/app/service/router_service_test.go-564-	}
+internal/app/service/router_service_test.go-565-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-566-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"high-price","messages":[]}`))
+internal/app/service/router_service_test.go-567-
+internal/app/service/router_service_test.go-568-	resp, err := rs.HandleChatCompletion(context.Background(), req)
+internal/app/service/router_service_test.go-569-	if err != nil {
+internal/app/service/router_service_test.go-570-		t.Fatalf("handle key-member group fallback failed: %v", err)
+internal/app/service/router_service_test.go-571-	}
+internal/app/service/router_service_test.go-572-	defer resp.Body.Close()
+internal/app/service/router_service_test.go-573-
+internal/app/service/router_service_test.go-574-	if strings.Join(gotKeys, ",") != "first-key,second-key" {
+internal/app/service/router_service_test.go-575-		t.Fatalf("expected key-member fallback from first to second key, got %v", gotKeys)
+internal/app/service/router_service_test.go-576-	}
+internal/app/service/router_service_test.go-577-	logs := rs.Logs()
+internal/app/service/router_service_test.go-578-	if len(logs) != 2 {
+internal/app/service/router_service_test.go-579-		t.Fatalf("expected 2 logs, got %d", len(logs))
+internal/app/service/router_service_test.go-580-	}
+internal/app/service/router_service_test.go-581-	if logs[1].KeyID != "key-2" || logs[1].ModelID != "gpt-5.5-xhigh" || logs[1].ProviderID != "openai" {
+internal/app/service/router_service_test.go-582-		t.Fatalf("unexpected success log for key member: %+v", logs[1])
+internal/app/service/router_service_test.go-583-	}
+internal/app/service/router_service_test.go-584-}
+internal/app/service/router_service_test.go-585-
+internal/app/service/router_service_test.go-586-func TestHandleChatCompletionGroupUnavailable(t *testing.T) {
+internal/app/service/router_service_test.go-587-	cfg := groupRoutingConfig("https://example.test/v1")
+internal/app/service/router_service_test.go-588-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-589-	cooldownEnd := time.Now().Add(time.Minute)
+internal/app/service/router_service_test.go-590-	for i := range rs.keys {
+internal/app/service/router_service_test.go-591-		rs.keys[i].Status = domain.KeyStatusCooldown
+internal/app/service/router_service_test.go-592-		rs.keys[i].CooldownEnd = &cooldownEnd
+internal/app/service/router_service_test.go-593-	}
+internal/app/service/router_service_test.go-594-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"high-price","messages":[]}`))
+internal/app/service/router_service_test.go-595-
+internal/app/service/router_service_test.go-596-	_, err := rs.HandleChatCompletion(context.Background(), req)
+internal/app/service/router_service_test.go-597-	if err == nil {
+internal/app/service/router_service_test.go-598-		t.Fatal("expected group unavailable error")
+internal/app/service/router_service_test.go-599-	}
+internal/app/service/router_service_test.go-600-	var proxyErr *ProxyError
+internal/app/service/router_service_test.go-601-	if !errors.As(err, &proxyErr) {
+internal/app/service/router_service_test.go-602-		t.Fatalf("expected ProxyError, got %T", err)
+internal/app/service/router_service_test.go-603-	}
+internal/app/service/router_service_test.go-604-	if proxyErr.HTTPStatus != http.StatusTooManyRequests || proxyErr.Code != "all_group_models_unavailable" {
+internal/app/service/router_service_test.go-605-		t.Fatalf("unexpected proxy error: %+v", proxyErr)
+internal/app/service/router_service_test.go-606-	}
+internal/app/service/router_service_test.go-607-}
+internal/app/service/router_service_test.go-608-
+internal/app/service/router_service_test.go-609-func TestHandleChatCompletionRetriesPerKeyWithBackoff(t *testing.T) {
+internal/app/service/router_service_test.go-610-	var reqCount int32
+internal/app/service/router_service_test.go-611-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+internal/app/service/router_service_test.go-612-		count := atomic.AddInt32(&reqCount, 1)
+internal/app/service/router_service_test.go-613-		var payload struct {
+internal/app/service/router_service_test.go-614-			Model string `json:"model"`
+internal/app/service/router_service_test.go-615-		}
+internal/app/service/router_service_test.go-616-		json.NewDecoder(r.Body).Decode(&payload)
+internal/app/service/router_service_test.go-617-		if count == 1 {
+internal/app/service/router_service_test.go-618-			w.WriteHeader(http.StatusServiceUnavailable)
+internal/app/service/router_service_test.go-619-			return
+internal/app/service/router_service_test.go-620-		}
+internal/app/service/router_service_test.go-621-		w.WriteHeader(http.StatusOK)
+internal/app/service/router_service_test.go-622-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+internal/app/service/router_service_test.go-623-	}))
+internal/app/service/router_service_test.go-624-	defer server.Close()
+internal/app/service/router_service_test.go-625-
+internal/app/service/router_service_test.go-626-	cfg := singleKeyRetryConfig(server.URL + "/v1")
+internal/app/service/router_service_test.go-627-	cfg.Retry.MaxRetryPerKey = 3
+internal/app/service/router_service_test.go-628-	cfg.Retry.BackoffMilliseconds = []int{10, 20}
+internal/app/service/router_service_test.go-629-
+internal/app/service/router_service_test.go-630-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-631-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test-model","messages":[]}`))
+internal/app/service/router_service_test.go-632-
+internal/app/service/router_service_test.go-633-	started := time.Now()
+internal/app/service/router_service_test.go-634-	resp, err := rs.HandleChatCompletion(context.Background(), req)
+internal/app/service/router_service_test.go-635-	if err != nil {
+internal/app/service/router_service_test.go-636-		t.Fatalf("expected retry to succeed after transient error: %v", err)
+internal/app/service/router_service_test.go-637-	}
+internal/app/service/router_service_test.go-638-	defer resp.Body.Close()
+internal/app/service/router_service_test.go-639-
+internal/app/service/router_service_test.go-640-	if resp.StatusCode != http.StatusOK {
+internal/app/service/router_service_test.go-641-		t.Fatalf("expected 200, got %d", resp.StatusCode)
+internal/app/service/router_service_test.go-642-	}
+internal/app/service/router_service_test.go-643-	finalCount := atomic.LoadInt32(&reqCount)
+internal/app/service/router_service_test.go-644-	if finalCount < 2 {
+internal/app/service/router_service_test.go-645-		t.Fatalf("expected at least 2 requests (1 failed + 1 success), got %d", finalCount)
+internal/app/service/router_service_test.go-646-	}
+internal/app/service/router_service_test.go-647-	if time.Since(started) < 10*time.Millisecond {
+internal/app/service/router_service_test.go-648-		t.Fatal("expected backoff delay")
+internal/app/service/router_service_test.go-649-	}
+internal/app/service/router_service_test.go-650-}
+internal/app/service/router_service_test.go-651-
+internal/app/service/router_service_test.go-652-func TestHandleChatCompletionRetryRespectsMaxTotalAttempts(t *testing.T) {
+internal/app/service/router_service_test.go-653-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+internal/app/service/router_service_test.go-654-		w.WriteHeader(http.StatusServiceUnavailable)
+internal/app/service/router_service_test.go-655-	}))
+internal/app/service/router_service_test.go-656-	defer server.Close()
+internal/app/service/router_service_test.go-657-
+internal/app/service/router_service_test.go-658-	cfg := singleKeyRetryConfig(server.URL + "/v1")
+internal/app/service/router_service_test.go-659-	cfg.Retry.MaxRetryPerKey = 5
+internal/app/service/router_service_test.go-660-	cfg.Retry.MaxTotalAttempts = 2
+internal/app/service/router_service_test.go-661-
+internal/app/service/router_service_test.go-662-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-663-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test-model","messages":[]}`))
+internal/app/service/router_service_test.go-664-
+internal/app/service/router_service_test.go-665-	_, err := rs.HandleChatCompletion(context.Background(), req)
+internal/app/service/router_service_test.go-666-	if err == nil {
+internal/app/service/router_service_test.go-667-		t.Fatal("expected all keys unavailable error after exhausting total attempts")
+internal/app/service/router_service_test.go-668-	}
+internal/app/service/router_service_test.go-669-	var proxyErr *ProxyError
+internal/app/service/router_service_test.go-670-	if !errors.As(err, &proxyErr) {
+internal/app/service/router_service_test.go-671-		t.Fatalf("expected ProxyError, got %T", err)
+internal/app/service/router_service_test.go-672-	}
+internal/app/service/router_service_test.go-673-	if proxyErr.Code != "all_keys_limited" {
+internal/app/service/router_service_test.go-674-		t.Fatalf("expected all_keys_limited, got %s", proxyErr.Code)
+internal/app/service/router_service_test.go-675-	}
+internal/app/service/router_service_test.go-676-}
+internal/app/service/router_service_test.go-677-
+internal/app/service/router_service_test.go-678-func TestHandleChatCompletionRoutesWeightedGroup(t *testing.T) {
+internal/app/service/router_service_test.go-679-	t.Run("deterministic picks", func(t *testing.T) {
+internal/app/service/router_service_test.go-680-		members := []availableGroupMember{
+internal/app/service/router_service_test.go:681:			{member: domain.ModelGroupMember{ModelID: "a", Weight: 1}, model: domain.Model{ID: "a"}},
+internal/app/service/router_service_test.go:682:			{member: domain.ModelGroupMember{ModelID: "b", Weight: 2}, model: domain.Model{ID: "b"}},
+internal/app/service/router_service_test.go:683:			{member: domain.ModelGroupMember{ModelID: "c", Weight: 3}, model: domain.Model{ID: "c"}},
+internal/app/service/router_service_test.go-684-		}
+internal/app/service/router_service_test.go-685-
+internal/app/service/router_service_test.go-686-		tests := []struct {
+internal/app/service/router_service_test.go-687-			pick   int
+internal/app/service/router_service_test.go-688-			expect string
+internal/app/service/router_service_test.go-689-		}{
+internal/app/service/router_service_test.go-690-			{0, "a"},
+internal/app/service/router_service_test.go-691-			{1, "b"},
+internal/app/service/router_service_test.go-692-			{2, "b"},
+internal/app/service/router_service_test.go-693-			{3, "c"},
+internal/app/service/router_service_test.go-694-			{5, "c"},
+internal/app/service/router_service_test.go-695-		}
+internal/app/service/router_service_test.go-696-		for _, tt := range tests {
+internal/app/service/router_service_test.go-697-			result := selectWeightedMemberByPick(members, tt.pick)
+internal/app/service/router_service_test.go-698-			if result.model.ID != tt.expect {
+internal/app/service/router_service_test.go-699-				t.Errorf("pick %d: expected %s, got %s", tt.pick, tt.expect, result.model.ID)
+internal/app/service/router_service_test.go-700-			}
+internal/app/service/router_service_test.go-701-		}
+internal/app/service/router_service_test.go-702-	})
+internal/app/service/router_service_test.go-703-
+internal/app/service/router_service_test.go-704-	t.Run("zero weight normalized", func(t *testing.T) {
+internal/app/service/router_service_test.go-705-		members := []availableGroupMember{
+internal/app/service/router_service_test.go:706:			{member: domain.ModelGroupMember{ModelID: "x", Weight: 0}, model: domain.Model{ID: "x"}},
+internal/app/service/router_service_test.go:707:			{member: domain.ModelGroupMember{ModelID: "y", Weight: 0}, model: domain.Model{ID: "y"}},
+internal/app/service/router_service_test.go-708-		}
+internal/app/service/router_service_test.go-709-		result := selectWeightedMemberByPick(members, 0)
+internal/app/service/router_service_test.go-710-		if result.model.ID != "x" {
+internal/app/service/router_service_test.go-711-			t.Errorf("expected first member for zero weight, got %s", result.model.ID)
+internal/app/service/router_service_test.go-712-		}
+internal/app/service/router_service_test.go-713-	})
+internal/app/service/router_service_test.go-714-
+internal/app/service/router_service_test.go-715-	t.Run("integration routing", func(t *testing.T) {
+internal/app/service/router_service_test.go-716-		var requests []string
+internal/app/service/router_service_test.go-717-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+internal/app/service/router_service_test.go-718-			var payload struct {
+internal/app/service/router_service_test.go-719-				Model string `json:"model"`
+internal/app/service/router_service_test.go-720-			}
+internal/app/service/router_service_test.go-721-			json.NewDecoder(r.Body).Decode(&payload)
+internal/app/service/router_service_test.go-722-			requests = append(requests, payload.Model)
+internal/app/service/router_service_test.go-723-			w.WriteHeader(http.StatusOK)
+internal/app/service/router_service_test.go-724-		}))
+internal/app/service/router_service_test.go-725-		defer server.Close()
+internal/app/service/router_service_test.go-726-
+internal/app/service/router_service_test.go-727-		cfg := &config.Config{
+internal/app/service/router_service_test.go-728-			App:      config.AppConfig{Name: "test", LogLevel: "info"},
+internal/app/service/router_service_test.go-729-			Server:   config.ServerConfig{Host: "127.0.0.1", Port: 8787},
+internal/app/service/router_service_test.go-730-			Cooldown: config.CooldownConfig{RateLimitSeconds: 300, ServerErrorSeconds: 60},
+internal/app/service/router_service_test.go-731-			Retry:    config.RetryConfig{MaxRetryPerKey: 0, MaxTotalAttempts: 5},
+internal/app/service/router_service_test.go-732-			Providers: []config.ProviderConfig{
+internal/app/service/router_service_test.go-733-				{ID: "openai", Name: "OpenAI", Type: "openai-compatible", BaseURL: server.URL + "/v1", AuthType: "bearer", TimeoutSeconds: 5, Enabled: true},
+internal/app/service/router_service_test.go-734-			},
+internal/app/service/router_service_test.go-735-			Models: []config.ModelConfig{
+internal/app/service/router_service_test.go-736-				{ID: "model-a", ProviderID: "openai", ModelName: "model-a", Strategy: "failover", Enabled: true},
+internal/app/service/router_service_test.go-737-				{ID: "model-b", ProviderID: "openai", ModelName: "model-b", Strategy: "failover", Enabled: true},
+internal/app/service/router_service_test.go-738-			},
+internal/app/service/router_service_test.go:739:			ModelGroups: []config.ModelGroupConfig{
+internal/app/service/router_service_test.go:740:				{ID: "weighted-group", Name: "Weighted", Strategy: "weighted", Enabled: true, Members: []config.ModelGroupMemberConfig{
+internal/app/service/router_service_test.go-741-					{ModelID: "model-a", Weight: 1, Enabled: true},
+internal/app/service/router_service_test.go-742-					{ModelID: "model-b", Weight: 1, Enabled: true},
+internal/app/service/router_service_test.go-743-				}},
+internal/app/service/router_service_test.go-744-			},
+internal/app/service/router_service_test.go-745-			Keys: []config.KeyConfig{
+internal/app/service/router_service_test.go-746-				{ID: "key-a", ProviderID: "openai", ModelID: "model-a", Value: "a-key", Status: "active", Priority: 1},
+internal/app/service/router_service_test.go-747-				{ID: "key-b", ProviderID: "openai", ModelID: "model-b", Value: "b-key", Status: "active", Priority: 1},
+internal/app/service/router_service_test.go-748-			},
+internal/app/service/router_service_test.go-749-		}
+internal/app/service/router_service_test.go-750-
+internal/app/service/router_service_test.go-751-		rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-752-		for range 5 {
+internal/app/service/router_service_test.go-753-			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"weighted-group","messages":[]}`))
+internal/app/service/router_service_test.go-754-			resp, err := rs.HandleChatCompletion(context.Background(), req)
+internal/app/service/router_service_test.go-755-			if err != nil {
+internal/app/service/router_service_test.go-756-				t.Fatalf("handle weighted group request failed: %v", err)
+internal/app/service/router_service_test.go-757-			}
+internal/app/service/router_service_test.go-758-			if resp.StatusCode != http.StatusOK {
+internal/app/service/router_service_test.go-759-				t.Errorf("expected 200, got %d", resp.StatusCode)
+internal/app/service/router_service_test.go-760-			}
+internal/app/service/router_service_test.go-761-			resp.Body.Close()
+internal/app/service/router_service_test.go-762-		}
+internal/app/service/router_service_test.go-763-
+internal/app/service/router_service_test.go-764-		if len(requests) != 5 {
+internal/app/service/router_service_test.go-765-			t.Fatalf("expected 5 routed requests, got %d", len(requests))
+internal/app/service/router_service_test.go-766-		}
+internal/app/service/router_service_test.go-767-		for _, r := range requests {
+internal/app/service/router_service_test.go-768-			if r != "model-a" && r != "model-b" {
+internal/app/service/router_service_test.go-769-				t.Errorf("routed to unexpected model %q", r)
+internal/app/service/router_service_test.go-770-			}
+internal/app/service/router_service_test.go-771-		}
+internal/app/service/router_service_test.go-772-	})
+internal/app/service/router_service_test.go-773-}
+internal/app/service/router_service_test.go-774-
+internal/app/service/router_service_test.go-775-func TestHandleChatCompletionPreservesCooldownWhenTotalAttemptsExhausted(t *testing.T) {
+internal/app/service/router_service_test.go-776-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+internal/app/service/router_service_test.go-777-		w.WriteHeader(http.StatusServiceUnavailable)
+internal/app/service/router_service_test.go-778-	}))
+internal/app/service/router_service_test.go-779-	defer server.Close()
+internal/app/service/router_service_test.go-780-
+internal/app/service/router_service_test.go-781-	cfg := singleKeyRetryConfig(server.URL + "/v1")
+internal/app/service/router_service_test.go-782-	cfg.Retry.MaxRetryPerKey = 5
+internal/app/service/router_service_test.go-783-	cfg.Retry.MaxTotalAttempts = 2
+internal/app/service/router_service_test.go-784-
+internal/app/service/router_service_test.go-785-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-786-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test-model","messages":[]}`))
+internal/app/service/router_service_test.go-787-
+internal/app/service/router_service_test.go-788-	_, err := rs.HandleChatCompletion(context.Background(), req)
+internal/app/service/router_service_test.go-789-	if err == nil {
+internal/app/service/router_service_test.go-790-		t.Fatal("expected error after total attempts exhausted")
+internal/app/service/router_service_test.go-791-	}
+internal/app/service/router_service_test.go-792-
+internal/app/service/router_service_test.go-793-	keys := rs.ListKeys()
+internal/app/service/router_service_test.go-794-	if len(keys) != 1 {
+internal/app/service/router_service_test.go-795-		t.Fatalf("expected 1 key, got %d", len(keys))
+internal/app/service/router_service_test.go-796-	}
+internal/app/service/router_service_test.go-797-	if keys[0].Status != domain.KeyStatusCooldown {
+internal/app/service/router_service_test.go-798-		t.Fatalf("expected key to be cooldown after total attempts exhausted, got status %s", keys[0].Status)
+internal/app/service/router_service_test.go-799-	}
+internal/app/service/router_service_test.go-800-	if keys[0].CooldownEnd == nil {
+internal/app/service/router_service_test.go-801-		t.Fatal("expected key to have cooldown set")
+internal/app/service/router_service_test.go-802-	}
+internal/app/service/router_service_test.go-803-}
+internal/app/service/router_service_test.go-804-
+internal/app/service/router_service_test.go-805-func singleKeyRetryConfig(baseURL string) *config.Config {
+internal/app/service/router_service_test.go-806-	return &config.Config{
+internal/app/service/router_service_test.go-807-		App:      config.AppConfig{Name: "test", LogLevel: "info"},
+internal/app/service/router_service_test.go-808-		Server:   config.ServerConfig{Host: "127.0.0.1", Port: 8787, ReadTimeoutSecond: 60, WriteTimeoutSecond: 300},
+internal/app/service/router_service_test.go-809-		Cooldown: config.CooldownConfig{RateLimitSeconds: 300, ServerErrorSeconds: 60, TimeoutSeconds: 60},
+internal/app/service/router_service_test.go-810-		Retry:    config.RetryConfig{MaxRetryPerKey: 1, MaxTotalAttempts: 3, BackoffMilliseconds: []int{10}},
+internal/app/service/router_service_test.go-811-		Providers: []config.ProviderConfig{
+internal/app/service/router_service_test.go-812-			{ID: "test-provider", Name: "Test", Type: "openai-compatible", BaseURL: baseURL, AuthType: "bearer", TimeoutSeconds: 5, Enabled: true},
+internal/app/service/router_service_test.go-813-		},
+internal/app/service/router_service_test.go-814-		Models: []config.ModelConfig{
+internal/app/service/router_service_test.go-815-			{ID: "test-model", ProviderID: "test-provider", ModelName: "test-model", Strategy: "failover", Enabled: true},
+internal/app/service/router_service_test.go-816-		},
+internal/app/service/router_service_test.go-817-		Keys: []config.KeyConfig{
+internal/app/service/router_service_test.go-818-			{ID: "test-key", ProviderID: "test-provider", ModelID: "test-model", Value: "test-secret", Status: "active", Priority: 1},
+internal/app/service/router_service_test.go-819-		},
+internal/app/service/router_service_test.go-820-	}
+internal/app/service/router_service_test.go-821-}
+internal/app/service/router_service_test.go-822-
+internal/app/service/router_service_test.go-823-func TestKeySuccess(t *testing.T) {
+internal/app/service/router_service_test.go-824-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+internal/app/service/router_service_test.go-825-		if r.URL.Path == "/v1/models" && r.Method == http.MethodGet {
+internal/app/service/router_service_test.go-826-			w.WriteHeader(http.StatusOK)
+internal/app/service/router_service_test.go-827-			return
+internal/app/service/router_service_test.go-828-		}
+internal/app/service/router_service_test.go-829-		w.WriteHeader(http.StatusNotFound)
+internal/app/service/router_service_test.go-830-	}))
+internal/app/service/router_service_test.go-831-	defer server.Close()
+internal/app/service/router_service_test.go-832-
+internal/app/service/router_service_test.go-833-	cfg := singleKeyRetryConfig(server.URL + "/v1")
+internal/app/service/router_service_test.go-834-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-835-
+internal/app/service/router_service_test.go-836-	if err := rs.TestKey(context.Background(), "test-key"); err != nil {
+internal/app/service/router_service_test.go-837-		t.Fatalf("TestKey failed: %v", err)
+internal/app/service/router_service_test.go-838-	}
+internal/app/service/router_service_test.go-839-}
+internal/app/service/router_service_test.go-840-
+internal/app/service/router_service_test.go-841-func TestKeyFailsOn401(t *testing.T) {
+internal/app/service/router_service_test.go-842-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+internal/app/service/router_service_test.go-843-		w.WriteHeader(http.StatusUnauthorized)
+internal/app/service/router_service_test.go-844-	}))
+internal/app/service/router_service_test.go-845-	defer server.Close()
+internal/app/service/router_service_test.go-846-
+internal/app/service/router_service_test.go-847-	cfg := singleKeyRetryConfig(server.URL + "/v1")
+internal/app/service/router_service_test.go-848-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-849-
+internal/app/service/router_service_test.go-850-	if err := rs.TestKey(context.Background(), "test-key"); err == nil {
+internal/app/service/router_service_test.go-851-		t.Fatal("TestKey should fail on 401")
+internal/app/service/router_service_test.go-852-	}
+internal/app/service/router_service_test.go-853-}
+internal/app/service/router_service_test.go-854-
+internal/app/service/router_service_test.go-855-func TestKeyUnknownKeyReturnsError(t *testing.T) {
+internal/app/service/router_service_test.go-856-	cfg := singleKeyRetryConfig("https://example.com/v1")
+internal/app/service/router_service_test.go-857-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-858-
+internal/app/service/router_service_test.go-859-	if err := rs.TestKey(context.Background(), "nonexistent-key"); err == nil {
+internal/app/service/router_service_test.go-860-		t.Fatal("TestKey should fail for unknown key")
+internal/app/service/router_service_test.go-861-	}
+internal/app/service/router_service_test.go-862-}
+internal/app/service/router_service_test.go-863-
+internal/app/service/router_service_test.go-864-func TestKeyBecomesLimitedOnDailyRequestLimit(t *testing.T) {
+internal/app/service/router_service_test.go-865-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+internal/app/service/router_service_test.go-866-		w.Header().Set("Content-Type", "application/json")
+internal/app/service/router_service_test.go-867-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`))
+internal/app/service/router_service_test.go-868-	}))
+internal/app/service/router_service_test.go-869-	defer ts.Close()
+internal/app/service/router_service_test.go-870-
+internal/app/service/router_service_test.go-871-	cfg := singleKeyRetryConfig(ts.URL + "/v1")
+internal/app/service/router_service_test.go-872-	cfg.Keys[0].DailyRequestLimit = 3
+internal/app/service/router_service_test.go-873-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-874-
+internal/app/service/router_service_test.go-875-	for i := 0; i < 4; i++ {
+internal/app/service/router_service_test.go-876-		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/chat/completions", bytes.NewReader([]byte(`{"model":"test-model","messages":[{"role":"user","content":"hi"}]}`)))
+internal/app/service/router_service_test.go-877-		resp, err := rs.HandleChatCompletion(context.Background(), req)
+internal/app/service/router_service_test.go-878-		if err != nil {
+internal/app/service/router_service_test.go-879-			if strings.Contains(err.Error(), "currently limited") {
+internal/app/service/router_service_test.go-880-				keys := rs.ListKeys()
+internal/app/service/router_service_test.go-881-				if len(keys) == 1 && keys[0].Status == domain.KeyStatusLimited {
+internal/app/service/router_service_test.go-882-					return
+internal/app/service/router_service_test.go-883-				}
+internal/app/service/router_service_test.go-884-				t.Fatalf("key should be limited but status is %s", keys[0].Status)
+internal/app/service/router_service_test.go-885-			}
+internal/app/service/router_service_test.go-886-			t.Fatalf("unexpected error: %v", err)
+internal/app/service/router_service_test.go-887-		}
+internal/app/service/router_service_test.go-888-		if resp != nil {
+internal/app/service/router_service_test.go-889-			resp.Body.Close()
+internal/app/service/router_service_test.go-890-		}
+internal/app/service/router_service_test.go-891-	}
+internal/app/service/router_service_test.go-892-	t.Fatalf("expected key to become limited after %d requests", cfg.Keys[0].DailyRequestLimit)
+internal/app/service/router_service_test.go-893-}
+internal/app/service/router_service_test.go-894-
+internal/app/service/router_service_test.go-895-func TestLimitedKeyNotSelected(t *testing.T) {
+internal/app/service/router_service_test.go-896-	cfg := config.Default()
+internal/app/service/router_service_test.go-897-	cfg.Providers[0].BaseURL = "https://example.com/v1"
+internal/app/service/router_service_test.go-898-	cfg.Keys = append(cfg.Keys, config.KeyConfig{
+internal/app/service/router_service_test.go-899-		ID: "key-2", ProviderID: "mimo", ModelID: "mimo-v2.5-pro",
+internal/app/service/router_service_test.go-900-		Value: "key2", Status: "active", Priority: 2,
+internal/app/service/router_service_test.go-901-	})
+internal/app/service/router_service_test.go-902-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-903-
+internal/app/service/router_service_test.go-904-	keys := rs.ListKeys()
+internal/app/service/router_service_test.go-905-	for i := range keys {
+internal/app/service/router_service_test.go-906-		if keys[i].ID == "key-2" {
+internal/app/service/router_service_test.go-907-			keys[i].Status = domain.KeyStatusLimited
+internal/app/service/router_service_test.go-908-			break
+internal/app/service/router_service_test.go-909-		}
+internal/app/service/router_service_test.go-910-	}
+internal/app/service/router_service_test.go-911-
+internal/app/service/router_service_test.go-912-	key, err := rs.SelectKey(context.Background(), "mimo-v2.5-pro")
+internal/app/service/router_service_test.go-913-	if err != nil {
+internal/app/service/router_service_test.go-914-		t.Fatalf("SelectKey should not return error when limited key exists: %v", err)
+internal/app/service/router_service_test.go-915-	}
+internal/app/service/router_service_test.go-916-	if key.ID == "key-2" {
+internal/app/service/router_service_test.go-917-		t.Fatal("SelectKey should not return limited key")
+internal/app/service/router_service_test.go-918-	}
+internal/app/service/router_service_test.go-919-	if key.ID != "mimo-key-1" {
+internal/app/service/router_service_test.go-920-		t.Fatalf("expected mimo-key-1, got %s", key.ID)
+--
+internal/app/service/router_service_test.go-1175-
+internal/app/service/router_service_test.go-1176-	models := rs.ListModels()
+internal/app/service/router_service_test.go-1177-	if models[0].ConcurrentCount != 0 {
+internal/app/service/router_service_test.go-1178-		t.Fatalf("expected model concurrency released, got %d", models[0].ConcurrentCount)
+internal/app/service/router_service_test.go-1179-	}
+internal/app/service/router_service_test.go-1180-}
+internal/app/service/router_service_test.go-1181-
+internal/app/service/router_service_test.go-1182-func groupRoutingConfig(baseURL string) *config.Config {
+internal/app/service/router_service_test.go-1183-	return &config.Config{
+internal/app/service/router_service_test.go-1184-		App:      config.AppConfig{Name: "modelmux", LogLevel: "info"},
+internal/app/service/router_service_test.go-1185-		Server:   config.ServerConfig{Host: "127.0.0.1", Port: 8787, ReadTimeoutSecond: 60, WriteTimeoutSecond: 300},
+internal/app/service/router_service_test.go-1186-		Cooldown: config.CooldownConfig{RateLimitSeconds: 300, ServerErrorSeconds: 60, TimeoutSeconds: 60},
+internal/app/service/router_service_test.go-1187-		Retry:    config.RetryConfig{MaxRetryPerKey: 1, MaxTotalAttempts: 5},
+internal/app/service/router_service_test.go-1188-		Providers: []config.ProviderConfig{
+internal/app/service/router_service_test.go-1189-			{ID: "openai", Name: "OpenAI", Type: "openai-compatible", BaseURL: baseURL, AuthType: "bearer", TimeoutSeconds: 5, Enabled: true},
+internal/app/service/router_service_test.go-1190-		},
+internal/app/service/router_service_test.go-1191-		Models: []config.ModelConfig{
+internal/app/service/router_service_test.go-1192-			{ID: "gpt-5.5-xhigh", ProviderID: "openai", ModelName: "gpt-5.5-xHigh", Strategy: "failover", Enabled: true},
+internal/app/service/router_service_test.go-1193-			{ID: "gpt-5.5-fast", ProviderID: "openai", ModelName: "gpt-5.5-fast", Strategy: "failover", Enabled: true},
+internal/app/service/router_service_test.go-1194-		},
+internal/app/service/router_service_test.go:1195:		ModelGroups: []config.ModelGroupConfig{
+internal/app/service/router_service_test.go:1196:			{ID: "high-price", Name: "High Price", Strategy: "failover", Enabled: true, Members: []config.ModelGroupMemberConfig{
+internal/app/service/router_service_test.go-1197-				{ModelID: "gpt-5.5-xhigh", Priority: 1, Weight: 1, Enabled: true},
+internal/app/service/router_service_test.go-1198-				{ModelID: "gpt-5.5-fast", Priority: 2, Weight: 1, Enabled: true},
+internal/app/service/router_service_test.go-1199-			}},
+internal/app/service/router_service_test.go-1200-		},
+internal/app/service/router_service_test.go-1201-		Keys: []config.KeyConfig{
+internal/app/service/router_service_test.go-1202-			{ID: "openai-xhigh-key-1", ProviderID: "openai", ModelID: "gpt-5.5-xhigh", Value: "xhigh-key", Status: "active", Priority: 1},
+internal/app/service/router_service_test.go-1203-			{ID: "openai-fast-key-1", ProviderID: "openai", ModelID: "gpt-5.5-fast", Value: "fast-key", Status: "active", Priority: 1},
+internal/app/service/router_service_test.go-1204-		},
+internal/app/service/router_service_test.go-1205-	}
+internal/app/service/router_service_test.go-1206-}
+internal/app/service/router_service_test.go-1207-
+internal/app/service/router_service_test.go-1208-func TestCapabilityBlocksCompletionsForChatOnly(t *testing.T) {
+internal/app/service/router_service_test.go-1209-	cfg := config.Default()
+internal/app/service/router_service_test.go-1210-	cfg.Providers[0].BaseURL = "https://example.com/v1"
+internal/app/service/router_service_test.go-1211-	cfg.Models[0].Capabilities = &config.ModelCapabilityConfig{}
+internal/app/service/router_service_test.go-1212-	f := false
+internal/app/service/router_service_test.go-1213-	cfg.Models[0].Capabilities.Completions = &f
+internal/app/service/router_service_test.go-1214-	cfg.Keys[0].Value = "test-key"
+internal/app/service/router_service_test.go-1215-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-1216-
+internal/app/service/router_service_test.go-1217-	req, _ := http.NewRequest(http.MethodPost, "/v1/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","prompt":"hello"}`)))
+internal/app/service/router_service_test.go-1218-	_, err := rs.HandleCompletion(context.Background(), req)
+internal/app/service/router_service_test.go-1219-	if err == nil {
+internal/app/service/router_service_test.go-1220-		t.Fatal("expected capability error for completions on chat-only model")
+internal/app/service/router_service_test.go-1221-	}
+internal/app/service/router_service_test.go-1222-}
+internal/app/service/router_service_test.go-1223-
+internal/app/service/router_service_test.go-1224-func TestCapabilityBlocksToolCalling(t *testing.T) {
+internal/app/service/router_service_test.go-1225-	cfg := config.Default()
+internal/app/service/router_service_test.go-1226-	cfg.Providers[0].BaseURL = "https://example.com/v1"
+internal/app/service/router_service_test.go-1227-	cfg.Models[0].Capabilities = &config.ModelCapabilityConfig{}
+internal/app/service/router_service_test.go-1228-	f := false
+internal/app/service/router_service_test.go-1229-	cfg.Models[0].Capabilities.Tools = &f
+internal/app/service/router_service_test.go-1230-	cfg.Keys[0].Value = "test-key"
+internal/app/service/router_service_test.go-1231-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-1232-
+internal/app/service/router_service_test.go-1233-	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"test"}}]}`)))
+internal/app/service/router_service_test.go-1234-	_, err := rs.HandleChatCompletion(context.Background(), req)
+internal/app/service/router_service_test.go-1235-	if err == nil {
+internal/app/service/router_service_test.go-1236-		t.Fatal("expected capability error for tools on non-tools model")
+internal/app/service/router_service_test.go-1237-	}
+internal/app/service/router_service_test.go-1238-}
+internal/app/service/router_service_test.go-1239-
+internal/app/service/router_service_test.go-1240-func TestCapabilityBlocksStreaming(t *testing.T) {
+internal/app/service/router_service_test.go-1241-	cfg := config.Default()
+internal/app/service/router_service_test.go-1242-	cfg.Providers[0].BaseURL = "https://example.com/v1"
+internal/app/service/router_service_test.go-1243-	cfg.Models[0].Capabilities = &config.ModelCapabilityConfig{}
+internal/app/service/router_service_test.go-1244-	f := false
+internal/app/service/router_service_test.go-1245-	cfg.Models[0].Capabilities.Streaming = &f
+internal/app/service/router_service_test.go-1246-	cfg.Keys[0].Value = "test-key"
+internal/app/service/router_service_test.go-1247-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-1248-
+internal/app/service/router_service_test.go-1249-	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi"}],"stream":true}`)))
+internal/app/service/router_service_test.go-1250-	_, err := rs.HandleChatCompletion(context.Background(), req)
+internal/app/service/router_service_test.go-1251-	if err == nil {
+internal/app/service/router_service_test.go-1252-		t.Fatal("expected capability error for streaming on non-streaming model")
+internal/app/service/router_service_test.go-1253-	}
+internal/app/service/router_service_test.go-1254-}
+internal/app/service/router_service_test.go-1255-
+internal/app/service/router_service_test.go-1256-func TestCapabilityDefaultAllowsBasicForOpenAI(t *testing.T) {
+internal/app/service/router_service_test.go-1257-	cfg := config.Default()
+internal/app/service/router_service_test.go-1258-	cfg.Providers[0].BaseURL = "https://example.com/v1"
+internal/app/service/router_service_test.go-1259-	cfg.Providers[0].Type = "openai-compatible"
+internal/app/service/router_service_test.go-1260-	cfg.Keys[0].Value = "test-key"
+internal/app/service/router_service_test.go-1261-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-1262-
+internal/app/service/router_service_test.go-1263-	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi"}],"stream":true}`)))
+internal/app/service/router_service_test.go-1264-	_, err := rs.HandleChatCompletion(context.Background(), req)
+internal/app/service/router_service_test.go-1265-	if err != nil {
+internal/app/service/router_service_test.go-1266-		t.Fatalf("expected openai default to allow chat+stream: %v", err)
+internal/app/service/router_service_test.go-1267-	}
+internal/app/service/router_service_test.go-1268-}
+internal/app/service/router_service_test.go-1269-
+internal/app/service/router_service_test.go-1270-func TestCapabilityOverrideAllowsTools(t *testing.T) {
+internal/app/service/router_service_test.go-1271-	cfg := config.Default()
+internal/app/service/router_service_test.go-1272-	cfg.Providers[0].BaseURL = "https://example.com/v1"
+internal/app/service/router_service_test.go-1273-	cfg.Models[0].Capabilities = &config.ModelCapabilityConfig{}
+internal/app/service/router_service_test.go-1274-	ft := true
+internal/app/service/router_service_test.go-1275-	cfg.Models[0].Capabilities.Tools = &ft
+internal/app/service/router_service_test.go-1276-	cfg.Keys[0].Value = "test-key"
+internal/app/service/router_service_test.go-1277-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-1278-
+internal/app/service/router_service_test.go-1279-	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"test"}}]}`)))
+internal/app/service/router_service_test.go-1280-	_, err := rs.HandleChatCompletion(context.Background(), req)
+internal/app/service/router_service_test.go-1281-	if err != nil {
+internal/app/service/router_service_test.go-1282-		t.Fatalf("expected tools override to allow tools: %v", err)
+internal/app/service/router_service_test.go-1283-	}
+internal/app/service/router_service_test.go-1284-}
+internal/app/service/router_service_test.go-1285-
+internal/app/service/router_service_test.go-1286-func TestCapabilityDefaultBlocksCompletionsForAnthropic(t *testing.T) {
+internal/app/service/router_service_test.go-1287-	cfg := config.Default()
+internal/app/service/router_service_test.go-1288-	cfg.Providers[0].BaseURL = "https://api.anthropic.com"
+internal/app/service/router_service_test.go-1289-	cfg.Providers[0].Type = "anthropic"
+internal/app/service/router_service_test.go-1290-	cfg.Keys[0].Value = "test-key"
+internal/app/service/router_service_test.go-1291-	f := false
+internal/app/service/router_service_test.go-1292-	cfg.Models[0].Capabilities = &config.ModelCapabilityConfig{Streaming: &f}
+internal/app/service/router_service_test.go-1293-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-1294-
+internal/app/service/router_service_test.go-1295-	req, _ := http.NewRequest(http.MethodPost, "/v1/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","prompt":"hello"}`)))
+internal/app/service/router_service_test.go-1296-	_, err := rs.HandleCompletion(context.Background(), req)
+internal/app/service/router_service_test.go-1297-	if err == nil {
+internal/app/service/router_service_test.go-1298-		t.Fatal("expected anthropic default to block completions")
+internal/app/service/router_service_test.go-1299-	}
+internal/app/service/router_service_test.go-1300-}
+internal/app/service/router_service_test.go-1301-
+internal/app/service/router_service_test.go-1302-func TestLeastUsedStrategyPicksLowestDailyCount(t *testing.T) {
+internal/app/service/router_service_test.go-1303-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+internal/app/service/router_service_test.go-1304-		w.Header().Set("Content-Type", "application/json")
+internal/app/service/router_service_test.go-1305-		w.WriteHeader(http.StatusOK)
+internal/app/service/router_service_test.go-1306-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+internal/app/service/router_service_test.go-1307-	}))
+internal/app/service/router_service_test.go-1308-	defer ts.Close()
+internal/app/service/router_service_test.go-1309-
+internal/app/service/router_service_test.go-1310-	cfg := config.Default()
+internal/app/service/router_service_test.go-1311-	cfg.Providers[0].BaseURL = ts.URL + "/v1"
+internal/app/service/router_service_test.go-1312-	cfg.Models[0].Strategy = "least_used"
+internal/app/service/router_service_test.go-1313-	cfg.Keys = []config.KeyConfig{
+internal/app/service/router_service_test.go-1314-		{ID: "ka", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "a", Status: "active", Priority: 1},
+internal/app/service/router_service_test.go-1315-		{ID: "kb", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "b", Status: "active", Priority: 2},
+internal/app/service/router_service_test.go-1316-		{ID: "kc", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "c", Status: "active", Priority: 3},
+internal/app/service/router_service_test.go-1317-	}
+internal/app/service/router_service_test.go-1318-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-1319-
+internal/app/service/router_service_test.go-1320-	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi"}]}`)))
+internal/app/service/router_service_test.go-1321-	resp, _ := rs.HandleChatCompletion(context.Background(), req)
+internal/app/service/router_service_test.go-1322-	if resp != nil {
+internal/app/service/router_service_test.go-1323-		resp.Body.Close()
+internal/app/service/router_service_test.go-1324-	}
+internal/app/service/router_service_test.go-1325-
+internal/app/service/router_service_test.go-1326-	keys := rs.ListKeys()
+internal/app/service/router_service_test.go-1327-	if keys[0].DailyRequestCount != 1 {
+internal/app/service/router_service_test.go-1328-		t.Fatalf("expected key ka (lowest priority) to be picked first, got counts: %d/%d/%d", keys[0].DailyRequestCount, keys[1].DailyRequestCount, keys[2].DailyRequestCount)
+internal/app/service/router_service_test.go-1329-	}
+internal/app/service/router_service_test.go-1330-}
+internal/app/service/router_service_test.go-1331-
+internal/app/service/router_service_test.go-1332-func TestModelRequestsPerMinuteBlocksRequests(t *testing.T) {
+internal/app/service/router_service_test.go-1333-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+internal/app/service/router_service_test.go-1334-		w.Header().Set("Content-Type", "application/json")
+internal/app/service/router_service_test.go-1335-		w.WriteHeader(http.StatusOK)
+internal/app/service/router_service_test.go-1336-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+internal/app/service/router_service_test.go-1337-	}))
+internal/app/service/router_service_test.go-1338-	defer ts.Close()
+internal/app/service/router_service_test.go-1339-
+internal/app/service/router_service_test.go-1340-	cfg := config.Default()
+internal/app/service/router_service_test.go-1341-	cfg.Providers[0].BaseURL = ts.URL + "/v1"
+internal/app/service/router_service_test.go-1342-	cfg.Models[0].RequestsPerMinute = 1
+internal/app/service/router_service_test.go-1343-	cfg.Keys = []config.KeyConfig{
+internal/app/service/router_service_test.go-1344-		{ID: "k1", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "v1", Status: "active", Priority: 1},
+internal/app/service/router_service_test.go-1345-		{ID: "k2", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "v2", Status: "active", Priority: 2},
+internal/app/service/router_service_test.go-1346-	}
+internal/app/service/router_service_test.go-1347-	rs, _ := NewRouterService(cfg)
+internal/app/service/router_service_test.go-1348-
+internal/app/service/router_service_test.go-1349-	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi"}]}`)))
+internal/app/service/router_service_test.go-1350-	resp, err := rs.HandleChatCompletion(context.Background(), req)
+internal/app/service/router_service_test.go-1351-	if err != nil {
+internal/app/service/router_service_test.go-1352-		t.Fatalf("first request failed: %v", err)
+internal/app/service/router_service_test.go-1353-	}
+internal/app/service/router_service_test.go-1354-	resp.Body.Close()
+internal/app/service/router_service_test.go-1355-
+internal/app/service/router_service_test.go-1356-	req2, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"hi2"}]}`)))
+internal/app/service/router_service_test.go-1357-	_, err2 := rs.HandleChatCompletion(context.Background(), req2)
+internal/app/service/router_service_test.go-1358-	if err2 == nil {
+internal/app/service/router_service_test.go-1359-		t.Fatal("expected 429 for model rpm limit")
+internal/app/service/router_service_test.go-1360-	}
+internal/app/service/router_service_test.go-1361-
+internal/app/service/router_service_test.go-1362-	models := rs.ListModels()
+internal/app/service/router_service_test.go-1363-	if models[0].MinuteRequestCount != 1 {
+internal/app/service/router_service_test.go-1364-		t.Fatalf("expected 1 rpm count, got %d", models[0].MinuteRequestCount)
+internal/app/service/router_service_test.go-1365-	}
+internal/app/service/router_service_test.go-1366-}
+internal/app/service/router_service_test.go-1367-
+internal/app/service/router_service_test.go-1368-func TestKeyConcurrencyAcquireChecked(t *testing.T) {
+internal/app/service/router_service_test.go-1369-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+internal/app/service/router_service_test.go-1370-		w.Header().Set("Content-Type", "application/json")
+internal/app/service/router_service_test.go-1371-		w.WriteHeader(http.StatusOK)
+internal/app/service/router_service_test.go-1372-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+internal/app/service/router_service_test.go-1373-	}))
+internal/app/service/router_service_test.go-1374-	defer ts.Close()
+internal/app/service/router_service_test.go-1375-
+internal/app/service/router_service_test.go-1376-	cfg := config.Default()
+--
+internal/adapter/httpserver/handlers_test.go-242-	src.Set("Connection", "X-Provider-Internal, keep-alive")
+internal/adapter/httpserver/handlers_test.go-243-	src.Set("Keep-Alive", "timeout=5")
+internal/adapter/httpserver/handlers_test.go-244-	src.Set("Transfer-Encoding", "chunked")
+internal/adapter/httpserver/handlers_test.go-245-	src.Set("Content-Length", "123")
+internal/adapter/httpserver/handlers_test.go-246-	src.Set("X-Provider-Internal", "secret")
+internal/adapter/httpserver/handlers_test.go-247-	src.Set("X-Request-Provider", "upstream")
+internal/adapter/httpserver/handlers_test.go-248-
+internal/adapter/httpserver/handlers_test.go-249-	dst := http.Header{}
+internal/adapter/httpserver/handlers_test.go-250-	copyProxyHeaders(dst, src)
+internal/adapter/httpserver/handlers_test.go-251-
+internal/adapter/httpserver/handlers_test.go-252-	for _, header := range []string{"Connection", "Keep-Alive", "Transfer-Encoding", "Content-Length", "X-Provider-Internal"} {
+internal/adapter/httpserver/handlers_test.go-253-		if dst.Get(header) != "" {
+internal/adapter/httpserver/handlers_test.go-254-			t.Fatalf("expected %s to be dropped, got %q", header, dst.Get(header))
+internal/adapter/httpserver/handlers_test.go-255-		}
+internal/adapter/httpserver/handlers_test.go-256-	}
+internal/adapter/httpserver/handlers_test.go-257-	if got := dst.Get("X-Request-Provider"); got != "upstream" {
+internal/adapter/httpserver/handlers_test.go-258-		t.Fatalf("expected end-to-end header to be copied, got %q", got)
+internal/adapter/httpserver/handlers_test.go-259-	}
+internal/adapter/httpserver/handlers_test.go-260-}
+internal/adapter/httpserver/handlers_test.go-261-
+internal/adapter/httpserver/handlers_test.go:262:func TestModelsIncludesModelGroups(t *testing.T) {
+internal/adapter/httpserver/handlers_test.go-263-	cfg := config.Default()
+internal/adapter/httpserver/handlers_test.go-264-	rs, _ := service.NewRouterService(cfg)
+internal/adapter/httpserver/handlers_test.go-265-	srv := New(rs, cfg)
+internal/adapter/httpserver/handlers_test.go-266-
+internal/adapter/httpserver/handlers_test.go-267-	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+internal/adapter/httpserver/handlers_test.go-268-	rec := httptest.NewRecorder()
+internal/adapter/httpserver/handlers_test.go-269-	srv.modelsHandler(rec, req)
+internal/adapter/httpserver/handlers_test.go-270-
+internal/adapter/httpserver/handlers_test.go-271-	body := rec.Body.String()
+internal/adapter/httpserver/handlers_test.go-272-	if !strings.Contains(body, "high-price") {
+internal/adapter/httpserver/handlers_test.go-273-		t.Fatalf("models endpoint missing group id: %s", body)
+internal/adapter/httpserver/handlers_test.go-274-	}
+internal/adapter/httpserver/handlers_test.go-275-}
+internal/adapter/httpserver/handlers_test.go-276-
+internal/adapter/httpserver/handlers_test.go-277-func TestChatReturns400ForInvalidJSON(t *testing.T) {
+internal/adapter/httpserver/handlers_test.go-278-	cfg := config.Default()
+internal/adapter/httpserver/handlers_test.go-279-	rs, _ := service.NewRouterService(cfg)
+internal/adapter/httpserver/handlers_test.go-280-	srv := New(rs, cfg)
+internal/adapter/httpserver/handlers_test.go-281-
+internal/adapter/httpserver/handlers_test.go-282-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`not json`))
+internal/adapter/httpserver/handlers_test.go-283-	rec := httptest.NewRecorder()
+internal/adapter/httpserver/handlers_test.go-284-	srv.chatCompletionsHandler(rec, req)
+internal/adapter/httpserver/handlers_test.go-285-
+internal/adapter/httpserver/handlers_test.go-286-	if rec.Code != http.StatusBadRequest {
+internal/adapter/httpserver/handlers_test.go-287-		t.Fatalf("expected 400 for invalid JSON, got %d: %s", rec.Code, rec.Body.String())
+internal/adapter/httpserver/handlers_test.go-288-	}
+internal/adapter/httpserver/handlers_test.go-289-}
+internal/adapter/httpserver/handlers_test.go-290-
+internal/adapter/httpserver/handlers_test.go-291-func TestChatReturns404ForUnknownModel(t *testing.T) {
+internal/adapter/httpserver/handlers_test.go-292-	cfg := config.Default()
+internal/adapter/httpserver/handlers_test.go-293-	rs, _ := service.NewRouterService(cfg)
+internal/adapter/httpserver/handlers_test.go-294-	srv := New(rs, cfg)
+internal/adapter/httpserver/handlers_test.go-295-
+internal/adapter/httpserver/handlers_test.go-296-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"not-exists","messages":[]}`))
+internal/adapter/httpserver/handlers_test.go-297-	rec := httptest.NewRecorder()
+internal/adapter/httpserver/handlers_test.go-298-	srv.chatCompletionsHandler(rec, req)
+internal/adapter/httpserver/handlers_test.go-299-
+internal/adapter/httpserver/handlers_test.go-300-	if rec.Code != http.StatusNotFound {
+internal/adapter/httpserver/handlers_test.go-301-		t.Fatalf("expected 404 for unknown model, got %d: %s", rec.Code, rec.Body.String())
+internal/adapter/httpserver/handlers_test.go-302-	}
+internal/adapter/httpserver/handlers_test.go-303-}
+internal/adapter/httpserver/handlers_test.go-304-
+internal/adapter/httpserver/handlers_test.go-305-func TestChatReturns403ForDisabledModel(t *testing.T) {
+internal/adapter/httpserver/handlers_test.go-306-	cfg := config.Default()
+internal/adapter/httpserver/handlers_test.go-307-	cfg.Models[0].Enabled = false
+internal/adapter/httpserver/handlers_test.go-308-	rs, _ := service.NewRouterService(cfg)
+internal/adapter/httpserver/handlers_test.go-309-	srv := New(rs, cfg)
+internal/adapter/httpserver/handlers_test.go-310-
+internal/adapter/httpserver/handlers_test.go-311-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"mimo-v2.5-pro","messages":[]}`))
+internal/adapter/httpserver/handlers_test.go-312-	rec := httptest.NewRecorder()
+internal/adapter/httpserver/handlers_test.go-313-	srv.chatCompletionsHandler(rec, req)
+internal/adapter/httpserver/handlers_test.go-314-
+internal/adapter/httpserver/handlers_test.go-315-	if rec.Code != http.StatusForbidden {
+internal/adapter/httpserver/handlers_test.go-316-		t.Fatalf("expected 403 for disabled model, got %d: %s", rec.Code, rec.Body.String())
+internal/adapter/httpserver/handlers_test.go-317-	}
+internal/adapter/httpserver/handlers_test.go-318-}
+internal/adapter/httpserver/handlers_test.go-319-
+internal/adapter/httpserver/handlers_test.go-320-func TestChatReturnsErrorForLargeRequestBody(t *testing.T) {
+internal/adapter/httpserver/handlers_test.go-321-	cfg := config.Default()
+internal/adapter/httpserver/handlers_test.go-322-	cfg.Server.MaxRequestBodyMB = 1
+internal/adapter/httpserver/handlers_test.go-323-	rs, _ := service.NewRouterService(cfg)
+internal/adapter/httpserver/handlers_test.go-324-	srv := New(rs, cfg)
+internal/adapter/httpserver/handlers_test.go-325-
+internal/adapter/httpserver/handlers_test.go-326-	largeBody := strings.Repeat("x", 2*1024*1024)
+internal/adapter/httpserver/handlers_test.go-327-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(largeBody))
+internal/adapter/httpserver/handlers_test.go-328-	rec := httptest.NewRecorder()
+internal/adapter/httpserver/handlers_test.go-329-	srv.chatCompletionsHandler(rec, req)
+internal/adapter/httpserver/handlers_test.go-330-
+internal/adapter/httpserver/handlers_test.go-331-	if rec.Code < 400 {
+internal/adapter/httpserver/handlers_test.go-332-		t.Fatalf("expected error for oversized body, got %d", rec.Code)
+internal/adapter/httpserver/handlers_test.go-333-	}
+internal/adapter/httpserver/handlers_test.go-334-}
+internal/adapter/httpserver/handlers_test.go-335-
+internal/adapter/httpserver/handlers_test.go-336-func TestCopyWithFlushForwardsChunks(t *testing.T) {
+internal/adapter/httpserver/handlers_test.go-337-	body := "data: hello\n\ndata: world\n\n"
+internal/adapter/httpserver/handlers_test.go-338-	rec := httptest.NewRecorder()
+internal/adapter/httpserver/handlers_test.go-339-	err := copyWithFlush(rec, io.NopCloser(strings.NewReader(body)))
+internal/adapter/httpserver/handlers_test.go-340-	if err != nil {
+internal/adapter/httpserver/handlers_test.go-341-		t.Fatalf("copyWithFlush failed: %v", err)
+internal/adapter/httpserver/handlers_test.go-342-	}
+internal/adapter/httpserver/handlers_test.go-343-	if rec.Body.String() != body {
+internal/adapter/httpserver/handlers_test.go-344-		t.Fatalf("expected body %q, got %q", body, rec.Body.String())
+internal/adapter/httpserver/handlers_test.go-345-	}
+internal/adapter/httpserver/handlers_test.go-346-}
+internal/adapter/httpserver/handlers_test.go-347-
+internal/adapter/httpserver/handlers_test.go-348-func TestCopyWithFlushHandlesEmptyStream(t *testing.T) {
+internal/adapter/httpserver/handlers_test.go-349-	rec := httptest.NewRecorder()
+internal/adapter/httpserver/handlers_test.go-350-	err := copyWithFlush(rec, io.NopCloser(strings.NewReader("")))
+internal/adapter/httpserver/handlers_test.go-351-	if err != nil {
+internal/adapter/httpserver/handlers_test.go-352-		t.Fatalf("copyWithFlush failed: %v", err)
+internal/adapter/httpserver/handlers_test.go-353-	}
+internal/adapter/httpserver/handlers_test.go-354-	if rec.Body.String() != "" {
+internal/adapter/httpserver/handlers_test.go-355-		t.Fatalf("expected empty body, got %q", rec.Body.String())
+internal/adapter/httpserver/handlers_test.go-356-	}
+internal/adapter/httpserver/handlers_test.go-357-}
+internal/adapter/httpserver/handlers_test.go-358-
+internal/adapter/httpserver/handlers_test.go-359-func TestCompletionsReturns400ForInvalidJSON(t *testing.T) {
+internal/adapter/httpserver/handlers_test.go-360-	cfg := config.Default()
+internal/adapter/httpserver/handlers_test.go-361-	rs, _ := service.NewRouterService(cfg)
+internal/adapter/httpserver/handlers_test.go-362-	srv := New(rs, cfg)
+internal/adapter/httpserver/handlers_test.go-363-
+internal/adapter/httpserver/handlers_test.go-364-	req := httptest.NewRequest(http.MethodPost, "/v1/completions", strings.NewReader(`not json`))
+internal/adapter/httpserver/handlers_test.go-365-	rec := httptest.NewRecorder()
+internal/adapter/httpserver/handlers_test.go-366-	srv.completionsHandler(rec, req)
+internal/adapter/httpserver/handlers_test.go-367-
+internal/adapter/httpserver/handlers_test.go-368-	if rec.Code != http.StatusBadRequest {
+internal/adapter/httpserver/handlers_test.go-369-		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+internal/adapter/httpserver/handlers_test.go-370-	}
+internal/adapter/httpserver/handlers_test.go-371-}
+internal/adapter/httpserver/handlers_test.go-372-
+internal/adapter/httpserver/handlers_test.go-373-func TestCompletionsRoutesToCorrectEndpoint(t *testing.T) {
+internal/adapter/httpserver/handlers_test.go-374-	var gotPath string
+internal/adapter/httpserver/handlers_test.go-375-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+internal/adapter/httpserver/handlers_test.go-376-		gotPath = r.URL.Path
+internal/adapter/httpserver/handlers_test.go-377-		w.WriteHeader(http.StatusOK)
+internal/adapter/httpserver/handlers_test.go-378-	}))
+internal/adapter/httpserver/handlers_test.go-379-	defer server.Close()
+internal/adapter/httpserver/handlers_test.go-380-
+internal/adapter/httpserver/handlers_test.go-381-	cfg := config.Default()
+internal/adapter/httpserver/handlers_test.go-382-	cfg.Providers[0].BaseURL = server.URL + "/v1"
+internal/adapter/httpserver/handlers_test.go-383-	cfg.Models[0].ModelName = cfg.Models[0].ID
+internal/adapter/httpserver/handlers_test.go-384-	rs, _ := service.NewRouterService(cfg)
+internal/adapter/httpserver/handlers_test.go-385-	srv := New(rs, cfg)
+internal/adapter/httpserver/handlers_test.go-386-
+internal/adapter/httpserver/handlers_test.go-387-	req := httptest.NewRequest(http.MethodPost, "/v1/completions", strings.NewReader(`{"model":"mimo-v2.5-pro","prompt":"hello"}`))
+internal/adapter/httpserver/handlers_test.go-388-	rec := httptest.NewRecorder()
+internal/adapter/httpserver/handlers_test.go-389-	srv.completionsHandler(rec, req)
+internal/adapter/httpserver/handlers_test.go-390-
+internal/adapter/httpserver/handlers_test.go-391-	if rec.Code != http.StatusOK {
+internal/adapter/httpserver/handlers_test.go-392-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+internal/adapter/httpserver/handlers_test.go-393-	}
+internal/adapter/httpserver/handlers_test.go-394-	if gotPath != "/v1/completions" {
+internal/adapter/httpserver/handlers_test.go-395-		t.Fatalf("expected upstream path /v1/completions, got %s", gotPath)
+internal/adapter/httpserver/handlers_test.go-396-	}
+internal/adapter/httpserver/handlers_test.go-397-}
+internal/adapter/httpserver/handlers_test.go-398-
+internal/adapter/httpserver/handlers_test.go-399-func TestChatSSEForwardsChunksAndHeaders(t *testing.T) {
+internal/adapter/httpserver/handlers_test.go-400-	sseBody := "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" World\"}}]}\n\ndata: [DONE]\n\n"
+internal/adapter/httpserver/handlers_test.go-401-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+internal/adapter/httpserver/handlers_test.go-402-		w.Header().Set("Content-Type", "text/event-stream")
+internal/adapter/httpserver/handlers_test.go-403-		w.Header().Set("Cache-Control", "no-cache")
+internal/adapter/httpserver/handlers_test.go-404-		w.WriteHeader(http.StatusOK)
+internal/adapter/httpserver/handlers_test.go-405-		w.Write([]byte(sseBody))
+internal/adapter/httpserver/handlers_test.go-406-	}))
+internal/adapter/httpserver/handlers_test.go-407-	defer server.Close()
+internal/adapter/httpserver/handlers_test.go-408-
+internal/adapter/httpserver/handlers_test.go-409-	cfg := config.Default()
+internal/adapter/httpserver/handlers_test.go-410-	cfg.Providers[0].BaseURL = server.URL + "/v1"
+internal/adapter/httpserver/handlers_test.go-411-	cfg.Models[0].ModelName = cfg.Models[0].ID
+internal/adapter/httpserver/handlers_test.go-412-	rs, _ := service.NewRouterService(cfg)
+internal/adapter/httpserver/handlers_test.go-413-	srv := New(rs, cfg)
+internal/adapter/httpserver/handlers_test.go-414-
+internal/adapter/httpserver/handlers_test.go-415-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"mimo-v2.5-pro","messages":[],"stream":true}`))
+internal/adapter/httpserver/handlers_test.go-416-	rec := httptest.NewRecorder()
+internal/adapter/httpserver/handlers_test.go-417-	srv.chatCompletionsHandler(rec, req)
+internal/adapter/httpserver/handlers_test.go-418-
+internal/adapter/httpserver/handlers_test.go-419-	if rec.Code != http.StatusOK {
+internal/adapter/httpserver/handlers_test.go-420-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+internal/adapter/httpserver/handlers_test.go-421-	}
+internal/adapter/httpserver/handlers_test.go-422-	ct := rec.Header().Get("Content-Type")
+internal/adapter/httpserver/handlers_test.go-423-	if ct != "text/event-stream" {
+internal/adapter/httpserver/handlers_test.go-424-		t.Fatalf("expected Content-Type text/event-stream, got %s", ct)
+internal/adapter/httpserver/handlers_test.go-425-	}
+internal/adapter/httpserver/handlers_test.go-426-	if rec.Body.String() != sseBody {
+internal/adapter/httpserver/handlers_test.go-427-		t.Fatalf("expected SSE body %q, got %q", sseBody, rec.Body.String())
+internal/adapter/httpserver/handlers_test.go-428-	}
+internal/adapter/httpserver/handlers_test.go-429-	if strings.Contains(rec.Body.String(), "DONE") {
+internal/adapter/httpserver/handlers_test.go-430-		t.Log("SSE [DONE] marker forwarded successfully")
+internal/adapter/httpserver/handlers_test.go-431-	}
+internal/adapter/httpserver/handlers_test.go-432-}
+internal/adapter/httpserver/handlers_test.go-433-
+internal/adapter/httpserver/handlers_test.go-434-func TestChatSSEDeliversChunksBeforeStreamEnds(t *testing.T) {
+internal/adapter/httpserver/handlers_test.go-435-	firstChunkSent := make(chan struct{})
+internal/adapter/httpserver/handlers_test.go-436-	allowRest := make(chan struct{})
+internal/adapter/httpserver/handlers_test.go-437-	doneSent := make(chan struct{})
+internal/adapter/httpserver/handlers_test.go-438-
+internal/adapter/httpserver/handlers_test.go-439-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+internal/adapter/httpserver/handlers_test.go-440-		flusher, ok := w.(http.Flusher)
+internal/adapter/httpserver/handlers_test.go-441-		if !ok {
+internal/adapter/httpserver/handlers_test.go-442-			t.Fatal("upstream must support Flusher")
+--
+internal/config/config_test.go-1-package config
+internal/config/config_test.go-2-
+internal/config/config_test.go-3-import (
+internal/config/config_test.go-4-	"os"
+internal/config/config_test.go-5-	"path/filepath"
+internal/config/config_test.go-6-	"strings"
+internal/config/config_test.go-7-	"testing"
+internal/config/config_test.go-8-)
+internal/config/config_test.go-9-
+internal/config/config_test.go-10-func TestDefaultConfigValid(t *testing.T) {
+internal/config/config_test.go-11-	if err := Default().Validate(); err != nil {
+internal/config/config_test.go-12-		t.Fatalf("default config should be valid: %v", err)
+internal/config/config_test.go-13-	}
+internal/config/config_test.go-14-}
+internal/config/config_test.go-15-
+internal/config/config_test.go-16-func setDefaultAdminToken(t *testing.T) {
+internal/config/config_test.go-17-	t.Helper()
+internal/config/config_test.go-18-	t.Setenv("MODELMUX_AUTH_TOKEN", "admin-token")
+internal/config/config_test.go-19-}
+internal/config/config_test.go-20-
+internal/config/config_test.go:21:func TestValidateRejectsModelGroupIDConflict(t *testing.T) {
+internal/config/config_test.go-22-	cfg := Default()
+internal/config/config_test.go:23:	cfg.ModelGroups[0].ID = cfg.Models[0].ID
+internal/config/config_test.go-24-	if err := cfg.Validate(); err == nil {
+internal/config/config_test.go-25-		t.Fatal("expected model group id conflict error")
+internal/config/config_test.go-26-	}
+internal/config/config_test.go-27-}
+internal/config/config_test.go-28-
+internal/config/config_test.go:29:func TestValidateRejectsUnknownModelGroupMember(t *testing.T) {
+internal/config/config_test.go-30-	cfg := Default()
+internal/config/config_test.go:31:	cfg.ModelGroups[0].Members[0].ModelID = "missing-model"
+internal/config/config_test.go-32-	if err := cfg.Validate(); err == nil {
+internal/config/config_test.go-33-		t.Fatal("expected unknown model group member error")
+internal/config/config_test.go-34-	}
+internal/config/config_test.go-35-}
+internal/config/config_test.go-36-
+internal/config/config_test.go:37:func TestValidateAllowsKeyModelGroupMember(t *testing.T) {
+internal/config/config_test.go-38-	cfg := Default()
+internal/config/config_test.go:39:	cfg.ModelGroups[0].Members = []ModelGroupMemberConfig{{KeyID: "mimo-key-1", Priority: 1, Weight: 1, Enabled: true}}
+internal/config/config_test.go-40-	if err := cfg.Validate(); err != nil {
+internal/config/config_test.go-41-		t.Fatalf("key group member should be valid: %v", err)
+internal/config/config_test.go-42-	}
+internal/config/config_test.go-43-}
+internal/config/config_test.go-44-
+internal/config/config_test.go-45-func TestValidateAllowsMixedModelAndKeyGroupMembers(t *testing.T) {
+internal/config/config_test.go-46-	cfg := Default()
+internal/config/config_test.go-47-	cfg.Keys = append(cfg.Keys, KeyConfig{ID: "mimo-key-2", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "key-2", Status: "active", Priority: 2})
+internal/config/config_test.go:48:	cfg.ModelGroups[0].Members = []ModelGroupMemberConfig{
+internal/config/config_test.go-49-		{ModelID: "mimo-v2.5-pro", Priority: 1, Weight: 1, Enabled: true},
+internal/config/config_test.go-50-		{KeyID: "mimo-key-2", Priority: 2, Weight: 1, Enabled: true},
+internal/config/config_test.go-51-	}
+internal/config/config_test.go-52-	if err := cfg.Validate(); err != nil {
+internal/config/config_test.go-53-		t.Fatalf("mixed model/key group members should be valid: %v", err)
+internal/config/config_test.go-54-	}
+internal/config/config_test.go-55-}
+internal/config/config_test.go-56-
+internal/config/config_test.go:57:func TestValidateRejectsAmbiguousModelGroupMember(t *testing.T) {
+internal/config/config_test.go-58-	cfg := Default()
+internal/config/config_test.go:59:	cfg.ModelGroups[0].Members = []ModelGroupMemberConfig{{ModelID: "mimo-v2.5-pro", KeyID: "mimo-key-1", Priority: 1, Weight: 1, Enabled: true}}
+internal/config/config_test.go-60-	if err := cfg.Validate(); err == nil {
+internal/config/config_test.go-61-		t.Fatal("expected ambiguous group member error")
+internal/config/config_test.go-62-	}
+internal/config/config_test.go-63-}
+internal/config/config_test.go-64-
+internal/config/config_test.go-65-func TestValidateRejectsUnknownKeyGroupMember(t *testing.T) {
+internal/config/config_test.go-66-	cfg := Default()
+internal/config/config_test.go:67:	cfg.ModelGroups[0].Members = []ModelGroupMemberConfig{{KeyID: "missing-key", Priority: 1, Weight: 1, Enabled: true}}
+internal/config/config_test.go-68-	if err := cfg.Validate(); err == nil {
+internal/config/config_test.go-69-		t.Fatal("expected unknown key group member error")
+internal/config/config_test.go-70-	}
+internal/config/config_test.go-71-}
+internal/config/config_test.go-72-
+internal/config/config_test.go:73:func TestValidateAllowsDisabledEmptyModelGroup(t *testing.T) {
+internal/config/config_test.go-74-	cfg := Default()
+internal/config/config_test.go:75:	cfg.ModelGroups[0].Enabled = false
+internal/config/config_test.go:76:	cfg.ModelGroups[0].Members = nil
+internal/config/config_test.go-77-	if err := cfg.Validate(); err != nil {
+internal/config/config_test.go-78-		t.Fatalf("disabled empty group should be valid: %v", err)
+internal/config/config_test.go-79-	}
+internal/config/config_test.go-80-}
+internal/config/config_test.go-81-
+internal/config/config_test.go-82-func TestValidateRejectsKeyWithoutValue(t *testing.T) {
+internal/config/config_test.go-83-	cfg := Default()
+internal/config/config_test.go-84-	cfg.Keys[0].Value = ""
+internal/config/config_test.go-85-	cfg.Keys[0].ValueEnv = ""
+internal/config/config_test.go-86-	if err := cfg.Validate(); err == nil {
+internal/config/config_test.go-87-		t.Fatal("expected missing key value error")
+internal/config/config_test.go-88-	}
+internal/config/config_test.go-89-}
+internal/config/config_test.go-90-
+internal/config/config_test.go-91-func TestSaveDoesNotPersistResolvedEnvSecret(t *testing.T) {
+internal/config/config_test.go-92-	setDefaultAdminToken(t)
+internal/config/config_test.go-93-
+internal/config/config_test.go-94-	cfg := Default()
+internal/config/config_test.go-95-	cfg.Keys[0].Value = ""
+internal/config/config_test.go-96-	cfg.Keys[0].ValueEnv = "MUX_TEST_SECRET"
+internal/config/config_test.go-97-	t.Setenv("MUX_TEST_SECRET", "super-secret-token")
+internal/config/config_test.go-98-
+internal/config/config_test.go-99-	if err := cfg.ResolveSecrets(); err != nil {
+internal/config/config_test.go-100-		t.Fatalf("resolve secrets failed: %v", err)
+internal/config/config_test.go-101-	}
+internal/config/config_test.go-102-	if cfg.Keys[0].Value != "" {
+internal/config/config_test.go-103-		t.Fatal("expected Value to remain empty after ResolveSecrets")
+internal/config/config_test.go-104-	}
+internal/config/config_test.go-105-
+internal/config/config_test.go-106-	dir := t.TempDir()
+internal/config/config_test.go-107-	path := filepath.Join(dir, "config.yaml")
+internal/config/config_test.go-108-
+internal/config/config_test.go-109-	if err := Save(path, cfg); err != nil {
+internal/config/config_test.go-110-		t.Fatalf("save failed: %v", err)
+internal/config/config_test.go-111-	}
+internal/config/config_test.go-112-
+internal/config/config_test.go-113-	data, err := os.ReadFile(path)
+internal/config/config_test.go-114-	if err != nil {
+internal/config/config_test.go-115-		t.Fatalf("read saved config failed: %v", err)
+internal/config/config_test.go-116-	}
+internal/config/config_test.go-117-	saved := string(data)
+internal/config/config_test.go-118-	if saved == "" {
+internal/config/config_test.go-119-		t.Fatal("saved config is empty")
+internal/config/config_test.go-120-	}
+internal/config/config_test.go-121-	if strings.Contains(saved, "super-secret-token") {
+internal/config/config_test.go-122-		t.Fatal("saved YAML contains env secret, secret leaked")
+internal/config/config_test.go-123-	}
+internal/config/config_test.go-124-	if !strings.Contains(saved, "value_env: MUX_TEST_SECRET") {
+internal/config/config_test.go-125-		t.Fatal("saved YAML should preserve value_env")
+internal/config/config_test.go-126-	}
+internal/config/config_test.go-127-}
+internal/config/config_test.go-128-
+internal/config/config_test.go-129-func TestResolveSecretsFailsWhenEnvVarMissing(t *testing.T) {
+internal/config/config_test.go-130-	setDefaultAdminToken(t)
+internal/config/config_test.go-131-
+internal/config/config_test.go-132-	cfg := Default()
+internal/config/config_test.go-133-	cfg.Keys[0].Value = ""
+internal/config/config_test.go-134-	cfg.Keys[0].ValueEnv = "MUX_MISSING_VAR"
+internal/config/config_test.go-135-	if err := cfg.ResolveSecrets(); err == nil {
+internal/config/config_test.go-136-		t.Fatal("expected error for missing env var")
+internal/config/config_test.go-137-	}
+internal/config/config_test.go-138-}
+internal/config/config_test.go-139-
+internal/config/config_test.go-140-func TestValidateAllowsEmptyValueWithValueEnv(t *testing.T) {
+internal/config/config_test.go-141-	setDefaultAdminToken(t)
+internal/config/config_test.go-142-
+internal/config/config_test.go-143-	cfg := Default()
+internal/config/config_test.go-144-	cfg.Keys[0].Value = ""
+internal/config/config_test.go-145-	cfg.Keys[0].ValueEnv = "MUX_EXISTS"
+internal/config/config_test.go-146-	t.Setenv("MUX_EXISTS", "token")
+internal/config/config_test.go-147-
+internal/config/config_test.go-148-	if err := cfg.ResolveSecrets(); err != nil {
+internal/config/config_test.go-149-		t.Fatalf("resolve secrets failed: %v", err)
+internal/config/config_test.go-150-	}
+internal/config/config_test.go-151-	if err := cfg.Validate(); err != nil {
+internal/config/config_test.go-152-		t.Fatalf("validate should allow key with value_env: %v", err)
+internal/config/config_test.go-153-	}
+internal/config/config_test.go-154-}
+internal/config/config_test.go-155-
+internal/config/config_test.go-156-func TestValidateRejectsKeyProviderMismatchWithModel(t *testing.T) {
+internal/config/config_test.go-157-	cfg := Default()
+internal/config/config_test.go-158-	cfg.Providers = append(cfg.Providers, ProviderConfig{ID: "other", Name: "Other", Type: "openai-compatible", BaseURL: "https://other.example.com/v1", AuthType: "bearer", TimeoutSeconds: 120, Enabled: true})
+internal/config/config_test.go-159-	cfg.Keys[0].ProviderID = "other"
+internal/config/config_test.go-160-
+internal/config/config_test.go-161-	if err := cfg.Validate(); err == nil {
+internal/config/config_test.go-162-		t.Fatal("expected key provider/model provider mismatch error")
+internal/config/config_test.go-163-	}
+internal/config/config_test.go-164-}
+internal/config/config_test.go-165-
+internal/config/config_test.go-166-func TestValidateRejectsDuplicateKeyIDWithValueEnv(t *testing.T) {
+internal/config/config_test.go-167-	setDefaultAdminToken(t)
+internal/config/config_test.go-168-	t.Setenv("MUX_DUP_A", "token-a")
+internal/config/config_test.go-169-	t.Setenv("MUX_DUP_B", "token-b")
+internal/config/config_test.go-170-
+internal/config/config_test.go-171-	cfg := Default()
+internal/config/config_test.go-172-	cfg.Keys = []KeyConfig{
+internal/config/config_test.go-173-		{ID: "dup", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", ValueEnv: "MUX_DUP_A", Status: "active", Priority: 1},
+internal/config/config_test.go-174-		{ID: "dup", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", ValueEnv: "MUX_DUP_B", Status: "active", Priority: 2},
+internal/config/config_test.go-175-	}
+internal/config/config_test.go-176-
+internal/config/config_test.go-177-	if err := cfg.ResolveSecrets(); err != nil {
+internal/config/config_test.go-178-		t.Fatalf("resolve secrets failed: %v", err)
+internal/config/config_test.go-179-	}
+internal/config/config_test.go-180-	if err := cfg.Validate(); err == nil {
+internal/config/config_test.go-181-		t.Fatal("expected duplicate key id error for value_env keys")
+internal/config/config_test.go-182-	}
+internal/config/config_test.go-183-}
+internal/config/config_test.go-184-
+internal/config/config_test.go-185-func TestValidateRejectsDuplicateKeyIDMixedValueAndValueEnv(t *testing.T) {
+internal/config/config_test.go-186-	setDefaultAdminToken(t)
+internal/config/config_test.go-187-	t.Setenv("MUX_DUP_C", "token-c")
+internal/config/config_test.go-188-
+internal/config/config_test.go-189-	cfg := Default()
+internal/config/config_test.go-190-	cfg.Keys = []KeyConfig{
+internal/config/config_test.go-191-		{ID: "dup", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", ValueEnv: "MUX_DUP_C", Status: "active", Priority: 1},
+internal/config/config_test.go-192-		{ID: "dup", ProviderID: "mimo", ModelID: "mimo-v2.5-pro", Value: "direct-token", Status: "active", Priority: 2},
+internal/config/config_test.go-193-	}
+internal/config/config_test.go-194-
+internal/config/config_test.go-195-	if err := cfg.ResolveSecrets(); err != nil {
+internal/config/config_test.go-196-		t.Fatalf("resolve secrets failed: %v", err)
+internal/config/config_test.go-197-	}
+internal/config/config_test.go-198-	if err := cfg.Validate(); err == nil {
+internal/config/config_test.go-199-		t.Fatal("expected duplicate key id error for mixed value/value_env keys")
+internal/config/config_test.go-200-	}
+internal/config/config_test.go-201-}
+internal/config/config_test.go-202-
+internal/config/config_test.go-203-func TestReloadFlowFailsWhenValueEnvMissing(t *testing.T) {
+internal/config/config_test.go-204-	setDefaultAdminToken(t)
+internal/config/config_test.go-205-
+internal/config/config_test.go-206-	cfg := Default()
+internal/config/config_test.go-207-	cfg.Keys[0].Value = ""
+internal/config/config_test.go-208-	cfg.Keys[0].ValueEnv = "MUX_RELOAD_MISSING"
+internal/config/config_test.go-209-
+internal/config/config_test.go-210-	if err := cfg.ResolveSecrets(); err == nil {
+internal/config/config_test.go-211-		t.Fatal("expected resolve secrets error for missing env var during reload")
+internal/config/config_test.go-212-	}
+internal/config/config_test.go-213-}
+internal/config/config_test.go-214-
+internal/config/config_test.go-215-func TestReloadFlowSucceedsWhenValueEnvAvailable(t *testing.T) {
+internal/config/config_test.go-216-	setDefaultAdminToken(t)
+internal/config/config_test.go-217-	t.Setenv("MUX_RELOAD_EXISTS", "reload-token")
+internal/config/config_test.go-218-
+internal/config/config_test.go-219-	cfg := Default()
+internal/config/config_test.go-220-	cfg.Keys[0].Value = ""
+internal/config/config_test.go-221-	cfg.Keys[0].ValueEnv = "MUX_RELOAD_EXISTS"
+internal/config/config_test.go-222-
+internal/config/config_test.go-223-	if err := cfg.ResolveSecrets(); err != nil {
+internal/config/config_test.go-224-		t.Fatalf("resolve secrets failed: %v", err)
+internal/config/config_test.go-225-	}
+internal/config/config_test.go-226-	if err := cfg.Validate(); err != nil {
+internal/config/config_test.go-227-		t.Fatalf("validate failed: %v", err)
+internal/config/config_test.go-228-	}
+internal/config/config_test.go-229-}
+internal/config/config_test.go-230-
+internal/config/config_test.go-231-func TestResolveSecretsFailsWhenAuthTokenEnvMissing(t *testing.T) {
+internal/config/config_test.go-232-	cfg := Default()
+internal/config/config_test.go-233-	cfg.Server.RequireAuth = true
+internal/config/config_test.go-234-	cfg.Server.AuthTokenEnv = "MUX_AUTH_MISSING"
+internal/config/config_test.go-235-
+internal/config/config_test.go-236-	if err := cfg.ResolveSecrets(); err == nil {
+internal/config/config_test.go-237-		t.Fatal("expected resolve secrets error for missing auth token env")
+internal/config/config_test.go-238-	}
+internal/config/config_test.go-239-}
+internal/config/config_test.go-240-
+internal/config/config_test.go-241-func TestResolveSecretsAllowsConfiguredAuthTokenEnv(t *testing.T) {
+internal/config/config_test.go-242-	t.Setenv("MUX_AUTH_EXISTS", "local-token")
+internal/config/config_test.go-243-
+internal/config/config_test.go-244-	cfg := Default()
+internal/config/config_test.go-245-	cfg.Server.RequireAuth = true
+internal/config/config_test.go-246-	cfg.Server.AuthTokenEnv = "MUX_AUTH_EXISTS"
+internal/config/config_test.go-247-
+internal/config/config_test.go-248-	if err := cfg.ResolveSecrets(); err != nil {
+internal/config/config_test.go-249-		t.Fatalf("resolve secrets failed: %v", err)
+internal/config/config_test.go-250-	}
+internal/config/config_test.go-251-}
+internal/config/config_test.go-252-
+internal/config/config_test.go-253-func TestResolveSecretsFailsWhenDefaultAdminAuthTokenEnvMissing(t *testing.T) {
+internal/config/config_test.go-254-	cfg := Default()
+internal/config/config_test.go-255-	cfg.Server.RequireAuth = false
+internal/config/config_test.go-256-
+--
+internal/config/config_test.go-314-}
+internal/config/config_test.go-315-
+internal/config/config_test.go-316-func TestValidateRejectsTimeoutOutOfRange(t *testing.T) {
+internal/config/config_test.go-317-	cfg := Default()
+internal/config/config_test.go-318-	cfg.Providers[0].TimeoutSeconds = 9999
+internal/config/config_test.go-319-	if err := cfg.Validate(); err == nil {
+internal/config/config_test.go-320-		t.Fatal("expected timeout out of range error")
+internal/config/config_test.go-321-	}
+internal/config/config_test.go-322-}
+internal/config/config_test.go-323-
+internal/config/config_test.go-324-func TestValidateRejectsInvalidModelStrategy(t *testing.T) {
+internal/config/config_test.go-325-	cfg := Default()
+internal/config/config_test.go-326-	cfg.Models[0].Strategy = "random"
+internal/config/config_test.go-327-	if err := cfg.Validate(); err == nil {
+internal/config/config_test.go-328-		t.Fatal("expected invalid model strategy error")
+internal/config/config_test.go-329-	}
+internal/config/config_test.go-330-}
+internal/config/config_test.go-331-
+internal/config/config_test.go-332-func TestValidateRejectsInvalidGroupStrategy(t *testing.T) {
+internal/config/config_test.go-333-	cfg := Default()
+internal/config/config_test.go:334:	cfg.ModelGroups[0].Strategy = "random"
+internal/config/config_test.go-335-	if err := cfg.Validate(); err == nil {
+internal/config/config_test.go-336-		t.Fatal("expected invalid group strategy error")
+internal/config/config_test.go-337-	}
+internal/config/config_test.go-338-}
+internal/config/config_test.go-339-
+internal/config/config_test.go-340-func TestValidateAllowsDisabledProviderWithoutFullValidation(t *testing.T) {
+internal/config/config_test.go-341-	cfg := Default()
+internal/config/config_test.go-342-	cfg.Providers[0].Enabled = false
+internal/config/config_test.go-343-	cfg.Providers[0].BaseURL = ""
+internal/config/config_test.go-344-	cfg.Providers[0].TimeoutSeconds = 0
+internal/config/config_test.go-345-	if err := cfg.Validate(); err != nil {
+internal/config/config_test.go-346-		t.Fatalf("disabled provider should skip strict validation: %v", err)
+internal/config/config_test.go-347-	}
+internal/config/config_test.go-348-}
+internal/config/config_test.go-349-
+internal/config/config_test.go-350-func TestValidateRoutingRuleReferencesUnknownModel(t *testing.T) {
+internal/config/config_test.go-351-	cfg := Default()
+internal/config/config_test.go-352-	cfg.AI.RoutingRules = []AIRoutingRuleConfig{
+internal/config/config_test.go-353-		{UseModel: "nonexistent-model", When: AIRoutingRuleWhen{Task: "coding"}},
+internal/config/config_test.go-354-	}
+internal/config/config_test.go-355-	if err := cfg.Validate(); err == nil {
+internal/config/config_test.go-356-		t.Fatal("expected validation error for unknown model in routing rule")
+internal/config/config_test.go-357-	}
+internal/config/config_test.go-358-}
+internal/config/config_test.go-359-
+internal/config/config_test.go-360-func TestValidateRoutingRuleReferencesUnknownGroup(t *testing.T) {
+internal/config/config_test.go-361-	cfg := Default()
+internal/config/config_test.go-362-	cfg.AI.RoutingRules = []AIRoutingRuleConfig{
+internal/config/config_test.go-363-		{UseGroup: "nonexistent-group", When: AIRoutingRuleWhen{Task: "vision"}},
+internal/config/config_test.go-364-	}
+internal/config/config_test.go-365-	if err := cfg.Validate(); err == nil {
+internal/config/config_test.go-366-		t.Fatal("expected validation error for unknown group in routing rule")
+internal/config/config_test.go-367-	}
+internal/config/config_test.go-368-}
+internal/config/config_test.go-369-
+internal/config/config_test.go-370-func TestValidateRoutingRuleBothModelAndGroup(t *testing.T) {
+internal/config/config_test.go-371-	cfg := Default()
+internal/config/config_test.go-372-	cfg.AI.RoutingRules = []AIRoutingRuleConfig{
+internal/config/config_test.go-373-		{UseModel: "mimo-v2.5-pro", UseGroup: "high-price", When: AIRoutingRuleWhen{Task: "chat"}},
+internal/config/config_test.go-374-	}
+internal/config/config_test.go-375-	if err := cfg.Validate(); err == nil {
+internal/config/config_test.go-376-		t.Fatal("expected validation error for ambiguous routing rule")
+internal/config/config_test.go-377-	}
+internal/config/config_test.go-378-}
+internal/config/config_test.go-379-
+internal/config/config_test.go-380-func TestValidateRoutingRuleValidReferences(t *testing.T) {
+internal/config/config_test.go-381-	cfg := Default()
+internal/config/config_test.go-382-	cfg.AI.RoutingRules = []AIRoutingRuleConfig{
+internal/config/config_test.go-383-		{UseModel: "mimo-v2.5-pro", When: AIRoutingRuleWhen{Task: "coding"}},
+internal/config/config_test.go-384-		{UseGroup: "high-price", FallbackGroup: "high-price", When: AIRoutingRuleWhen{Task: "vision"}},
+internal/config/config_test.go-385-	}
+internal/config/config_test.go-386-	if err := cfg.Validate(); err != nil {
+internal/config/config_test.go-387-		t.Fatalf("expected valid routing rules: %v", err)
+internal/config/config_test.go-388-	}
+internal/config/config_test.go-389-}
+internal/config/config_test.go-390-
+internal/config/config_test.go-391-func TestValidateRoutingRuleInvalidCapability(t *testing.T) {
+internal/config/config_test.go-392-	cfg := Default()
+internal/config/config_test.go-393-	cfg.AI.RoutingRules = []AIRoutingRuleConfig{
+internal/config/config_test.go-394-		{UseModel: "mimo-v2.5-pro", When: AIRoutingRuleWhen{Task: "chat"}, RequireCapability: []string{"nonexistent_cap"}},
+internal/config/config_test.go-395-	}
+internal/config/config_test.go-396-	if err := cfg.Validate(); err == nil {
+internal/config/config_test.go-397-		t.Fatal("expected validation error for invalid capability")
+internal/config/config_test.go-398-	}
+internal/config/config_test.go-399-}
+internal/config/config_test.go-400-
+internal/config/config_test.go-401-func TestValidateRejectsUnsafeNumericValuesAndKeyStatus(t *testing.T) {
+internal/config/config_test.go-402-	cfg := Default()
+internal/config/config_test.go-403-	cfg.Storage.RetentionDays = -1
+internal/config/config_test.go-404-	cfg.Retry.BackoffMilliseconds = []int{100, -1}
+internal/config/config_test.go-405-	cfg.Models[0].RequestsPerMinute = -1
+internal/config/config_test.go-406-	cfg.Models[0].MaxConcurrentRequests = -1
+internal/config/config_test.go-407-	cfg.Models[0].Cost = &CostConfig{InputPer1M: -0.1, OutputPer1M: -0.2}
+internal/config/config_test.go-408-	cfg.Keys[0].Status = "paused"
+internal/config/config_test.go-409-	cfg.Keys[0].DailyRequestLimit = -1
+internal/config/config_test.go-410-	cfg.Keys[0].DailyTokenLimit = -1
+internal/config/config_test.go-411-	cfg.Keys[0].RequestsPerMinute = -1
+internal/config/config_test.go-412-	cfg.Keys[0].TokensPerMinute = -1
+internal/config/config_test.go-413-	cfg.Keys[0].MaxConcurrentRequests = -1
+internal/config/config_test.go:414:	cfg.ModelGroups[0].Members[0].Priority = -1
+internal/config/config_test.go:415:	cfg.ModelGroups[0].Members[0].Weight = -1
+internal/config/config_test.go-416-
+internal/config/config_test.go-417-	err := cfg.Validate()
+internal/config/config_test.go-418-	if err == nil {
+internal/config/config_test.go-419-		t.Fatal("expected validation errors")
+internal/config/config_test.go-420-	}
+internal/config/config_test.go-421-	msg := err.Error()
+internal/config/config_test.go-422-	for _, want := range []string{
+internal/config/config_test.go-423-		"storage.retention_days must be non-negative",
+internal/config/config_test.go-424-		"retry.backoff_milliseconds[1] must be non-negative",
+internal/config/config_test.go-425-		"model mimo-v2.5-pro requests_per_minute must be non-negative",
+internal/config/config_test.go-426-		"model mimo-v2.5-pro max_concurrent_requests must be non-negative",
+internal/config/config_test.go-427-		"model mimo-v2.5-pro cost.input_per_1m must be non-negative",
+internal/config/config_test.go-428-		"key mimo-key-1 status paused is not valid",
+internal/config/config_test.go-429-		"key mimo-key-1 daily_request_limit must be non-negative",
+internal/config/config_test.go-430-		"key mimo-key-1 max_concurrent_requests must be non-negative",
+internal/config/config_test.go-431-		"model group high-price member priority must be non-negative",
+internal/config/config_test.go-432-	} {
+internal/config/config_test.go-433-		if !strings.Contains(msg, want) {
+internal/config/config_test.go-434-			t.Fatalf("expected validation error %q in %q", want, msg)
+internal/config/config_test.go-435-		}
+internal/config/config_test.go-436-	}
+internal/config/config_test.go-437-}
+=== repository docs ===
+./README.md
