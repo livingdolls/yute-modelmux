@@ -739,6 +739,15 @@ func (s *RouterService) HandleCompletion(ctx context.Context, req *http.Request)
 }
 
 func (s *RouterService) handleOpenAIRequest(ctx context.Context, req *http.Request, apiPath string) (*http.Response, error) {
+	if err := storage.HealthError(s.store); err != nil {
+		return nil, &ProxyError{
+			HTTPStatus: http.StatusServiceUnavailable,
+			Type:       "modelmux_storage_unavailable",
+			Code:       "persistent_storage_unavailable",
+			Message:    "persistent storage is unavailable",
+		}
+	}
+
 	bodyBytes, err := io.ReadAll(req.Body)
 	if err != nil {
 		return nil, InvalidRequestBodyError(err.Error())
@@ -1033,11 +1042,17 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 		result.LatencyMs = time.Since(startedAt).Milliseconds()
 
 		if result.Success && !isStreamRequest(bodyBytes) && resp != nil {
-			respBodyBytes, readErr := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			respBodyBytes, readErr := readBoundedResponseBody(resp)
 			if readErr == nil {
 				result.TokenInput, result.TokenOutput = parseTokenUsage(respBodyBytes)
 				resp.Body = io.NopCloser(bytes.NewReader(respBodyBytes))
+			} else {
+				result.Success = false
+				result.StatusCode = http.StatusBadGateway
+				result.Error = readErr.Error()
+				result.ShouldRotateKey = false
+				err = readErr
+				resp = nil
 			}
 		}
 

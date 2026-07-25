@@ -148,7 +148,7 @@ func New(path string) (Storage, error) {
 		return nil, fmt.Errorf("storage: migrate: %w", err)
 	}
 
-	return &sqliteStore{db: db}, nil
+	return newGuardedStorage(&sqliteStore{db: db}), nil
 }
 
 type sqliteStore struct {

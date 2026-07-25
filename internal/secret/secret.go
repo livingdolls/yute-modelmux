@@ -58,6 +58,9 @@ func NewStore(path string) (*Store, error) {
 		}
 		return s, nil
 	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("read secret store: %w", err)
+	}
 
 	salt := make([]byte, saltLen)
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
@@ -126,7 +129,7 @@ func (s *Store) save() error {
 		return err
 	}
 
-	return os.WriteFile(s.path, encrypted, 0o600)
+	return writeFileAtomic(s.path, encrypted, 0o600, nil)
 }
 
 func (s *Store) encrypt(plaintext []byte) ([]byte, error) {
@@ -244,7 +247,13 @@ func (s *Store) ExportData() ([]byte, error) {
 }
 
 func ImportData(path string, data []byte) error {
-	return os.WriteFile(path, data, 0o600)
+	if len(data) == 0 {
+		return errors.New("secret store import is empty")
+	}
+	return writeFileAtomic(path, data, 0o600, func(candidate string) error {
+		_, err := NewStore(candidate)
+		return err
+	})
 }
 
 func (s *Store) RotateKey(newMasterKey string) error {
@@ -266,7 +275,7 @@ func (s *Store) RotateKey(newMasterKey string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, encrypted, 0o600)
+	return writeFileAtomic(s.path, encrypted, 0o600, nil)
 }
 
 func VerifyFile(path string) error {

@@ -703,7 +703,7 @@ to the new key before running this command.`,
 			Use:   use,
 			Short: short,
 			RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load(configPath)
+				cfg, err := config.Load(configPath)
 				if err != nil {
 					return err
 				}
@@ -869,9 +869,9 @@ to the new key before running this command.`,
 				return err
 			}
 
-			if cfg.Server.Host == "0.0.0.0" && !cfg.Server.RequireAuth {
-				fmt.Fprintln(cmd.ErrOrStderr(), "WARNING: server bound to 0.0.0.0 without authentication enabled.")
-				fmt.Fprintln(cmd.ErrOrStderr(), "Anyone on the network can use your API keys. Set server.require_auth=true and server.auth_token_env.")
+			if !isLoopbackBindHost(cfg.Server.Host) && !cfg.Server.RequireAuth {
+				fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: server bound to non-loopback host %q without authentication enabled.\n", cfg.Server.Host)
+				fmt.Fprintln(cmd.ErrOrStderr(), "Anyone who can reach this address can use your API keys. Set server.require_auth=true and server.auth_token_env.")
 			}
 
 			store, err := createStorage(cfg)
@@ -981,16 +981,7 @@ func mutateKeyStatus(configPath, keyID, status string, w io.Writer) error {
 }
 
 func secretPath(cfg *config.Config) string {
-	path := cfg.Storage.Path
-	if path == "" {
-		path = config.Default().Storage.Path
-	}
-	path = expandHome(path)
-	dir := strings.TrimSuffix(path, "modelmux.db")
-	if dir == path {
-		dir = path + ".d"
-	}
-	return dir + "secrets.enc"
+	return config.SecretStorePath(cfg.Storage.Path)
 }
 
 func createSecretStore(cfg *config.Config) (*secret.Store, error) {
@@ -1022,10 +1013,22 @@ func createStorage(cfg *config.Config) (storage.Storage, error) {
 }
 
 func newRouterServiceWithSecret(cfg *config.Config, store storage.Storage, secStore *secret.Store) (*service.RouterService, error) {
+	var (
+		router *service.RouterService
+		err    error
+	)
 	if store != nil || secStore != nil {
-		return service.NewRouterServiceWithSecret(cfg, store, secStore)
+		router, err = service.NewRouterServiceWithSecret(cfg, store, secStore)
+	} else {
+		router, err = service.NewRouterService(cfg)
 	}
-	return service.NewRouterService(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := storage.HealthError(store); err != nil {
+		return nil, err
+	}
+	return router, nil
 }
 
 func createFullRouter(cfg *config.Config) (*service.RouterService, storage.Storage, *secret.Store, error) {
@@ -1040,7 +1043,7 @@ func createFullRouter(cfg *config.Config) (*service.RouterService, storage.Stora
 		}
 		return nil, nil, nil, err
 	}
-	router, err := service.NewRouterServiceWithSecret(cfg, store, secStore)
+	router, err := newRouterServiceWithSecret(cfg, store, secStore)
 	if err != nil {
 		if store != nil {
 			store.Close()
@@ -1196,15 +1199,15 @@ func aiCommands(configPath *string) *cobra.Command {
 
 			if routeJSON {
 				out := map[string]any{
-					"original_model":   extractModelRaw(data),
+					"original_model": extractModelRaw(data),
 					"request_profile": map[string]any{
-						"task_class":     profile.TaskClass,
-						"prompt_size":    profile.PromptSize,
-						"has_tools":      profile.HasToolDefinition,
-						"has_vision":     profile.HasImageContent,
-						"has_streaming":  profile.IsStreaming,
-						"has_json_mode":  profile.HasJSONMode,
-						"system_prompt":  profile.HasSystemPrompt,
+						"task_class":    profile.TaskClass,
+						"prompt_size":   profile.PromptSize,
+						"has_tools":     profile.HasToolDefinition,
+						"has_vision":    profile.HasImageContent,
+						"has_streaming": profile.IsStreaming,
+						"has_json_mode": profile.HasJSONMode,
+						"system_prompt": profile.HasSystemPrompt,
 					},
 					"guardrail": map[string]any{
 						"allowed": guardResult.Allowed,
@@ -1212,10 +1215,10 @@ func aiCommands(configPath *string) *cobra.Command {
 						"reason":  guardResult.Reason,
 					},
 					"route_decision": map[string]any{
-						"matched":       decision.Matched,
-						"rerouted_id":   decision.ReroutedID,
+						"matched":        decision.Matched,
+						"rerouted_id":    decision.ReroutedID,
 						"fallback_group": decision.FallbackGroup,
-						"rule_index":    decision.RuleIndex,
+						"rule_index":     decision.RuleIndex,
 					},
 				}
 				enc := json.NewEncoder(cmd.OutOrStdout())
@@ -1522,7 +1525,7 @@ func evalCommands(configPath *string) *cobra.Command {
 			if store != nil {
 				_ = store.SaveEvalRun(storage.EvalRunRecord{
 					ID: result.RunID, SuiteName: result.SuiteName,
-					StartedAt: result.StartedAt.Format(time.RFC3339),
+					StartedAt:  result.StartedAt.Format(time.RFC3339),
 					FinishedAt: result.FinishedAt.Format(time.RFC3339),
 					TotalCases: len(result.Results),
 				})
