@@ -145,6 +145,7 @@ Exit code is non-zero if any validation errors are found.`,
 	configValidateCmd.Flags().BoolVar(&validateJSON, "json", false, "output as JSON")
 	configValidateCmd.Flags().BoolVar(&validateCheckProvider, "check-provider", false, "also check provider reachability")
 	configCmd.AddCommand(configValidateCmd)
+	configCmd.AddCommand(newOpenCodeConfigCommand(&configPath))
 	rootCmd.AddCommand(configCmd)
 
 	var keyTestID string
@@ -1531,7 +1532,7 @@ func evalCommands(configPath *string) *cobra.Command {
 				})
 				for _, r := range result.Results {
 					_ = store.SaveEvalResult(storage.EvalResultRecord{
-						RunID: result.RunID, CaseName: r.CaseName,
+						RunID: r.RunID, CaseName: r.CaseName,
 						TargetModel: r.TargetModel, TargetGroup: r.TargetGroup,
 						StatusCode: r.StatusCode, LatencyMs: r.LatencyMs,
 						ResponseHash: r.ResponseHash, Error: r.Error,
