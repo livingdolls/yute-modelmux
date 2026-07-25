@@ -246,7 +246,7 @@ func newRouterServiceWithMetrics(cfg *config.Config, store storage.Storage, secr
 		if strategy == "" {
 			strategy = domain.GroupStrategyFailover
 		}
-		group := domain.ModelGroup{ID: g.ID, Name: g.Name, Strategy: strategy, Enabled: g.Enabled}
+		group := domain.ModelGroup{ID: g.ID, Name: g.Name, Description: g.Description, Strategy: strategy, Enabled: g.Enabled, RequiredCapabilities: append([]string(nil), g.RequiredCapabilities...), ContextWindow: g.ContextWindow, MaxOutputTokens: g.MaxOutputTokens}
 		for i, member := range g.Members {
 			priority := member.Priority
 			if priority == 0 {
@@ -340,6 +340,10 @@ func newRouterServiceWithMetrics(cfg *config.Config, store storage.Storage, secr
 			}
 		}
 		rs.keys = append(rs.keys, key)
+	}
+
+	if err := rs.prepareModelGroups(); err != nil {
+		return nil, err
 	}
 
 	todayStr := time.Now().Format("2006-01-02")
@@ -881,10 +885,15 @@ func (s *RouterService) handleOpenAIRequest(ctx context.Context, req *http.Reque
 }
 
 func (s *RouterService) handleGroupRequest(ctx context.Context, req *http.Request, bodyBytes []byte, group domain.ModelGroup, apiPath string) (*http.Response, error) {
+	if err := s.checkGroupCapability(group, apiPath, bodyBytes); err != nil {
+		return nil, err
+	}
+
 	attemptedMembers := map[string]struct{}{}
+	stickyKey := groupStickyKey(req, bodyBytes)
 
 	for len(attemptedMembers) < len(group.Members) {
-		member, model, ok := s.SelectGroupMember(group.ID, attemptedMembers)
+		member, model, ok := s.selectGroupMemberForRequest(group.ID, attemptedMembers, apiPath, bodyBytes, stickyKey)
 		if !ok {
 			return nil, GroupUnavailableError(group.ID)
 		}
@@ -1040,6 +1049,12 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 		result.GroupID = groupID
 		result.ProviderID = provider.ID
 		result.LatencyMs = time.Since(startedAt).Milliseconds()
+		if resp != nil {
+			if resp.Header == nil {
+				resp.Header = make(http.Header)
+			}
+			setRoutingResponseHeaders(resp.Header, bodyBytes, groupID, model.ID, provider.ID, totalAttempts)
+		}
 
 		if result.Success && !isStreamRequest(bodyBytes) && resp != nil {
 			respBodyBytes, readErr := readBoundedResponseBody(resp)
