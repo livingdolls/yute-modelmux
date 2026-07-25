@@ -43,7 +43,7 @@ jobs:
         run: |
           sed -i 's#internal/app/service/router.go#internal/app/service/router_service.go#g' audit-existing.patch
           set +e
-          patch --batch --forward -p1 < audit-existing.patch > audit-apply.log 2>&1
+          git apply --recount --verbose audit-existing.patch > audit-apply.log 2>&1
           status=$?
           set -e
           cat audit-apply.log
