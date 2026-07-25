@@ -1,4 +1,4 @@
-name: Apply audit fixes
+name: Finalize audit fixes
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: apply-audit-fixes
+  group: finalize-audit-fixes
   cancel-in-progress: false
 
 jobs:
@@ -40,8 +40,13 @@ jobs:
 
       - name: Apply reviewed patch
         run: |
-          git apply --recount --check audit-existing.patch
-          git apply --recount audit-existing.patch
+          patch --batch --forward -p1 < audit-existing.patch
+          test ! -s cmd/modelmux/main.go.rej
+          test ! -s internal/secret/store.go.rej
+          test ! -s internal/storage/storage.go.rej
+          test ! -s internal/adapter/httpserver/server.go.rej
+          test ! -s internal/adapter/httpserver/handlers.go.rej
+          test ! -s internal/app/service/router.go.rej
           gofmt -w \
             cmd/modelmux/main.go \
             cmd/modelmux/network.go \
@@ -83,9 +88,17 @@ jobs:
 
       - name: Commit validated fixes
         run: |
-          rm audit-existing.patch .github/workflows/bootstrap-audit-fixes.yml
+          rm -f \
+            audit-existing.patch \
+            .github/workflows/bootstrap-audit-fixes.yml \
+            .github/workflows/apply-audit-fixes.yml \
+            scripts/apply_audit_fixes.py \
+            .audit-trigger \
+            .audit-trigger-2 \
+            .audit-trigger-3
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "fix audit findings"
+          git diff --cached --check
+          git commit -m "fix: address repository audit findings"
           git push origin HEAD:agent/fix-audit-findings
