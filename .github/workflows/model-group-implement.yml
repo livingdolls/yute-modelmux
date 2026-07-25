@@ -1,0 +1,919 @@
+name: Implement Model Group Routing
+
+on:
+  push:
+    branches:
+      - agent/model-group-routing
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply model group implementation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          def replace(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f"anchor not found in {path}: {old[:120]!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          replace(
+              "internal/config/config.go",
+              dedent('''\
+              type ModelGroupConfig struct {
+              \tID       string                   `yaml:"id"`
+              \tName     string                   `yaml:"name"`
+              \tStrategy string                   `yaml:"strategy"`
+              \tEnabled  bool                     `yaml:"enabled"`
+              \tMembers  []ModelGroupMemberConfig `yaml:"members"`
+              }
+              '''),
+              dedent('''\
+              type ModelGroupConfig struct {
+              \tID                   string                   `yaml:"id"`
+              \tName                 string                   `yaml:"name"`
+              \tDescription          string                   `yaml:"description,omitempty"`
+              \tStrategy             string                   `yaml:"strategy"`
+              \tEnabled              bool                     `yaml:"enabled"`
+              \tRequiredCapabilities []string                 `yaml:"required_capabilities,omitempty"`
+              \tContextWindow        int                      `yaml:"context_window,omitempty"`
+              \tMaxOutputTokens      int                      `yaml:"max_output_tokens,omitempty"`
+              \tMembers              []ModelGroupMemberConfig `yaml:"members"`
+              }
+              '''),
+          )
+
+          replace(
+              "internal/config/config.go",
+              '\t\t\tvalidStrategies := map[string]bool{"failover": true, "round_robin": true, "weighted": true}\n\t\t\tif g.Strategy != "" && !validStrategies[g.Strategy] {\n\t\t\t\terrs = append(errs, "model group "+g.ID+" strategy "+g.Strategy+" is not valid; must be one of: failover, round_robin, weighted")\n\t\t\t}\n',
+              '\t\t\tvalidStrategies := map[string]bool{"failover": true, "round_robin": true, "weighted": true, "consistent_hash": true}\n\t\t\tif g.Strategy != "" && !validStrategies[g.Strategy] {\n\t\t\t\terrs = append(errs, "model group "+g.ID+" strategy "+g.Strategy+" is not valid; must be one of: failover, round_robin, weighted, consistent_hash")\n\t\t\t}\n',
+          )
+
+          replace(
+              "internal/config/config.go",
+              '\t\tif len(g.Members) == 0 {\n',
+              dedent('''\
+              \t\tif g.ContextWindow < 0 {
+              \t\t\terrs = append(errs, "model group "+g.ID+" context_window must be non-negative")
+              \t\t}
+              \t\tif g.MaxOutputTokens < 0 {
+              \t\t\terrs = append(errs, "model group "+g.ID+" max_output_tokens must be non-negative")
+              \t\t}
+              \t\tvalidCapabilities := map[string]bool{
+              \t\t\t"chat": true, "completions": true, "streaming": true,
+              \t\t\t"tools": true, "vision": true, "json_mode": true,
+              \t\t}
+              \t\tfor _, capability := range g.RequiredCapabilities {
+              \t\t\tif !validCapabilities[capability] {
+              \t\t\t\terrs = append(errs, "model group "+g.ID+" required capability "+capability+" is not valid")
+              \t\t\t}
+              \t\t}
+              \t\tif len(g.Members) == 0 {
+              '''),
+          )
+
+          Path("internal/core/domain/model_group.go").write_text(dedent('''\
+          package domain
+
+          type GroupStrategy string
+
+          const (
+          \tGroupStrategyFailover       GroupStrategy = "failover"
+          \tGroupStrategyRoundRobin     GroupStrategy = "round_robin"
+          \tGroupStrategyWeighted       GroupStrategy = "weighted"
+          \tGroupStrategyConsistentHash GroupStrategy = "consistent_hash"
+          )
+
+          type ModelGroup struct {
+          \tID                   string
+          \tName                 string
+          \tDescription          string
+          \tStrategy             GroupStrategy
+          \tEnabled              bool
+          \tRequiredCapabilities []string
+          \tContextWindow        int
+          \tMaxOutputTokens      int
+          \tCapabilities         Capabilities
+          \tMembers              []ModelGroupMember
+          }
+
+          type ModelGroupMember struct {
+          \tModelID  string
+          \tKeyID    string
+          \tPriority int
+          \tWeight   int
+          \tEnabled  bool
+          }
+          '''))
+
+          replace(
+              "internal/app/service/router_service.go",
+              '\t\tgroup := domain.ModelGroup{ID: g.ID, Name: g.Name, Strategy: strategy, Enabled: g.Enabled}\n',
+              '\t\tgroup := domain.ModelGroup{ID: g.ID, Name: g.Name, Description: g.Description, Strategy: strategy, Enabled: g.Enabled, RequiredCapabilities: append([]string(nil), g.RequiredCapabilities...), ContextWindow: g.ContextWindow, MaxOutputTokens: g.MaxOutputTokens}\n',
+          )
+
+          replace(
+              "internal/app/service/router_service.go",
+              '\t\trs.keys = append(rs.keys, key)\n\t}\n\n\ttodayStr := time.Now().Format("2006-01-02")\n',
+              '\t\trs.keys = append(rs.keys, key)\n\t}\n\n\tif err := rs.prepareModelGroups(); err != nil {\n\t\treturn nil, err\n\t}\n\n\ttodayStr := time.Now().Format("2006-01-02")\n',
+          )
+
+          replace(
+              "internal/app/service/router_service.go",
+              'func (s *RouterService) handleGroupRequest(ctx context.Context, req *http.Request, bodyBytes []byte, group domain.ModelGroup, apiPath string) (*http.Response, error) {\n\tattemptedMembers := map[string]struct{}{}\n',
+              'func (s *RouterService) handleGroupRequest(ctx context.Context, req *http.Request, bodyBytes []byte, group domain.ModelGroup, apiPath string) (*http.Response, error) {\n\tif err := s.checkGroupCapability(group, apiPath, bodyBytes); err != nil {\n\t\treturn nil, err\n\t}\n\n\tattemptedMembers := map[string]struct{}{}\n\tstickyKey := groupStickyKey(req, bodyBytes)\n',
+          )
+
+          replace(
+              "internal/app/service/router_service.go",
+              '\t\tmember, model, ok := s.SelectGroupMember(group.ID, attemptedMembers)\n',
+              '\t\tmember, model, ok := s.selectGroupMemberForRequest(group.ID, attemptedMembers, apiPath, bodyBytes, stickyKey)\n',
+          )
+
+          replace(
+              "internal/app/service/router_service.go",
+              '\t\tresult.ProviderID = provider.ID\n\t\tresult.LatencyMs = time.Since(startedAt).Milliseconds()\n\n',
+              '\t\tresult.ProviderID = provider.ID\n\t\tresult.LatencyMs = time.Since(startedAt).Milliseconds()\n\t\tif resp != nil {\n\t\t\tif resp.Header == nil {\n\t\t\t\tresp.Header = make(http.Header)\n\t\t\t}\n\t\t\tsetRoutingResponseHeaders(resp.Header, bodyBytes, groupID, model.ID, provider.ID, totalAttempts)\n\t\t}\n\n',
+          )
+
+          Path("internal/app/service/model_group_routing.go").write_text(dedent('''\
+          package service
+
+          import (
+          \t"encoding/json"
+          \t"fmt"
+          \t"hash/fnv"
+          \t"net/http"
+          \t"sort"
+          \t"strconv"
+          \t"strings"
+
+          \t"github.com/livingdolls/yute-modelmux/internal/core/domain"
+          )
+
+          func (s *RouterService) selectGroupMemberForRequest(groupID string, attempted map[string]struct{}, apiPath string, bodyBytes []byte, stickyKey string) (domain.ModelGroupMember, domain.Model, bool) {
+          \ts.mu.Lock()
+          \tdefer s.mu.Unlock()
+
+          \tgroup, ok := s.groupByID(groupID)
+          \tif !ok || !group.Enabled {
+          \t\treturn domain.ModelGroupMember{}, domain.Model{}, false
+          \t}
+
+          \tavailable := s.availableGroupMembers(group, attempted)
+          \tmembers := make([]availableGroupMember, 0, len(available))
+          \tfor _, candidate := range available {
+          \t\tif err := s.checkModelCapability(candidate.model, apiPath, bodyBytes); err == nil {
+          \t\t\tmembers = append(members, candidate)
+          \t\t}
+          \t}
+          \tif len(members) == 0 {
+          \t\treturn domain.ModelGroupMember{}, domain.Model{}, false
+          \t}
+
+          \tswitch group.Strategy {
+          \tcase domain.GroupStrategyRoundRobin:
+          \t\tidx := s.groupRRIndex[groupID] % len(members)
+          \t\ts.groupRRIndex[groupID] = (idx + 1) % len(members)
+          \t\treturn members[idx].member, members[idx].model, true
+          \tcase domain.GroupStrategyWeighted:
+          \t\tselected := s.selectWeightedMember(members)
+          \t\treturn selected.member, selected.model, true
+          \tcase domain.GroupStrategyConsistentHash:
+          \t\tif stickyKey != "" {
+          \t\t\tselected := selectRendezvousMember(members, stickyKey)
+          \t\t\treturn selected.member, selected.model, true
+          \t\t}
+          \t\tfallthrough
+          \tdefault:
+          \t\tsortGroupMembersByPriority(members)
+          \t\treturn members[0].member, members[0].model, true
+          \t}
+          }
+
+          func sortGroupMembersByPriority(members []availableGroupMember) {
+          \tsort.SliceStable(members, func(i, j int) bool {
+          \t\tif members[i].member.Priority != members[j].member.Priority {
+          \t\t\treturn members[i].member.Priority < members[j].member.Priority
+          \t\t}
+          \t\treturn groupMemberAttemptKey(members[i].member) < groupMemberAttemptKey(members[j].member)
+          \t})
+          }
+
+          func selectRendezvousMember(members []availableGroupMember, stickyKey string) availableGroupMember {
+          \tselected := members[0]
+          \tselectedKey := groupMemberAttemptKey(selected.member)
+          \tbestScore := rendezvousScore(stickyKey, selectedKey)
+          \tfor _, candidate := range members[1:] {
+          \t\tcandidateKey := groupMemberAttemptKey(candidate.member)
+          \t\tscore := rendezvousScore(stickyKey, candidateKey)
+          \t\tif score > bestScore || (score == bestScore && candidateKey < selectedKey) {
+          \t\t\tselected = candidate
+          \t\t\tselectedKey = candidateKey
+          \t\t\tbestScore = score
+          \t\t}
+          \t}
+          \treturn selected
+          }
+
+          func rendezvousScore(stickyKey, memberKey string) uint64 {
+          \th := fnv.New64a()
+          \t_, _ = h.Write([]byte(stickyKey))
+          \t_, _ = h.Write([]byte{0})
+          \t_, _ = h.Write([]byte(memberKey))
+          \treturn h.Sum64()
+          }
+
+          func groupStickyKey(req *http.Request, bodyBytes []byte) string {
+          \tif req != nil {
+          \t\tfor _, header := range []string{"X-ModelMux-Session-ID", "X-OpenAI-User", "OpenAI-User"} {
+          \t\t\tif value := strings.TrimSpace(req.Header.Get(header)); value != "" {
+          \t\t\t\treturn value
+          \t\t\t}
+          \t\t}
+          \t}
+
+          \tvar payload struct {
+          \t\tUser     string         `json:"user"`
+          \t\tMetadata map[string]any `json:"metadata"`
+          \t}
+          \tif err := json.Unmarshal(bodyBytes, &payload); err != nil {
+          \t\treturn ""
+          \t}
+          \tif value := strings.TrimSpace(payload.User); value != "" {
+          \t\treturn value
+          \t}
+          \tfor _, key := range []string{"session_id", "conversation_id", "thread_id"} {
+          \t\tif value, ok := payload.Metadata[key].(string); ok {
+          \t\t\tif value = strings.TrimSpace(value); value != "" {
+          \t\t\t\treturn value
+          \t\t\t}
+          \t\t}
+          \t}
+          \treturn ""
+          }
+
+          func (s *RouterService) checkGroupCapability(group domain.ModelGroup, apiPath string, bodyBytes []byte) error {
+          \ts.mu.Lock()
+          \tdefer s.mu.Unlock()
+
+          \tconfiguredMembers := 0
+          \tfor _, member := range group.Members {
+          \t\tif !member.Enabled {
+          \t\t\tcontinue
+          \t\t}
+          \t\tmodel, ok := s.modelForGroupMemberLocked(member)
+          \t\tif !ok || !model.Enabled {
+          \t\t\tcontinue
+          \t\t}
+          \t\tconfiguredMembers++
+          \t\tif err := s.checkModelCapability(model, apiPath, bodyBytes); err == nil {
+          \t\t\treturn nil
+          \t\t}
+          \t}
+          \tif configuredMembers == 0 {
+          \t\treturn nil
+          \t}
+          \treturn &ProxyError{
+          \t\tHTTPStatus: http.StatusBadRequest,
+          \t\tType:       "modelmux_unsupported",
+          \t\tCode:       "group_capability_mismatch",
+          \t\tMessage:    fmt.Sprintf("model group %s has no member compatible with this request", group.ID),
+          \t}
+          }
+
+          func (s *RouterService) modelForGroupMemberLocked(member domain.ModelGroupMember) (domain.Model, bool) {
+          \tmodelID := member.ModelID
+          \tif member.KeyID != "" {
+          \t\tkey, ok := s.keyByID(member.KeyID)
+          \t\tif !ok {
+          \t\t\treturn domain.Model{}, false
+          \t\t}
+          \t\tmodelID = key.ModelID
+          \t}
+          \treturn s.modelByID(modelID)
+          }
+
+          func (s *RouterService) prepareModelGroups() error {
+          \tfor i := range s.groups {
+          \t\tgroup := &s.groups[i]
+          \t\tgroup.Capabilities = s.groupCapabilitiesLocked(*group)
+          \t\tif !group.Enabled {
+          \t\t\tcontinue
+          \t\t}
+
+          \t\tresolvedMembers := 0
+          \t\tfor _, member := range group.Members {
+          \t\t\tif !member.Enabled {
+          \t\t\t\tcontinue
+          \t\t\t}
+          \t\t\tmodel, ok := s.modelForGroupMemberLocked(member)
+          \t\t\tif ok && model.Enabled {
+          \t\t\t\tresolvedMembers++
+          \t\t\t}
+          \t\t}
+          \t\tif resolvedMembers == 0 {
+          \t\t\treturn fmt.Errorf("enabled model group %s has no enabled model members", group.ID)
+          \t\t}
+          \t\tfor _, capability := range group.RequiredCapabilities {
+          \t\t\tif !capabilityEnabled(group.Capabilities, capability) {
+          \t\t\t\treturn fmt.Errorf("model group %s requires capability %s but not every enabled member supports it", group.ID, capability)
+          \t\t\t}
+          \t\t}
+          \t}
+          \treturn nil
+          }
+
+          func (s *RouterService) groupCapabilitiesLocked(group domain.ModelGroup) domain.Capabilities {
+          \tvar capabilities domain.Capabilities
+          \tfound := false
+          \tfor _, member := range group.Members {
+          \t\tif !member.Enabled {
+          \t\t\tcontinue
+          \t\t}
+          \t\tmodel, ok := s.modelForGroupMemberLocked(member)
+          \t\tif !ok || !model.Enabled {
+          \t\t\tcontinue
+          \t\t}
+          \t\tif !found {
+          \t\t\tcapabilities = model.Capabilities
+          \t\t\tfound = true
+          \t\t\tcontinue
+          \t\t}
+          \t\tcapabilities.Chat = capabilities.Chat && model.Capabilities.Chat
+          \t\tcapabilities.Completions = capabilities.Completions && model.Capabilities.Completions
+          \t\tcapabilities.Streaming = capabilities.Streaming && model.Capabilities.Streaming
+          \t\tcapabilities.Tools = capabilities.Tools && model.Capabilities.Tools
+          \t\tcapabilities.Vision = capabilities.Vision && model.Capabilities.Vision
+          \t\tcapabilities.JSONMode = capabilities.JSONMode && model.Capabilities.JSONMode
+          \t}
+          \treturn capabilities
+          }
+
+          func capabilityEnabled(capabilities domain.Capabilities, capability string) bool {
+          \tswitch capability {
+          \tcase "chat":
+          \t\treturn capabilities.Chat
+          \tcase "completions":
+          \t\treturn capabilities.Completions
+          \tcase "streaming":
+          \t\treturn capabilities.Streaming
+          \tcase "tools":
+          \t\treturn capabilities.Tools
+          \tcase "vision":
+          \t\treturn capabilities.Vision
+          \tcase "json_mode":
+          \t\treturn capabilities.JSONMode
+          \tdefault:
+          \t\treturn false
+          \t}
+          }
+
+          func setRoutingResponseHeaders(header http.Header, bodyBytes []byte, groupID, modelID, providerID string, attempt int) {
+          \tif requestedID, err := extractModelFromBody(bodyBytes); err == nil {
+          \t\theader.Set("X-ModelMux-Requested-Model", requestedID)
+          \t}
+          \theader.Set("X-ModelMux-Selected-Model", modelID)
+          \theader.Set("X-ModelMux-Selected-Provider", providerID)
+          \tif groupID != "" {
+          \t\theader.Set("X-ModelMux-Group", groupID)
+          \t}
+          \tif attempt > 0 {
+          \t\theader.Set("X-ModelMux-Attempt", strconv.Itoa(attempt))
+          \t}
+          }
+          '''))
+
+          replace(
+              "internal/adapter/httpserver/handlers.go",
+              dedent('''\
+              func (s *Server) modelsHandler(w http.ResponseWriter, r *http.Request) {
+              \ttype modelItem struct {
+              \t\tID     string `json:"id"`
+              \t\tObject string `json:"object"`
+              \t}
+              \trs := s.routerServiceForRequest(r)
+              \tmodels := rs.ListModels()
+              \tgroups := rs.ListModelGroups()
+              \titems := make([]modelItem, 0, len(models)+len(groups))
+              \tfor _, m := range models {
+              \t\tif !m.Enabled {
+              \t\t\tcontinue
+              \t\t}
+              \t\titems = append(items, modelItem{ID: m.ID, Object: "model"})
+              \t}
+              \tfor _, g := range groups {
+              \t\tif !g.Enabled {
+              \t\t\tcontinue
+              \t\t}
+              \t\titems = append(items, modelItem{ID: g.ID, Object: "model"})
+              \t}
+              \twriteJSON(w, http.StatusOK, map[string]any{"object": "list", "data": items})
+              }
+              '''),
+              dedent('''\
+              func (s *Server) modelsHandler(w http.ResponseWriter, r *http.Request) {
+              \trs := s.routerServiceForRequest(r)
+              \tmodels := rs.ListModels()
+              \tgroups := rs.ListModelGroups()
+              \titems := make([]modelListItem, 0, len(models)+len(groups))
+              \tfor _, model := range models {
+              \t\tif model.Enabled {
+              \t\t\titems = append(items, modelListItemFromModel(model))
+              \t\t}
+              \t}
+              \tfor _, group := range groups {
+              \t\tif group.Enabled {
+              \t\t\titems = append(items, modelListItemFromGroup(group))
+              \t\t}
+              \t}
+              \twriteJSON(w, http.StatusOK, map[string]any{"object": "list", "data": items})
+              }
+              '''),
+          )
+
+          Path("internal/adapter/httpserver/model_listing.go").write_text(dedent('''\
+          package httpserver
+
+          import "github.com/livingdolls/yute-modelmux/internal/core/domain"
+
+          type modelListCapabilities struct {
+          \tChat        bool `json:"chat"`
+          \tCompletions bool `json:"completions"`
+          \tStreaming   bool `json:"streaming"`
+          \tTools       bool `json:"tools"`
+          \tVision      bool `json:"vision"`
+          \tJSONMode    bool `json:"json_mode"`
+          }
+
+          type modelListItem struct {
+          \tID                   string                `json:"id"`
+          \tObject               string                `json:"object"`
+          \tOwnedBy              string                `json:"owned_by"`
+          \tModelMuxType         string                `json:"modelmux_type"`
+          \tName                 string                `json:"name,omitempty"`
+          \tDescription          string                `json:"description,omitempty"`
+          \tStrategy             string                `json:"strategy,omitempty"`
+          \tCapabilities         modelListCapabilities `json:"capabilities"`
+          \tRequiredCapabilities []string              `json:"required_capabilities,omitempty"`
+          \tContextWindow        int                   `json:"context_window,omitempty"`
+          \tMaxOutputTokens      int                   `json:"max_output_tokens,omitempty"`
+          \tMembers              int                   `json:"members,omitempty"`
+          }
+
+          func modelListCapabilitiesFromDomain(capabilities domain.Capabilities) modelListCapabilities {
+          \treturn modelListCapabilities{
+          \t\tChat: capabilities.Chat, Completions: capabilities.Completions,
+          \t\tStreaming: capabilities.Streaming, Tools: capabilities.Tools,
+          \t\tVision: capabilities.Vision, JSONMode: capabilities.JSONMode,
+          \t}
+          }
+
+          func modelListItemFromModel(model domain.Model) modelListItem {
+          \treturn modelListItem{
+          \t\tID: model.ID, Object: "model", OwnedBy: model.ProviderID,
+          \t\tModelMuxType: "model", Name: model.ID,
+          \t\tCapabilities: modelListCapabilitiesFromDomain(model.Capabilities),
+          \t}
+          }
+
+          func modelListItemFromGroup(group domain.ModelGroup) modelListItem {
+          \treturn modelListItem{
+          \t\tID: group.ID, Object: "model", OwnedBy: "modelmux",
+          \t\tModelMuxType: "group", Name: group.Name, Description: group.Description,
+          \t\tStrategy: string(group.Strategy),
+          \t\tCapabilities: modelListCapabilitiesFromDomain(group.Capabilities),
+          \t\tRequiredCapabilities: append([]string(nil), group.RequiredCapabilities...),
+          \t\tContextWindow: group.ContextWindow, MaxOutputTokens: group.MaxOutputTokens,
+          \t\tMembers: len(group.Members),
+          \t}
+          }
+          '''))
+
+          Path("internal/app/service/model_group_routing_test.go").write_text(dedent('''\
+          package service
+
+          import (
+          \t"context"
+          \t"encoding/json"
+          \t"errors"
+          \t"net/http"
+          \t"net/http/httptest"
+          \t"strings"
+          \t"testing"
+
+          \t"github.com/livingdolls/yute-modelmux/internal/config"
+          )
+
+          func groupFeatureBool(value bool) *bool { return &value }
+
+          func groupFeatureConfig(baseURL string) *config.Config {
+          \treturn &config.Config{
+          \t\tApp:      config.AppConfig{Name: "test", LogLevel: "info"},
+          \t\tServer:   config.ServerConfig{Host: "127.0.0.1", Port: 8787},
+          \t\tCooldown: config.CooldownConfig{RateLimitSeconds: 30, ServerErrorSeconds: 30, TimeoutSeconds: 30},
+          \t\tRetry:    config.RetryConfig{MaxRetryPerKey: 0, MaxTotalAttempts: 4},
+          \t\tProviders: []config.ProviderConfig{
+          \t\t\t{ID: "provider", Name: "Provider", Type: "openai-compatible", BaseURL: baseURL, AuthType: "bearer", TimeoutSeconds: 5, Enabled: true},
+          \t\t},
+          \t\tModels: []config.ModelConfig{
+          \t\t\t{ID: "economy", ProviderID: "provider", ModelName: "economy-upstream", Strategy: "failover", Enabled: true, Capabilities: &config.ModelCapabilityConfig{Chat: groupFeatureBool(true), Streaming: groupFeatureBool(true), Tools: groupFeatureBool(false)}},
+          \t\t\t{ID: "flagship", ProviderID: "provider", ModelName: "flagship-upstream", Strategy: "failover", Enabled: true, Capabilities: &config.ModelCapabilityConfig{Chat: groupFeatureBool(true), Streaming: groupFeatureBool(true), Tools: groupFeatureBool(true)}},
+          \t\t},
+          \t\tModelGroups: []config.ModelGroupConfig{
+          \t\t\t{ID: "coding-balanced", Name: "Coding Balanced", Description: "Agent coding group", Strategy: "failover", Enabled: true, ContextWindow: 128000, MaxOutputTokens: 32000, Members: []config.ModelGroupMemberConfig{
+          \t\t\t\t{ModelID: "economy", Priority: 1, Weight: 1, Enabled: true},
+          \t\t\t\t{ModelID: "flagship", Priority: 2, Weight: 1, Enabled: true},
+          \t\t\t}},
+          \t\t},
+          \t\tKeys: []config.KeyConfig{
+          \t\t\t{ID: "economy-key", ProviderID: "provider", ModelID: "economy", Value: "economy-secret", Status: "active", Priority: 1},
+          \t\t\t{ID: "flagship-key", ProviderID: "provider", ModelID: "flagship", Value: "flagship-secret", Status: "active", Priority: 1},
+          \t\t},
+          \t}
+          }
+
+          func TestGroupRoutingFiltersIncompatibleModelsAndSetsHeaders(t *testing.T) {
+          \tvar selectedModel string
+          \tupstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          \t\tvar payload struct{ Model string `json:"model"` }
+          \t\tif err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+          \t\t\tt.Fatal(err)
+          \t\t}
+          \t\tselectedModel = payload.Model
+          \t\tw.Header().Set("Content-Type", "application/json")
+          \t\t_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+          \t}))
+          \tdefer upstream.Close()
+
+          \trouter, err := NewRouterService(groupFeatureConfig(upstream.URL + "/v1"))
+          \tif err != nil {
+          \t\tt.Fatal(err)
+          \t}
+          \treq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"coding-balanced","messages":[],"tools":[{"type":"function","function":{"name":"read_file"}}]}`))
+          \tresp, err := router.HandleChatCompletion(context.Background(), req)
+          \tif err != nil {
+          \t\tt.Fatal(err)
+          \t}
+          \tdefer resp.Body.Close()
+
+          \tif selectedModel != "flagship-upstream" {
+          \t\tt.Fatalf("expected compatible flagship model, got %q", selectedModel)
+          \t}
+          \tfor header, want := range map[string]string{
+          \t\t"X-ModelMux-Requested-Model":  "coding-balanced",
+          \t\t"X-ModelMux-Selected-Model":   "flagship",
+          \t\t"X-ModelMux-Selected-Provider": "provider",
+          \t\t"X-ModelMux-Group":            "coding-balanced",
+          \t} {
+          \t\tif got := resp.Header.Get(header); got != want {
+          \t\t\tt.Fatalf("%s = %q, want %q", header, got, want)
+          \t\t}
+          \t}
+          }
+
+          func TestGroupCapabilityMismatchReturnsBadRequest(t *testing.T) {
+          \tcfg := groupFeatureConfig("https://example.test/v1")
+          \tcfg.Models[1].Capabilities.Tools = groupFeatureBool(false)
+          \trouter, err := NewRouterService(cfg)
+          \tif err != nil {
+          \t\tt.Fatal(err)
+          \t}
+          \treq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"coding-balanced","messages":[],"tools":[{"type":"function","function":{"name":"read_file"}}]}`))
+          \t_, err = router.HandleChatCompletion(context.Background(), req)
+          \tvar proxyErr *ProxyError
+          \tif !errors.As(err, &proxyErr) {
+          \t\tt.Fatalf("expected ProxyError, got %T: %v", err, err)
+          \t}
+          \tif proxyErr.HTTPStatus != http.StatusBadRequest || proxyErr.Code != "group_capability_mismatch" {
+          \t\tt.Fatalf("unexpected error: %+v", proxyErr)
+          \t}
+          }
+
+          func TestGroupRequiredCapabilitiesRejectHeterogeneousMembers(t *testing.T) {
+          \tcfg := groupFeatureConfig("https://example.test/v1")
+          \tcfg.ModelGroups[0].RequiredCapabilities = []string{"tools"}
+          \t_, err := NewRouterService(cfg)
+          \tif err == nil || !strings.Contains(err.Error(), "requires capability tools") {
+          \t\tt.Fatalf("expected required-capability validation error, got %v", err)
+          \t}
+          }
+
+          func TestConsistentHashSelectionIsStable(t *testing.T) {
+          \tcfg := groupFeatureConfig("https://example.test/v1")
+          \tcfg.ModelGroups[0].Strategy = "consistent_hash"
+          \trouter, err := NewRouterService(cfg)
+          \tif err != nil {
+          \t\tt.Fatal(err)
+          \t}
+
+          \tvar selected string
+          \tfor i := 0; i < 10; i++ {
+          \t\t_, model, ok := router.selectGroupMemberForRequest("coding-balanced", map[string]struct{}{}, "/chat/completions", []byte(`{"messages":[]}`), "conversation-42")
+          \t\tif !ok {
+          \t\t\tt.Fatal("expected a selected group member")
+          \t\t}
+          \t\tif i == 0 {
+          \t\t\tselected = model.ID
+          \t\t} else if model.ID != selected {
+          \t\t\tt.Fatalf("selection changed from %s to %s", selected, model.ID)
+          \t\t}
+          \t}
+
+          \t_, fallback, ok := router.selectGroupMemberForRequest("coding-balanced", map[string]struct{}{}, "/chat/completions", []byte(`{"messages":[]}`), "")
+          \tif !ok || fallback.ID != "economy" {
+          \t\tt.Fatalf("expected no-session fallback to priority member economy, got %+v", fallback)
+          \t}
+          }
+          '''))
+
+          Path("internal/config/model_group_config_test.go").write_text(dedent('''\
+          package config
+
+          import (
+          \t"strings"
+          \t"testing"
+          )
+
+          func TestValidateModelGroupMetadataAndConsistentHash(t *testing.T) {
+          \tcfg := Default()
+          \tcfg.ModelGroups[0].Strategy = "consistent_hash"
+          \tcfg.ModelGroups[0].Description = "Stable agent routing"
+          \tcfg.ModelGroups[0].RequiredCapabilities = []string{"chat", "streaming", "tools"}
+          \tcfg.ModelGroups[0].ContextWindow = 128000
+          \tcfg.ModelGroups[0].MaxOutputTokens = 32000
+          \tif err := cfg.Validate(); err != nil {
+          \t\tt.Fatalf("expected valid group metadata: %v", err)
+          \t}
+          }
+
+          func TestValidateRejectsInvalidModelGroupMetadata(t *testing.T) {
+          \tcfg := Default()
+          \tcfg.ModelGroups[0].Strategy = "random"
+          \tcfg.ModelGroups[0].RequiredCapabilities = []string{"telepathy"}
+          \tcfg.ModelGroups[0].ContextWindow = -1
+          \tcfg.ModelGroups[0].MaxOutputTokens = -1
+          \terr := cfg.Validate()
+          \tif err == nil {
+          \t\tt.Fatal("expected validation errors")
+          \t}
+          \tfor _, want := range []string{"consistent_hash", "required capability telepathy", "context_window must be non-negative", "max_output_tokens must be non-negative"} {
+          \t\tif !strings.Contains(err.Error(), want) {
+          \t\t\tt.Fatalf("expected %q in %q", want, err.Error())
+          \t\t}
+          \t}
+          }
+          '''))
+
+          Path("internal/adapter/httpserver/model_groups_test.go").write_text(dedent('''\
+          package httpserver
+
+          import (
+          \t"encoding/json"
+          \t"net/http"
+          \t"net/http/httptest"
+          \t"testing"
+
+          \t"github.com/livingdolls/yute-modelmux/internal/app/service"
+          \t"github.com/livingdolls/yute-modelmux/internal/config"
+          )
+
+          func TestModelsExposeModelGroupMetadata(t *testing.T) {
+          \tcfg := config.Default()
+          \tcfg.ModelGroups[0].Description = "Flagship coding models"
+          \tcfg.ModelGroups[0].Strategy = "consistent_hash"
+          \tcfg.ModelGroups[0].RequiredCapabilities = []string{"chat", "streaming", "tools"}
+          \tcfg.ModelGroups[0].ContextWindow = 128000
+          \tcfg.ModelGroups[0].MaxOutputTokens = 32000
+          \trouter, err := service.NewRouterService(cfg)
+          \tif err != nil {
+          \t\tt.Fatal(err)
+          \t}
+          \tserver := New(router, cfg)
+          \treq := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+          \trec := httptest.NewRecorder()
+          \tserver.modelsHandler(rec, req)
+
+          \tvar payload struct {
+          \t\tData []modelListItem `json:"data"`
+          \t}
+          \tif err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+          \t\tt.Fatal(err)
+          \t}
+          \tfor _, item := range payload.Data {
+          \t\tif item.ID != "high-price" {
+          \t\t\tcontinue
+          \t\t}
+          \t\tif item.ModelMuxType != "group" || item.Strategy != "consistent_hash" || item.Description != "Flagship coding models" {
+          \t\t\tt.Fatalf("unexpected group metadata: %+v", item)
+          \t\t}
+          \t\tif !item.Capabilities.Tools || item.ContextWindow != 128000 || item.MaxOutputTokens != 32000 {
+          \t\t\tt.Fatalf("unexpected group capabilities or limits: %+v", item)
+          \t\t}
+          \t\treturn
+          \t}
+          \tt.Fatal("group high-price not found")
+          }
+          '''))
+
+          Path("docs").mkdir(exist_ok=True)
+          Path("docs/agent-model-groups.md").write_text(dedent('''\
+          # Agent model groups
+
+          Model groups are virtual OpenAI-compatible models. An agent sends a normal request with a group ID in the `model` field, and ModelMux selects a compatible physical model, provider, and key.
+
+          ```json
+          {
+            "model": "coding-balanced",
+            "messages": [{"role": "user", "content": "Refactor this package"}],
+            "stream": true
+          }
+          ```
+
+          ## Configuration
+
+          ```yaml
+          model_groups:
+            - id: coding-flagship
+              name: Coding — Flagship
+              description: Highest-quality models for difficult coding tasks
+              strategy: failover
+              enabled: true
+              required_capabilities: [chat, streaming, tools]
+              context_window: 200000
+              max_output_tokens: 32000
+              members:
+                - model_id: claude-opus
+                  priority: 1
+                  weight: 1
+                  enabled: true
+                - model_id: gpt-codex
+                  priority: 2
+                  weight: 1
+                  enabled: true
+
+            - id: coding-balanced
+              name: Coding — Balanced
+              description: General coding with controlled cost
+              strategy: consistent_hash
+              enabled: true
+              required_capabilities: [chat, streaming, tools]
+              context_window: 128000
+              max_output_tokens: 32000
+              members:
+                - model_id: claude-sonnet
+                  priority: 1
+                  weight: 1
+                  enabled: true
+                - model_id: gemini-pro
+                  priority: 2
+                  weight: 1
+                  enabled: true
+
+            - id: coding-economy
+              name: Coding — Economy
+              description: Lower-cost models for routine work
+              strategy: weighted
+              enabled: true
+              required_capabilities: [chat, streaming, tools]
+              context_window: 64000
+              max_output_tokens: 16000
+              members:
+                - model_id: qwen-coder
+                  priority: 1
+                  weight: 70
+                  enabled: true
+                - model_id: deepseek-coder
+                  priority: 2
+                  weight: 30
+                  enabled: true
+          ```
+
+          Supported group strategies:
+
+          - `failover`: use priority order and move to the next member when the selected model is unavailable.
+          - `round_robin`: rotate requests across available compatible members.
+          - `weighted`: randomly select using each member's weight.
+          - `consistent_hash`: keep the same session on the same member using rendezvous hashing, while retaining failover.
+
+          Before selection, ModelMux filters members against the request's chat/completions, streaming, tools, vision, and JSON-mode requirements. `required_capabilities` additionally guarantees that every enabled member provides the listed capabilities when the router starts.
+
+          ## Stable sessions
+
+          For `consistent_hash`, ModelMux uses the first available value from:
+
+          1. `X-ModelMux-Session-ID` header
+          2. `X-OpenAI-User` or `OpenAI-User` header
+          3. OpenAI request field `user`
+          4. `metadata.session_id`, `metadata.conversation_id`, or `metadata.thread_id`
+
+          Without a session value, `consistent_hash` falls back to priority order.
+
+          ## OpenCode
+
+          Configure ModelMux as an OpenAI-compatible provider and expose group IDs as models:
+
+          ```jsonc
+          {
+            "$schema": "https://opencode.ai/config.json",
+            "model": "modelmux/coding-balanced",
+            "provider": {
+              "modelmux": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "ModelMux",
+                "options": {
+                  "baseURL": "http://127.0.0.1:8787/v1",
+                  "apiKey": "{env:MODELMUX_AUTH_TOKEN}"
+                },
+                "models": {
+                  "coding-flagship": {"name": "Coding — Flagship"},
+                  "coding-balanced": {"name": "Coding — Balanced"},
+                  "coding-economy": {"name": "Coding — Economy"}
+                }
+              }
+            }
+          }
+          ```
+
+          ## Cline
+
+          Select **OpenAI Compatible** and set:
+
+          ```text
+          Base URL: http://127.0.0.1:8787/v1
+          API Key: <MODELMUX_AUTH_TOKEN>
+          Model ID: coding-balanced
+          ```
+
+          The enabled groups are returned by `GET /v1/models`, alongside physical models.
+
+          ## Routing response headers
+
+          ModelMux adds these headers to upstream responses:
+
+          ```text
+          X-ModelMux-Requested-Model
+          X-ModelMux-Selected-Model
+          X-ModelMux-Selected-Provider
+          X-ModelMux-Group
+          X-ModelMux-Attempt
+          ```
+
+          They make it possible to diagnose which physical model served an agent request while keeping the agent configuration group-based.
+          '''))
+
+          readme = Path("README.md")
+          text = readme.read_text()
+          marker = "## Agent model groups"
+          if marker not in text:
+              text += dedent('''\
+
+              ## Agent model groups
+
+              ModelMux can expose model groups as virtual OpenAI-compatible models for coding agents such as OpenCode and Cline. Groups support capability-aware selection, failover, weighted routing, and stable `consistent_hash` sessions. See [Agent model groups](docs/agent-model-groups.md).
+              ''')
+              readme.write_text(text)
+          PY
+
+      - name: Format and validate
+        shell: bash
+        run: |
+          set +e
+          {
+            echo '## gofmt'
+            gofmt -w internal/config/config.go internal/core/domain/model_group.go internal/app/service/router_service.go internal/app/service/model_group_routing.go internal/app/service/model_group_routing_test.go internal/config/model_group_config_test.go internal/adapter/httpserver/handlers.go internal/adapter/httpserver/model_listing.go internal/adapter/httpserver/model_groups_test.go
+            echo '## go test -race ./...'
+            go test -race ./...
+            echo '## go test e2e'
+            go test -race -tags=e2e ./internal/e2e/ -timeout 60s
+            echo '## go vet'
+            go vet ./...
+          } 2>&1 | tee model-group-validation.log
+          status=${PIPESTATUS[0]}
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          if [ "$status" -eq 0 ]; then
+            rm -f model-group-inspection.txt model-group-validation.log .github/workflows/model-group-implement.yml
+            git add -A
+            git commit -m 'feat: add agent-friendly model group routing'
+            git push
+            exit 0
+          fi
+
+          git add -A
+          git commit -m 'wip: add model group routing with validation failure'
+          git push
+          exit "$status"
