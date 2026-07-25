@@ -162,6 +162,56 @@ func (c *unsupportedProviderClient) TestKey(ctx context.Context, provider domain
 	return fmt.Errorf("unsupported provider type %q for provider %s", provider.Type, provider.ID)
 }
 
+const maxBufferedProviderResponseBytes int64 = 32 << 20
+
+type boundedProviderClient struct {
+	next ProviderClient
+}
+
+func (c *boundedProviderClient) Forward(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey, req *http.Request, apiPath string) (*http.Response, error) {
+	resp, err := c.next.Forward(ctx, provider, model, apiKey, req, apiPath)
+	if err != nil || resp == nil || resp.Body == nil {
+		return resp, err
+	}
+	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
+		return resp, nil
+	}
+	if resp.ContentLength > maxBufferedProviderResponseBytes {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("upstream response exceeds %d-byte buffer limit", maxBufferedProviderResponseBytes)
+	}
+	reader := &io.LimitedReader{R: resp.Body, N: maxBufferedProviderResponseBytes + 1}
+	data, readErr := io.ReadAll(reader)
+	closeErr := resp.Body.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("read upstream response: %w", readErr)
+	}
+	if int64(len(data)) > maxBufferedProviderResponseBytes {
+		return nil, fmt.Errorf("upstream response exceeds %d-byte buffer limit", maxBufferedProviderResponseBytes)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close upstream response: %w", closeErr)
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(data))
+	resp.ContentLength = int64(len(data))
+	if resp.Header == nil {
+		resp.Header = make(http.Header)
+	}
+	resp.Header.Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	return resp, nil
+}
+
+func (c *boundedProviderClient) TestKey(ctx context.Context, provider domain.Provider, model domain.Model, apiKey domain.APIKey) error {
+	return c.next.TestKey(ctx, provider, model, apiKey)
+}
+
+func withResponseLimit(client ProviderClient) ProviderClient {
+	if _, ok := client.(*boundedProviderClient); ok {
+		return client
+	}
+	return &boundedProviderClient{next: client}
+}
+
 type ClientRegistry struct {
 	clients map[domain.ProviderType]ProviderClient
 }
@@ -170,10 +220,10 @@ func NewClientRegistry() *ClientRegistry {
 	r := &ClientRegistry{
 		clients: map[domain.ProviderType]ProviderClient{},
 	}
-	r.clients[domain.ProviderTypeOpenAICompatible] = &OpenAICompatibleClient{}
-	r.clients[domain.ProviderTypeCustom] = &OpenAICompatibleClient{}
-	r.clients[domain.ProviderTypeAnthropic] = NewAnthropicClient()
-	r.clients[domain.ProviderTypeGemini] = NewGeminiClient()
+	r.clients[domain.ProviderTypeOpenAICompatible] = withResponseLimit(&OpenAICompatibleClient{})
+	r.clients[domain.ProviderTypeCustom] = withResponseLimit(&OpenAICompatibleClient{})
+	r.clients[domain.ProviderTypeAnthropic] = withResponseLimit(NewAnthropicClient())
+	r.clients[domain.ProviderTypeGemini] = withResponseLimit(NewGeminiClient())
 	return r
 }
 
@@ -185,5 +235,5 @@ func (r *ClientRegistry) Get(pt domain.ProviderType) ProviderClient {
 }
 
 func (r *ClientRegistry) Register(pt domain.ProviderType, client ProviderClient) {
-	r.clients[pt] = client
+	r.clients[pt] = withResponseLimit(client)
 }
