@@ -108,6 +108,32 @@ func TestGroupRequiredCapabilitiesRejectHeterogeneousMembers(t *testing.T) {
 	}
 }
 
+func TestGroupWithOnlyDisabledModelsDoesNotBlockRouterStartup(t *testing.T) {
+	cfg := groupFeatureConfig("https://example.test/v1")
+	for i := range cfg.Models {
+		cfg.Models[i].Enabled = false
+	}
+
+	router, err := NewRouterService(cfg)
+	if err != nil {
+		t.Fatalf("disabled group members must not block router startup: %v", err)
+	}
+
+	physicalReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"economy","messages":[]}`))
+	_, err = router.HandleChatCompletion(context.Background(), physicalReq)
+	var physicalErr *ProxyError
+	if !errors.As(err, &physicalErr) || physicalErr.HTTPStatus != http.StatusForbidden || physicalErr.Code != "resource_disabled" {
+		t.Fatalf("expected disabled physical model error, got %+v", err)
+	}
+
+	groupReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"coding-balanced","messages":[]}`))
+	_, err = router.HandleChatCompletion(context.Background(), groupReq)
+	var groupErr *ProxyError
+	if !errors.As(err, &groupErr) || groupErr.HTTPStatus != http.StatusTooManyRequests || groupErr.Code != "all_group_models_unavailable" {
+		t.Fatalf("expected unavailable group error, got %+v", err)
+	}
+}
+
 func TestConsistentHashSelectionIsStable(t *testing.T) {
 	cfg := groupFeatureConfig("https://example.test/v1")
 	cfg.ModelGroups[0].Strategy = "consistent_hash"
