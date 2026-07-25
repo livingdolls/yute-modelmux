@@ -174,7 +174,7 @@ func (s *RouterService) prepareModelGroups() error {
 			}
 		}
 		if resolvedMembers == 0 {
-			return fmt.Errorf("enabled model group %s has no enabled model members", group.ID)
+			continue
 		}
 		for _, capability := range group.RequiredCapabilities {
 			if !capabilityEnabled(group.Capabilities, capability) {
