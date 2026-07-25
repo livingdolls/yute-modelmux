@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: finalize-audit-fixes
@@ -41,13 +42,29 @@ jobs:
       - name: Apply reviewed patch
         run: |
           sed -i 's#internal/app/service/router.go#internal/app/service/router_service.go#g' audit-existing.patch
-          patch --batch --forward -p1 < audit-existing.patch
-          test ! -s cmd/modelmux/main.go.rej
-          test ! -s internal/secret/store.go.rej
-          test ! -s internal/storage/storage.go.rej
-          test ! -s internal/adapter/httpserver/server.go.rej
-          test ! -s internal/adapter/httpserver/handlers.go.rej
-          test ! -s internal/app/service/router_service.go.rej
+          set +e
+          patch --batch --forward -p1 < audit-existing.patch > audit-apply.log 2>&1
+          status=$?
+          set -e
+          cat audit-apply.log
+          exit "$status"
+
+      - name: Publish patch failure diagnostics
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo '### Audit patch diagnostics'
+            echo
+            echo '```text'
+            cat audit-apply.log
+            echo '```'
+          } > audit-comment.md
+          gh pr comment 10 --body-file audit-comment.md
+
+      - name: Format changed Go files
+        run: |
           gofmt -w \
             cmd/modelmux/main.go \
             cmd/modelmux/network.go \
@@ -91,6 +108,8 @@ jobs:
         run: |
           rm -f \
             audit-existing.patch \
+            audit-apply.log \
+            audit-comment.md \
             .github/workflows/bootstrap-audit-fixes.yml \
             .github/workflows/apply-audit-fixes.yml \
             scripts/apply_audit_fixes.py \
