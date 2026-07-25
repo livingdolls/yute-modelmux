@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - agent/fix-audit-findings
-    paths:
-      - audit-existing.patch
-      - .github/workflows/bootstrap-audit-fixes.yml
 
 permissions:
   contents: write
