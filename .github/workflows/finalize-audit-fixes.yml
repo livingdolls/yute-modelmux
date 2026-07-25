@@ -35,6 +35,11 @@ jobs:
 
       - name: Apply reviewed patch
         run: |
+          sed -i \
+            -e 's#internal/secret/store.go#internal/secret/secret.go#g' \
+            -e 's#internal/secret/store_test.go#internal/secret/secret_test.go#g' \
+            audit-existing.patch
+          sed -i '/^diff --git a\/.github\/workflows\/release.yml/,$d' audit-existing.patch
           set +e
           git apply --recount --verbose audit-existing.patch > audit-apply.log 2>&1
           status=$?
@@ -65,8 +70,8 @@ jobs:
             internal/config/paths.go \
             internal/config/paths_test.go \
             internal/secret/atomic.go \
-            internal/secret/store.go \
-            internal/secret/store_test.go \
+            internal/secret/secret.go \
+            internal/secret/secret_test.go \
             internal/storage/health.go \
             internal/storage/health_test.go \
             internal/storage/storage.go \
