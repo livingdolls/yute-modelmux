@@ -145,6 +145,7 @@ Exit code is non-zero if any validation errors are found.`,
 	configValidateCmd.Flags().BoolVar(&validateJSON, "json", false, "output as JSON")
 	configValidateCmd.Flags().BoolVar(&validateCheckProvider, "check-provider", false, "also check provider reachability")
 	configCmd.AddCommand(configValidateCmd)
+	configCmd.AddCommand(newOpenCodeConfigCommand(&configPath))
 	rootCmd.AddCommand(configCmd)
 
 	var keyTestID string
