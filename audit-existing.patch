@@ -1,0 +1,261 @@
+diff --git a/cmd/modelmux/main.go b/cmd/modelmux/main.go
+index 4625c63..0000000 100644
+--- a/cmd/modelmux/main.go
++++ b/cmd/modelmux/main.go
+@@ -872,9 +872,9 @@ func newRootCommand() *cobra.Command {
+ 				return err
+ 			}
+ 
+-			if cfg.Server.Host == "0.0.0.0" && !cfg.Server.RequireAuth {
+-				fmt.Fprintln(cmd.ErrOrStderr(), "WARNING: server bound to 0.0.0.0 without authentication enabled.")
+-				fmt.Fprintln(cmd.ErrOrStderr(), "Anyone on the network can use your API keys. Set server.require_auth=true and server.auth_token_env.")
++			if !isLoopbackBindHost(cfg.Server.Host) && !cfg.Server.RequireAuth {
++				fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: server bound to non-loopback host %q without authentication enabled.\n", cfg.Server.Host)
++				fmt.Fprintln(cmd.ErrOrStderr(), "Anyone who can reach this address can use your API keys. Set server.require_auth=true and server.auth_token_env.")
+ 			}
+@@ -983,15 +983,7 @@ func mutateKeyStatus(configPath, keyID, status string, w io.Writer) error {
+ }
+ 
+ func secretPath(cfg *config.Config) string {
+-	path := cfg.Storage.Path
+-	if path == "" {
+-		path = config.Default().Storage.Path
+-	}
+-	path = expandHome(path)
+-	dir := strings.TrimSuffix(path, "modelmux.db")
+-	if dir == path {
+-		dir = path + ".d"
+-	}
+-	return dir + "secrets.enc"
++	return config.SecretStorePath(cfg.Storage.Path)
+ }
+@@ -1044,10 +1036,18 @@ func newRouterServiceWithSecret(cfg *config.Config, store storage.Storage, secSt
+-	if store != nil || secStore != nil {
+-		return service.NewRouterServiceWithSecret(cfg, store, secStore)
++	var (
++		router *service.RouterService
++		err    error
++	)
++	if store != nil || secStore != nil {
++		router, err = service.NewRouterServiceWithSecret(cfg, store, secStore)
++	} else {
++		router, err = service.NewRouterService(cfg)
+ 	}
+-	return service.NewRouterService(cfg)
++	if err != nil {
++		return nil, err
++	}
++	if err := storage.HealthError(store); err != nil {
++		return nil, err
++	}
++	return router, nil
+ }
+diff --git a/internal/secret/store.go b/internal/secret/store.go
+index b65a100..0000000 100644
+--- a/internal/secret/store.go
++++ b/internal/secret/store.go
+@@ -53,6 +53,9 @@ func NewStore(path string) (*Store, error) {
+ 		}
+ 		return s, nil
+ 	}
++	if !errors.Is(err, os.ErrNotExist) {
++		return nil, fmt.Errorf("read secret store: %w", err)
++	}
+ 
+ 	salt := make([]byte, saltLen)
+@@ -128,7 +131,7 @@ func (s *Store) save() error {
+ 		return err
+ 	}
+ 
+-	return os.WriteFile(s.path, encrypted, 0o600)
++	return writeFileAtomic(s.path, encrypted, 0o600, nil)
+ }
+@@ -245,8 +248,18 @@ func (s *Store) ExportData() ([]byte, error) {
+ }
+ 
+ func ImportData(path string, data []byte) error {
+-	return os.WriteFile(path, data, 0o600)
++	if len(data) == 0 {
++		return errors.New("secret store import is empty")
++	}
++	return writeFileAtomic(path, data, 0o600, func(candidate string) error {
++		_, err := NewStore(candidate)
++		return err
++	})
+ }
+@@ -268,7 +281,7 @@ func (s *Store) RotateKey(newMasterKey string) error {
+ 	if err != nil {
+ 		return err
+ 	}
+-	return os.WriteFile(s.path, encrypted, 0o600)
++	return writeFileAtomic(s.path, encrypted, 0o600, nil)
+ }
+diff --git a/internal/secret/store_test.go b/internal/secret/store_test.go
+index 6c2c7e7..0000000 100644
+--- a/internal/secret/store_test.go
++++ b/internal/secret/store_test.go
+@@ -224,4 +224,46 @@ func TestVerifyFile(t *testing.T) {
+ 	if err := VerifyFile("/nonexistent/path/secrets.enc"); err == nil {
+ 		t.Fatal("verify should fail for missing file")
+ 	}
+ }
++
++func TestNewStoreReturnsReadErrors(t *testing.T) {
++	t.Setenv("MODELMUX_MASTER_KEY", "read-error-test-key")
++	path := filepath.Join(t.TempDir(), "secrets.enc")
++	if err := os.Mkdir(path, 0o700); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := NewStore(path); err == nil {
++		t.Fatal("expected directory read error")
++	}
++}
++
++func TestImportRejectsInvalidDataAndPreservesExistingStore(t *testing.T) {
++	t.Setenv("MODELMUX_MASTER_KEY", "import-validation-key")
++	path := filepath.Join(t.TempDir(), "secrets.enc")
++	store, err := NewStore(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := store.Set("existing", "value"); err != nil {
++		t.Fatal(err)
++	}
++	before, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := ImportData(path, []byte("not-an-encrypted-store")); err == nil {
++		t.Fatal("expected invalid import to fail")
++	}
++	after, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if string(after) != string(before) {
++		t.Fatal("invalid import replaced the existing store")
++	}
++}
+diff --git a/internal/storage/storage.go b/internal/storage/storage.go
+index 3efa13c..0000000 100644
+--- a/internal/storage/storage.go
++++ b/internal/storage/storage.go
+@@ -150,7 +150,7 @@ func New(path string) (Storage, error) {
+ 		return nil, fmt.Errorf("storage: migrate: %w", err)
+ 	}
+ 
+-	return &sqliteStore{db: db}, nil
++	return newGuardedStorage(&sqliteStore{db: db}), nil
+ }
+diff --git a/internal/adapter/httpserver/server.go b/internal/adapter/httpserver/server.go
+index 370f8bd..0000000 100644
+--- a/internal/adapter/httpserver/server.go
++++ b/internal/adapter/httpserver/server.go
+@@ -168,6 +168,12 @@ func (s *Server) generationMiddleware(next http.Handler) http.Handler {
+ 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "router not configured"})
+ 			return
+ 		}
++		if r.URL.Path != "/health" && r.URL.Path != "/admin/reload" {
++			if err := storage.HealthError(gen.store); err != nil {
++				s.genMu.RUnlock()
++				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "persistent storage unavailable"})
++				return
++			}
++		}
+ 		rs, release, ok := gen.acquire()
+@@ -199,17 +205,8 @@ func expandHome(path string) string {
+ }
+ 
+ func resolveSecretPath(cfg *config.Config) string {
+-	dbPath := cfg.Storage.Path
+-	if dbPath == "" {
+-		dbPath = config.Default().Storage.Path
+-	}
+-	dbPath = expandHome(dbPath)
+-	dir := strings.TrimSuffix(dbPath, "modelmux.db")
+-	if dir == dbPath {
+-		dir = dbPath + ".d"
+-	}
+-	return dir + "secrets.enc"
++	return config.SecretStorePath(cfg.Storage.Path)
+ }
+@@ -254,6 +251,13 @@ func (s *Server) adminReloadHandler(w http.ResponseWriter, r *http.Request) {
+ 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to create router: " + err.Error()})
+ 		return
+ 	}
++	if err := storage.HealthError(newStore); err != nil {
++		if newStore != nil {
++			_ = newStore.Close()
++		}
++		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to load persistent storage"})
++		return
++	}
+ 	newGen := newRouterGeneration(newRS, newStore)
+diff --git a/internal/adapter/httpserver/handlers.go b/internal/adapter/httpserver/handlers.go
+index d9f507f..0000000 100644
+--- a/internal/adapter/httpserver/handlers.go
++++ b/internal/adapter/httpserver/handlers.go
+@@ -6,6 +6,7 @@ import (
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
+ 	"io"
++	"log/slog"
+ 	"net/http"
+@@ -18,7 +19,12 @@ import (
+ )
+ 
+ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
++	if err := storagepkg.HealthError(s.storeForRequest(r)); err != nil {
++		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "degraded", "storage": "unhealthy"})
++		return
++	}
+ 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+ }
+@@ -548,7 +554,8 @@ func writeProxyError(w http.ResponseWriter, err error) {
+ 		writeJSON(w, proxyErr.HTTPStatus, map[string]any{"error": map[string]any{"message": proxyErr.Message, "type": proxyErr.Type, "code": proxyErr.Code}})
+ 		return
+ 	}
+-	writeJSON(w, http.StatusBadGateway, map[string]any{"error": map[string]any{"message": err.Error(), "type": "modelmux_error"}})
++	slog.Error("proxy request failed", "error", err)
++	writeJSON(w, http.StatusBadGateway, map[string]any{"error": map[string]any{"message": "upstream request failed", "type": "modelmux_error"}})
+ }
+diff --git a/internal/app/service/router_service.go b/internal/app/service/router_service.go
+index 9e59d85..0000000 100644
+--- a/internal/app/service/router_service.go
++++ b/internal/app/service/router_service.go
+@@ -701,11 +701,18 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Request
+ 
+ 		if result.Success && !isStreamRequest(bodyBytes) && resp != nil {
+-			respBodyBytes, readErr := io.ReadAll(resp.Body)
+-			resp.Body.Close()
++			respBodyBytes, readErr := readBoundedResponseBody(resp)
+ 			if readErr == nil {
+ 				result.TokenInput, result.TokenOutput = parseTokenUsage(respBodyBytes)
+ 				resp.Body = io.NopCloser(bytes.NewReader(respBodyBytes))
++			} else {
++				result.Success = false
++				result.StatusCode = http.StatusBadGateway
++				result.Error = readErr.Error()
++				result.ShouldRotateKey = false
++				err = readErr
++				resp = nil
+ 			}
+ 		}
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 8c62e0f..0000000 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -25,8 +25,14 @@ jobs:
+           cache: true
+ 
+-      - name: Run tests
+-        run: go test ./...
++      - name: Unit and race tests
++        run: go test -race ./...
++
++      - name: End-to-end tests
++        run: go test -race -tags=e2e ./internal/e2e/ -timeout 60s
++
++      - name: Vet
++        run: go vet ./...
