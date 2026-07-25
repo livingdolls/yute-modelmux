@@ -148,7 +148,16 @@ func New(path string) (Storage, error) {
 		return nil, fmt.Errorf("storage: migrate: %w", err)
 	}
 
-	return &sqliteStore{db: db}, nil
+	guarded := newGuardedStorage(&sqliteStore{db: db})
+	if _, err := guarded.LoadKeyRuntime(); err != nil {
+		_ = guarded.Close()
+		return nil, fmt.Errorf("storage: load key runtime: %w", err)
+	}
+	if _, err := guarded.LoadRequestLogs(); err != nil {
+		_ = guarded.Close()
+		return nil, fmt.Errorf("storage: load request logs: %w", err)
+	}
+	return guarded, nil
 }
 
 type sqliteStore struct {
