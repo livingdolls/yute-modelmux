@@ -1,0 +1,89 @@
+name: Apply audit fixes
+
+on:
+  push:
+    branches:
+      - agent/fix-audit-findings
+    paths:
+      - audit-existing.patch
+      - .github/workflows/bootstrap-audit-fixes.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-audit-fixes
+  cancel-in-progress: false
+
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/fix-audit-findings
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Apply reviewed patch
+        run: |
+          git apply --recount --check audit-existing.patch
+          git apply --recount audit-existing.patch
+          gofmt -w \
+            cmd/modelmux/main.go \
+            cmd/modelmux/network.go \
+            cmd/modelmux/network_test.go \
+            internal/config/paths.go \
+            internal/config/paths_test.go \
+            internal/secret/atomic.go \
+            internal/secret/store.go \
+            internal/secret/store_test.go \
+            internal/storage/health.go \
+            internal/storage/health_test.go \
+            internal/storage/storage.go \
+            internal/adapter/httpserver/server.go \
+            internal/adapter/httpserver/handlers.go \
+            internal/adapter/httpserver/storage_health_test.go \
+            internal/app/service/router.go \
+            internal/app/service/response_buffer.go \
+            internal/app/service/response_buffer_test.go
+
+      - name: Generate deterministic website lockfile
+        working-directory: website
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Run Go unit and race tests
+        run: go test -race ./...
+
+      - name: Run Go end-to-end tests
+        run: go test -race -tags=e2e ./internal/e2e/ -timeout 60s
+
+      - name: Run Go vet
+        run: go vet ./...
+
+      - name: Validate website
+        working-directory: website
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+
+      - name: Commit validated fixes
+        run: |
+          rm audit-existing.patch .github/workflows/bootstrap-audit-fixes.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix audit findings"
+          git push origin HEAD:agent/fix-audit-findings
