@@ -1,0 +1,26 @@
+name: Model Group Inspection
+
+on:
+  push:
+    branches:
+      - agent/model-group-routing
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect routing implementation
+        shell: bash
+        run: |
+          echo '=== group selection ==='
+          grep -R -n -A140 -B20 'func (s \*RouterService) SelectGroupMember' internal || true
+          echo '=== config validation ==='
+          grep -R -n -A160 -B20 'func (.*Config.*Validate' internal/config || true
+          echo '=== group tests ==='
+          grep -R -n -A120 -B10 'ModelGroup' internal/app/service/*_test.go internal/adapter/httpserver/*_test.go internal/config/*_test.go || true
+          echo '=== repository docs ==='
+          find . -maxdepth 3 -type f \( -iname '*config*.yaml' -o -iname '*config*.yml' -o -iname 'README.md' \) -print
