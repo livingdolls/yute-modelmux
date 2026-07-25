@@ -173,11 +173,15 @@ type KeyConfig struct {
 }
 
 type ModelGroupConfig struct {
-	ID       string                   `yaml:"id"`
-	Name     string                   `yaml:"name"`
-	Strategy string                   `yaml:"strategy"`
-	Enabled  bool                     `yaml:"enabled"`
-	Members  []ModelGroupMemberConfig `yaml:"members"`
+	ID                   string                   `yaml:"id"`
+	Name                 string                   `yaml:"name"`
+	Description          string                   `yaml:"description,omitempty"`
+	Strategy             string                   `yaml:"strategy"`
+	Enabled              bool                     `yaml:"enabled"`
+	RequiredCapabilities []string                 `yaml:"required_capabilities,omitempty"`
+	ContextWindow        int                      `yaml:"context_window,omitempty"`
+	MaxOutputTokens      int                      `yaml:"max_output_tokens,omitempty"`
+	Members              []ModelGroupMemberConfig `yaml:"members"`
 }
 
 type ModelGroupMemberConfig struct {
@@ -483,9 +487,24 @@ func (c *Config) collectValidationErrors() ValidationErrors {
 			if g.Name == "" {
 				errs = append(errs, "model group "+g.ID+" name is required")
 			}
-			validStrategies := map[string]bool{"failover": true, "round_robin": true, "weighted": true}
+			validStrategies := map[string]bool{"failover": true, "round_robin": true, "weighted": true, "consistent_hash": true}
 			if g.Strategy != "" && !validStrategies[g.Strategy] {
-				errs = append(errs, "model group "+g.ID+" strategy "+g.Strategy+" is not valid; must be one of: failover, round_robin, weighted")
+				errs = append(errs, "model group "+g.ID+" strategy "+g.Strategy+" is not valid; must be one of: failover, round_robin, weighted, consistent_hash")
+			}
+		}
+		if g.ContextWindow < 0 {
+			errs = append(errs, "model group "+g.ID+" context_window must be non-negative")
+		}
+		if g.MaxOutputTokens < 0 {
+			errs = append(errs, "model group "+g.ID+" max_output_tokens must be non-negative")
+		}
+		validCapabilities := map[string]bool{
+			"chat": true, "completions": true, "streaming": true,
+			"tools": true, "vision": true, "json_mode": true,
+		}
+		for _, capability := range g.RequiredCapabilities {
+			if !validCapabilities[capability] {
+				errs = append(errs, "model group "+g.ID+" required capability "+capability+" is not valid")
 			}
 		}
 		if len(g.Members) == 0 {

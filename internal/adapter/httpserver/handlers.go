@@ -25,25 +25,19 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) modelsHandler(w http.ResponseWriter, r *http.Request) {
-	type modelItem struct {
-		ID     string `json:"id"`
-		Object string `json:"object"`
-	}
 	rs := s.routerServiceForRequest(r)
 	models := rs.ListModels()
 	groups := rs.ListModelGroups()
-	items := make([]modelItem, 0, len(models)+len(groups))
-	for _, m := range models {
-		if !m.Enabled {
-			continue
+	items := make([]modelListItem, 0, len(models)+len(groups))
+	for _, model := range models {
+		if model.Enabled {
+			items = append(items, modelListItemFromModel(model))
 		}
-		items = append(items, modelItem{ID: m.ID, Object: "model"})
 	}
-	for _, g := range groups {
-		if !g.Enabled {
-			continue
+	for _, group := range groups {
+		if group.Enabled {
+			items = append(items, modelListItemFromGroup(group))
 		}
-		items = append(items, modelItem{ID: g.ID, Object: "model"})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": items})
 }

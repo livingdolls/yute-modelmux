@@ -514,3 +514,7 @@ make build
 ## License
 
 MIT
+
+## Agent model groups
+
+ModelMux can expose model groups as virtual OpenAI-compatible models for coding agents such as OpenCode and Cline. Groups support capability-aware selection, failover, weighted routing, and stable `consistent_hash` sessions. See [Agent model groups](docs/agent-model-groups.md).
