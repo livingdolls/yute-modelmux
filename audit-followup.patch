@@ -1,0 +1,31 @@
+diff --git a/cmd/modelmux/main.go b/cmd/modelmux/main.go
+--- a/cmd/modelmux/main.go
++++ b/cmd/modelmux/main.go
+@@ -1043,7 +1043,7 @@ func createFullRouter(cfg *config.Config) (*service.RouterService, storage.Stora
+ 		}
+ 		return nil, nil, nil, err
+ 	}
+-	router, err := service.NewRouterServiceWithSecret(cfg, store, secStore)
++	router, err := newRouterServiceWithSecret(cfg, store, secStore)
+ 	if err != nil {
+ 		if store != nil {
+ 			store.Close()
+diff --git a/internal/app/service/router_service.go b/internal/app/service/router_service.go
+--- a/internal/app/service/router_service.go
++++ b/internal/app/service/router_service.go
+@@ -740,6 +740,15 @@ func (s *RouterService) HandleCompletion(ctx context.Context, req *http.Request)
+ }
+ 
+ func (s *RouterService) handleOpenAIRequest(ctx context.Context, req *http.Request, apiPath string) (*http.Response, error) {
++	if err := storage.HealthError(s.store); err != nil {
++		return nil, &ProxyError{
++			HTTPStatus: http.StatusServiceUnavailable,
++			Type:       "modelmux_storage_unavailable",
++			Code:       "persistent_storage_unavailable",
++			Message:    "persistent storage is unavailable",
++		}
++	}
++
+ 	bodyBytes, err := io.ReadAll(req.Body)
+ 	if err != nil {
+ 		return nil, InvalidRequestBodyError(err.Error())
