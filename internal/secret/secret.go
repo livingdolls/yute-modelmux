@@ -37,6 +37,7 @@ type Store struct {
 }
 
 func NewStore(path string) (*Store, error) {
+	path = normalizeStorePath(path)
 	masterKey := os.Getenv("MODELMUX_MASTER_KEY")
 	if masterKey == "" {
 		return nil, errors.New("MODELMUX_MASTER_KEY environment variable is not set")
@@ -57,6 +58,9 @@ func NewStore(path string) (*Store, error) {
 			return nil, fmt.Errorf("failed to decrypt secret store: %w", err)
 		}
 		return s, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("read secret store: %w", err)
 	}
 
 	salt := make([]byte, saltLen)
@@ -126,7 +130,7 @@ func (s *Store) save() error {
 		return err
 	}
 
-	return os.WriteFile(s.path, encrypted, 0o600)
+	return writeFileAtomic(s.path, encrypted, 0o600, nil)
 }
 
 func (s *Store) encrypt(plaintext []byte) ([]byte, error) {
@@ -244,7 +248,13 @@ func (s *Store) ExportData() ([]byte, error) {
 }
 
 func ImportData(path string, data []byte) error {
-	return os.WriteFile(path, data, 0o600)
+	if len(data) == 0 {
+		return errors.New("secret store import is empty")
+	}
+	return writeFileAtomic(path, data, 0o600, func(candidate string) error {
+		_, err := NewStore(candidate)
+		return err
+	})
 }
 
 func (s *Store) RotateKey(newMasterKey string) error {
@@ -266,7 +276,7 @@ func (s *Store) RotateKey(newMasterKey string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, encrypted, 0o600)
+	return writeFileAtomic(s.path, encrypted, 0o600, nil)
 }
 
 func VerifyFile(path string) error {
@@ -281,4 +291,13 @@ func VerifyFile(path string) error {
 		return nil
 	}
 	return nil
+}
+
+func normalizeStorePath(path string) string {
+	const legacySuffix = ".dsecrets.enc"
+	if strings.HasSuffix(path, legacySuffix) {
+		dbPath := strings.TrimSuffix(path, legacySuffix)
+		return filepath.Join(filepath.Dir(dbPath), "secrets.enc")
+	}
+	return path
 }
