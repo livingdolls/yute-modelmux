@@ -1033,11 +1033,17 @@ func (s *RouterService) handleModelRequest(ctx context.Context, req *http.Reques
 		result.LatencyMs = time.Since(startedAt).Milliseconds()
 
 		if result.Success && !isStreamRequest(bodyBytes) && resp != nil {
-			respBodyBytes, readErr := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			respBodyBytes, readErr := readBoundedResponseBody(resp)
 			if readErr == nil {
 				result.TokenInput, result.TokenOutput = parseTokenUsage(respBodyBytes)
 				resp.Body = io.NopCloser(bytes.NewReader(respBodyBytes))
+			} else {
+				result.Success = false
+				result.StatusCode = http.StatusBadGateway
+				result.Error = readErr.Error()
+				result.ShouldRotateKey = false
+				err = readErr
+				resp = nil
 			}
 		}
 

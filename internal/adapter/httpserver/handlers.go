@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -16,6 +17,10 @@ import (
 )
 
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
+	if err := storagepkg.HealthError(s.storeForRequest(r)); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "degraded", "storage": "unhealthy"})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
@@ -546,7 +551,8 @@ func writeProxyError(w http.ResponseWriter, err error) {
 		writeJSON(w, proxyErr.HTTPStatus, map[string]any{"error": map[string]any{"message": proxyErr.Message, "type": proxyErr.Type, "code": proxyErr.Code}})
 		return
 	}
-	writeJSON(w, http.StatusBadGateway, map[string]any{"error": map[string]any{"message": err.Error(), "type": "modelmux_error"}})
+	slog.Error("proxy request failed", "error", err)
+	writeJSON(w, http.StatusBadGateway, map[string]any{"error": map[string]any{"message": "upstream request failed", "type": "modelmux_error"}})
 }
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
