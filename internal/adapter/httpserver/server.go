@@ -84,6 +84,9 @@ func (g *routerGeneration) retireAndClose() {
 }
 
 func New(rs *service.RouterService, cfg *config.Config) *Server {
+	if !cfg.Server.RequireAuth && !isLoopbackBindHost(cfg.Server.Host) {
+		slog.Warn("server is bound to a non-loopback address without authentication", "host", cfg.Server.Host)
+	}
 	mux := http.NewServeMux()
 	s := &Server{rs: rs, gen: newRouterGeneration(rs, nil), cfg: cfg, mux: mux}
 	mux.HandleFunc("/health", s.healthHandler)
@@ -166,6 +169,13 @@ func (s *Server) generationMiddleware(next http.Handler) http.Handler {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "router not configured"})
 			return
 		}
+		if r.URL.Path != "/health" && r.URL.Path != "/admin/reload" {
+			if err := storage.HealthError(gen.store); err != nil {
+				s.genMu.RUnlock()
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "persistent storage unavailable"})
+				return
+			}
+		}
 		rs, release, ok := gen.acquire()
 		s.genMu.RUnlock()
 		if !ok {
@@ -197,16 +207,7 @@ func expandHome(path string) string {
 }
 
 func resolveSecretPath(cfg *config.Config) string {
-	dbPath := cfg.Storage.Path
-	if dbPath == "" {
-		dbPath = config.Default().Storage.Path
-	}
-	dbPath = expandHome(dbPath)
-	dir := strings.TrimSuffix(dbPath, "modelmux.db")
-	if dir == dbPath {
-		dir = dbPath + ".d"
-	}
-	return dir + "secrets.enc"
+	return config.SecretStorePath(cfg.Storage.Path)
 }
 
 func (s *Server) adminReloadHandler(w http.ResponseWriter, r *http.Request) {
@@ -254,6 +255,13 @@ func (s *Server) adminReloadHandler(w http.ResponseWriter, r *http.Request) {
 			newStore.Close()
 		}
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to create router: " + err.Error()})
+		return
+	}
+	if err := storage.HealthError(newStore); err != nil {
+		if newStore != nil {
+			_ = newStore.Close()
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to load persistent storage"})
 		return
 	}
 	newGen := newRouterGeneration(newRS, newStore)
